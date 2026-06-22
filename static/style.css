@@ -40,8 +40,7 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  height: 100vh;
-  height: 100dvh; /* JS pins top + height to the visible viewport on mobile */
+  bottom: 0; /* JS raises only `bottom` by the keyboard height while it's open */
 }
 
 /* ---------- Sidebar ---------- */

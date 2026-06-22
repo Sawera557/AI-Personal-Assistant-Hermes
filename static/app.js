@@ -159,8 +159,9 @@ function syncViewport() {
   const vv = window.visualViewport;
   const appBox = document.getElementById("app");
   if (vv && appBox) {
-    appBox.style.height = vv.height + "px";
-    appBox.style.top = vv.offsetTop + "px";
+    // Height of the on-screen keyboard (0 when it is hidden).
+    const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    appBox.style.bottom = kb + "px";
   }
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -170,7 +171,17 @@ if (window.visualViewport) {
 }
 window.addEventListener("resize", syncViewport);
 window.addEventListener("orientationchange", syncViewport);
+// Some browsers report the final size slightly late — re-sync after focus changes.
+input.addEventListener("focus", () => setTimeout(syncViewport, 150));
+input.addEventListener("blur", () => setTimeout(syncViewport, 150));
 syncViewport();
+
+// Tap anywhere outside the message box to dismiss the keyboard.
+document.addEventListener("pointerdown", (e) => {
+  if (document.activeElement === input && !e.target.closest(".composer")) {
+    input.blur();
+  }
+});
 
 // ---- Mobile drawer ----
 const appEl = document.getElementById("app");
