@@ -20,7 +20,7 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
-html, body { height: 100%; }
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
 
 body {
   margin: 0;
@@ -38,6 +38,7 @@ body {
   display: flex;
   height: 100vh;
   height: 100dvh;
+  height: var(--app-h, 100dvh); /* JS keeps this synced to the visible viewport */
 }
 
 /* ---------- Sidebar ---------- */

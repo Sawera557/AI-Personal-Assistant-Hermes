@@ -152,6 +152,21 @@ resetBtn.addEventListener("click", async () => {
   appEl.classList.remove("drawer-open");
 });
 
+// ---- Keep layout sized to the visible viewport ----
+// Fixes the white blank space when the mobile keyboard opens/closes.
+function syncViewportHeight() {
+  const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+  document.documentElement.style.setProperty("--app-h", h + "px");
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", syncViewportHeight);
+  window.visualViewport.addEventListener("scroll", syncViewportHeight);
+}
+window.addEventListener("resize", syncViewportHeight);
+window.addEventListener("orientationchange", syncViewportHeight);
+syncViewportHeight();
+
 // ---- Mobile drawer ----
 const appEl = document.getElementById("app");
 const menuBtn = document.getElementById("menu-btn");
