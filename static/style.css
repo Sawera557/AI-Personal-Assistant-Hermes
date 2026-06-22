@@ -36,9 +36,12 @@ body {
 
 .app {
   display: flex;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
   height: 100vh;
-  height: 100dvh;
-  height: var(--app-h, 100dvh); /* JS keeps this synced to the visible viewport */
+  height: 100dvh; /* JS pins top + height to the visible viewport on mobile */
 }
 
 /* ---------- Sidebar ---------- */

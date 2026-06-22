@@ -152,20 +152,25 @@ resetBtn.addEventListener("click", async () => {
   appEl.classList.remove("drawer-open");
 });
 
-// ---- Keep layout sized to the visible viewport ----
-// Fixes the white blank space when the mobile keyboard opens/closes.
-function syncViewportHeight() {
-  const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-  document.documentElement.style.setProperty("--app-h", h + "px");
+// ---- Pin the app to the visible viewport (normal mobile chat behavior) ----
+// Anchors the layout to the area NOT covered by the keyboard, so the input
+// stays just above the keyboard and the message list scrolls above it.
+function syncViewport() {
+  const vv = window.visualViewport;
+  const appBox = document.getElementById("app");
+  if (vv && appBox) {
+    appBox.style.height = vv.height + "px";
+    appBox.style.top = vv.offsetTop + "px";
+  }
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 if (window.visualViewport) {
-  window.visualViewport.addEventListener("resize", syncViewportHeight);
-  window.visualViewport.addEventListener("scroll", syncViewportHeight);
+  window.visualViewport.addEventListener("resize", syncViewport);
+  window.visualViewport.addEventListener("scroll", syncViewport);
 }
-window.addEventListener("resize", syncViewportHeight);
-window.addEventListener("orientationchange", syncViewportHeight);
-syncViewportHeight();
+window.addEventListener("resize", syncViewport);
+window.addEventListener("orientationchange", syncViewport);
+syncViewport();
 
 // ---- Mobile drawer ----
 const appEl = document.getElementById("app");
