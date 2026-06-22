@@ -148,7 +148,7 @@ resetBtn.addEventListener("click", async () => {
   sessionId = crypto.randomUUID();
   localStorage.setItem("hermes_session", sessionId);
   messagesEl.innerHTML = "";
-  addMessage("assistant", "Started a fresh conversation. What can I do for you?");
+  addMessage("assistant", "Hi! I'm connected to your business apps. How can I help you?");
   appEl.classList.remove("drawer-open");
 });
 
