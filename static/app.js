@@ -64,6 +64,14 @@ function renderUserText(text) {
   return escapeHtml(String(text)).replace(/\n/g, "<br>");
 }
 
+// Apply syntax highlighting to any code blocks inside a container.
+function highlightCode(container) {
+  if (!window.hljs || !container) return;
+  container.querySelectorAll("pre code").forEach((el) => {
+    try { window.hljs.highlightElement(el); } catch (_) { /* ignore */ }
+  });
+}
+
 function addMessage(role, html) {
   const wrap = document.createElement("div");
   wrap.className = `msg ${role}`;
@@ -155,8 +163,10 @@ form.addEventListener("submit", async (e) => {
       thinkingEl.querySelector(".bubble").innerHTML =
         `<span class="tool-err">${escapeHtml(data.error)}</span>`;
     } else {
-      thinkingEl.querySelector(".bubble").innerHTML =
+      const bubble = thinkingEl.querySelector(".bubble");
+      bubble.innerHTML =
         renderMarkdown(data.reply) + renderThinking(data.thinking) + renderToolTrace(data.tool_calls);
+      highlightCode(bubble);
     }
   } catch (err) {
     thinkingEl.querySelector(".bubble").innerHTML =
