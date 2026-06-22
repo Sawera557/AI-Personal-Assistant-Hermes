@@ -1,0 +1,280 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Auth, users, roles & entities",
+        "description": "Secure authentication foundation with MFA for owner/admin and the core identity tables.",
+        "details": "Implement login + MFA. Create tables: users, roles, entities, user_entity_access. Entity isolation primitives so every later query can scope by entity_id.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 2,
+        "title": "FastAPI backend + PostgreSQL",
+        "description": "Scaffold the FastAPI app, API Gateway routing, and PostgreSQL with shared schema conventions.",
+        "details": "FastAPI structure, AWS API Gateway, PostgreSQL connection/migrations. Enforce base columns on every business table: entity_id, source_system, sensitivity_level, created_at, updated_at, status, metadata.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          1
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 3,
+        "title": "S3 + Secrets Manager + audit logs",
+        "description": "Private S3 buckets with presigned URLs, AWS Secrets Manager for credentials, and the audit_logs table.",
+        "details": "Private S3 buckets only, presigned URLs only. Store all tokens/credentials in Secrets Manager (never in frontend/GitHub/logs/prompts). Create audit_logs table.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          2
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 4,
+        "title": "Business switcher backend",
+        "description": "APIs to list owner-accessible entities and switch active business context.",
+        "details": "GET /api/entities/available-to-me, POST /api/businesses/switch, GET /api/businesses/{entity_id}/modules. Loads active_entity_id + allowed modules/apps/documents/ai_agents/actions. All Businesses mode returns summaries only.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          1,
+          2
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 5,
+        "title": "Owner Command Center frontend",
+        "description": "Simple owner-first frontend: sidebar, top bar, command center cards.",
+        "details": "Left sidebar business switcher + owner nav. Top bar (selected business, search, notifications, pending approvals count, sync badge, voice, profile). Cards: pending approvals, urgent emails, today meetings, QuickBooks snapshot, doc processing, failed syncs, pipeline health, activity, app health. Dashboard reloads on business switch.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          4
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 6,
+        "title": "Hermes Jarvis chat API",
+        "description": "Owner-facing AI chat endpoint with business context, history and sources/confidence.",
+        "details": "POST /api/hermes/jarvis/chat, GET /context, GET /history. Tables: hermes_sessions, hermes_messages. Every request carries active_entity_id. Returns sources, confidence, approval-required badge. Drafts emails but never sends.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          2,
+          4
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 7,
+        "title": "Hermes Agent runtime",
+        "description": "Backend runtime that validates permissions/scope, routes to agents, writes audit logs.",
+        "details": "POST /api/hermes/agent/run, GET /runs. Validate permission + entity scope before any tool call. Chief AI Orchestrator routes to agents. Tables: hermes_agent_runs, hermes_tool_calls, ai_runs. Creates approval records; writes audit logs. Cannot move money, delete/overwrite files, send email/DocuSign, or change QuickBooks.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          6
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 8,
+        "title": "Document upload + Pinecone ingestion",
+        "description": "Upload/store documents in S3 and index them in Pinecone with entity metadata.",
+        "details": "POST /api/documents/upload, GET /api/documents, GET /{id}. Tables: documents, document_chunks. Ingestion: S3 -> PostgreSQL row -> extraction/OCR -> chunking -> embedding -> Pinecone upsert. Vectors carry entity_id, business_name/type, document_type, source_system, sensitivity_level, access_roles, region, version, is_active.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          3,
+          7
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 9,
+        "title": "AI document Q&A with filtered retrieval",
+        "description": "Source-backed document Q&A via Pinecone with mandatory safety filters.",
+        "details": "POST /api/search/vector, /global, /api/ai/ask-document, GET /api/pinecone/entity-status/{id}. Pinecone Retrieval + Document Intelligence Agents. No query without entity_id + role/access + sensitivity filters. No cross-entity retrieval except Owner All Businesses mode. All retrieval logged.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          8
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 10,
+        "title": "Google Drive sync",
+        "description": "Connect Google Drive via Maton.ai/Lambda and feed files into document ingestion.",
+        "details": "Drive connector reads tokens from Secrets Manager. Tables: connected_apps, integration_connections, sync_jobs. POST /api/integrations/{app_key}/sync. New/changed files trigger ingestion. Google Drive Agent.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          8
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 11,
+        "title": "Gmail sync",
+        "description": "Sync Gmail into classified, entity-scoped email records; draft replies only.",
+        "details": "Gmail Inbox Agent: classify by business, detect urgent/tenant/vendor/CPA/farm, draft replies (never auto-send), create follow-ups, route sensitive replies to approval. Tables: email_threads, email_messages.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          7
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 12,
+        "title": "Google Calendar sync",
+        "description": "Sync calendar into meeting/deadline records with briefs and action items.",
+        "details": "Calendar & Meetings Agent: meeting briefs, summaries, action items, follow-ups, lease/CPA deadline tracking. Table: calendar_events. Includes Google Meet/Fathom context where available.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          7
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 13,
+        "title": "Google Docs/Sheets/Forms sync (Afro Farm)",
+        "description": "Sync Docs/Sheets/Forms to support Afro Farm operational basics.",
+        "details": "Read Afro Farm operational data: submitted/missing reports, daily activity, labor/payroll, fuel/inventory/spray/harvest/security. Table: farm_form_submissions. Afro Farm Operations Agent. Bridge AFK Apps Script automations.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          10
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 14,
+        "title": "QuickBooks read-only sync",
+        "description": "Read-only QuickBooks financial summaries per entity. No writes in MVP.",
+        "details": "GET /api/quickbooks/status, /entity/{id}/overview|profit-and-loss|expenses|ar-aging|ap-aging, POST /sync. Table: quickbooks_snapshots. QuickBooks Finance Agent: P&L, income, expenses, AR/AP, cash snapshot, flag unusual transactions, monthly brief. Read-only first; future writes require approval.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          7
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 15,
+        "title": "Connected Apps dashboard",
+        "description": "Dashboard listing connected apps and their status per entity.",
+        "details": "GET /api/integrations, /status, /entity/{entity_id}. Connected Apps Health Agent. Surfaces the priority-22 MVP apps and connection state.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          10,
+          11,
+          12,
+          14
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 16,
+        "title": "App Health dashboard",
+        "description": "Per-app health/status badges, last-sync times, and error logs.",
+        "details": "GET /api/integrations/{app_key}/logs. Surface health badges, last sync, failure reasons. App Health Agent. Feeds the sync health badge in the owner top bar.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          15
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 17,
+        "title": "Activity Analytics",
+        "description": "Activity events and analytics across AI, apps, documents and tasks.",
+        "details": "Table: activity_events. GET /api/activity/overview, /entity/{id}, /ai, /documents, /integrations. Activity Analytics Agent. Cross-business summaries in All Businesses mode.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          7
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 18,
+        "title": "Data Pipeline dashboard",
+        "description": "Sync/indexing pipeline health with failed-job visibility and safe retries.",
+        "details": "Table: pipeline_runs. GET /api/pipeline/overview, /entity/{id}, /failed-jobs, POST /api/pipeline/retry/{job_id}. Data Pipeline Monitoring Agent. Updated by ingestion and connector sync flows. High-risk retries route to approval.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          8,
+          10
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 19,
+        "title": "Approval queue",
+        "description": "Approval records and gates that block sensitive actions until owner approves.",
+        "details": "Table: approvals. GET /api/approvals, /{id}, POST /{id}/approve|reject|edit. Approval Agent. Gates send email, send DocuSign, QuickBooks writes, external share, sensitive export, subscription cancel, permission change, high-risk retry. Backend executes only after approval; audit log records final action.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          7
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 20,
+        "title": "Owner morning briefing",
+        "description": "Aggregated daily briefing summarizing dashboards for the owner.",
+        "details": "POST /api/hermes/jarvis/briefing. Hermes Jarvis composes a morning brief: pending approvals, urgent emails, today meetings, QuickBooks snapshot, failed syncs, pipeline + activity summary, lease/deadline + farm status. Uses summaries first (All Businesses), drills in on request.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          6,
+          15,
+          17,
+          18,
+          19
+        ],
+        "priority": "medium",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "created": "2026-06-22T10:57:21.719Z",
+      "updated": "2026-06-22T10:59:19.029Z",
+      "description": "Tasks for master context"
+    }
+  }
+}
