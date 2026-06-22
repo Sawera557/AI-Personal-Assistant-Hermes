@@ -25,15 +25,43 @@ function escapeHtml(s) {
   ));
 }
 
-// Minimal, safe markdown-ish rendering for assistant text.
-function renderText(text) {
-  let html = escapeHtml(text);
-  html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre>${code}</pre>`);
+// Make every rendered link open safely in a new tab.
+if (window.DOMPurify) {
+  window.DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName === "A") {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer");
+    }
+  });
+}
+
+// Full markdown -> sanitized HTML for assistant messages.
+function renderMarkdown(text) {
+  const src = String(text || "");
+  if (window.marked && window.DOMPurify) {
+    return window.DOMPurify.sanitize(
+      window.marked.parse(src, { gfm: true, breaks: true })
+    );
+  }
+  return renderBasic(src); // fallback if the CDN didn't load
+}
+
+// Minimal fallback renderer (headings, bold, code, lists, links).
+function renderBasic(text) {
+  let html = escapeHtml(String(text));
+  html = html.replace(/```([\s\S]*?)```/g, (_, c) => `<pre>${c}</pre>`);
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(/^#{1,6}\s+(.*)$/gm, "<strong>$1</strong>");
+  html = html.replace(/^\s*[-*]\s+(.*)$/gm, "• $1");
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
     '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  return html;
+  return html.replace(/\n/g, "<br>");
+}
+
+// User text: escape + keep line breaks (no markdown needed, and safer).
+function renderUserText(text) {
+  return escapeHtml(String(text)).replace(/\n/g, "<br>");
 }
 
 function addMessage(role, html) {
@@ -102,7 +130,7 @@ form.addEventListener("submit", async (e) => {
   const fileNote = pendingFiles.length
     ? `<div class="hint">📎 ${pendingFiles.map((f) => escapeHtml(f.name)).join(", ")}</div>`
     : "";
-  addMessage("user", renderText(text) + fileNote);
+  addMessage("user", renderUserText(text) + fileNote);
 
   const body = new FormData();
   body.append("session_id", sessionId);
@@ -128,7 +156,7 @@ form.addEventListener("submit", async (e) => {
         `<span class="tool-err">${escapeHtml(data.error)}</span>`;
     } else {
       thinkingEl.querySelector(".bubble").innerHTML =
-        renderText(data.reply) + renderThinking(data.thinking) + renderToolTrace(data.tool_calls);
+        renderMarkdown(data.reply) + renderThinking(data.thinking) + renderToolTrace(data.tool_calls);
     }
   } catch (err) {
     thinkingEl.querySelector(".bubble").innerHTML =
