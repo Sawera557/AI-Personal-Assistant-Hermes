@@ -1,0 +1,34 @@
+# ---- Secrets — NEVER commit these ----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Tooling / IDE ----
+.claude/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- Runtime ----
+*.log
+instance/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
