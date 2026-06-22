@@ -149,7 +149,23 @@ resetBtn.addEventListener("click", async () => {
   localStorage.setItem("hermes_session", sessionId);
   messagesEl.innerHTML = "";
   addMessage("assistant", "Started a fresh conversation. What can I do for you?");
+  appEl.classList.remove("drawer-open");
 });
+
+// ---- Mobile drawer ----
+const appEl = document.getElementById("app");
+const menuBtn = document.getElementById("menu-btn");
+const overlay = document.getElementById("overlay");
+const drawerClose = document.getElementById("drawer-close");
+const resetTop = document.getElementById("reset-top");
+
+const openDrawer = () => appEl.classList.add("drawer-open");
+const closeDrawer = () => appEl.classList.remove("drawer-open");
+
+menuBtn?.addEventListener("click", openDrawer);
+overlay?.addEventListener("click", closeDrawer);
+drawerClose?.addEventListener("click", closeDrawer);
+resetTop?.addEventListener("click", () => resetBtn.click());
 
 connectBtn.addEventListener("click", async () => {
   const app = connectApp.value.trim();
