@@ -1,0 +1,19 @@
+{
+  "name": "hermes-agent-mvp",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:41425/git/gandikediye-afk/Hermes-Agent-MVP"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "task-master-ai": "^0.43.1"
+  }
+}
