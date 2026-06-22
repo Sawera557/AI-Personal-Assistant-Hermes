@@ -1,0 +1,10 @@
+# Never upload secrets or local cruft to Vercel
+.env
+.env.*
+!.env.example
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.claude
