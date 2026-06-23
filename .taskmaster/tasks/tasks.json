@@ -603,7 +603,53 @@
           7
         ],
         "priority": "medium",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Email schema",
+            "description": "email_threads, email_messages",
+            "details": "Entity-scoped email tables with classification + sensitivity fields.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 11
+          },
+          {
+            "id": 2,
+            "title": "Gmail connector",
+            "description": "Maton.ai/Lambda, token from Secrets Manager",
+            "details": "Fetch threads/messages; never store secrets in logs.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 11
+          },
+          {
+            "id": 3,
+            "title": "Classification",
+            "description": "By business + urgency + party",
+            "details": "Classify business, urgent, tenant/vendor/CPA/farm; attach to entity records.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 11
+          },
+          {
+            "id": 4,
+            "title": "Drafts + follow-ups",
+            "description": "Draft replies, create tasks, no auto-send",
+            "details": "Generate draft replies and follow-up tasks; never send automatically.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 11
+          },
+          {
+            "id": 5,
+            "title": "Route sensitive to approval",
+            "description": "Approval gate on sensitive replies",
+            "details": "Sensitive replies create approval records via the approval queue.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 11
+          }
+        ]
       },
       {
         "id": 12,
@@ -616,7 +662,53 @@
           7
         ],
         "priority": "medium",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Calendar schema",
+            "description": "calendar_events",
+            "details": "Entity-scoped meetings/deadlines table.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 12
+          },
+          {
+            "id": 2,
+            "title": "Calendar connector",
+            "description": "Sync events per entity",
+            "details": "Pull events via Maton.ai/Lambda; token from Secrets Manager.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 12
+          },
+          {
+            "id": 3,
+            "title": "Briefs + summaries",
+            "description": "Meeting prep and recap",
+            "details": "Prepare briefs; summarize with Google Meet/Fathom transcript context.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 12
+          },
+          {
+            "id": 4,
+            "title": "Action items + follow-ups",
+            "description": "Extract and track",
+            "details": "Extract action items, create follow-up tasks, track missed follow-ups.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 12
+          },
+          {
+            "id": 5,
+            "title": "Deadline tracking",
+            "description": "Lease/CPA deadlines",
+            "details": "Track lease and CPA deadlines from calendar + documents.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 12
+          }
+        ]
       },
       {
         "id": 13,
@@ -629,7 +721,53 @@
           10
         ],
         "priority": "medium",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Farm submissions schema",
+            "description": "farm_form_submissions",
+            "details": "Entity-scoped table for Afro Farm form/sheet data.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 13
+          },
+          {
+            "id": 2,
+            "title": "Sheets/Forms/Docs connectors",
+            "description": "Read AFK operational data",
+            "details": "Connectors for Forms submissions, Sheets trackers, Docs reports.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 13
+          },
+          {
+            "id": 3,
+            "title": "Report tracking",
+            "description": "Submitted vs missing reports",
+            "details": "Detect submitted/missing daily reports and flag gaps.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 13
+          },
+          {
+            "id": 4,
+            "title": "Daily activity summary",
+            "description": "Labor/fuel/inventory/harvest/security",
+            "details": "Summarize labor/payroll, fuel, inventory, spray, harvest, security.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 13
+          },
+          {
+            "id": 5,
+            "title": "Bridge Apps Script",
+            "description": "Reuse existing AFK automations",
+            "details": "Bridge existing Google Apps Script automations into the pipeline.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 13
+          }
+        ]
       },
       {
         "id": 14,
@@ -642,7 +780,53 @@
           7
         ],
         "priority": "medium",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Snapshots schema",
+            "description": "quickbooks_snapshots",
+            "details": "Entity-mapped financial snapshots table.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 14
+          },
+          {
+            "id": 2,
+            "title": "Read-only connector",
+            "description": "QuickBooks fetch, no writes",
+            "details": "Read-only QuickBooks sync; POST /api/quickbooks/sync; token from Secrets Manager.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 14
+          },
+          {
+            "id": 3,
+            "title": "Overview + P&L endpoints",
+            "description": "status, overview, profit-and-loss",
+            "details": "GET status, /entity/{id}/overview, /profit-and-loss.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 14
+          },
+          {
+            "id": 4,
+            "title": "Expenses + aging endpoints",
+            "description": "expenses, ar-aging, ap-aging",
+            "details": "GET /entity/{id}/expenses, /ar-aging, /ap-aging.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 14
+          },
+          {
+            "id": 5,
+            "title": "Finance agent brief",
+            "description": "Cash snapshot, anomalies, monthly brief",
+            "details": "Cash snapshot, flag unusual transactions, monthly owner brief, entity comparison.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 14
+          }
+        ]
       },
       {
         "id": 15,
@@ -658,7 +842,26 @@
           14
         ],
         "priority": "medium",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Integrations list",
+            "description": "GET /api/integrations",
+            "details": "List connected apps + connection state for the active entity.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 15
+          },
+          {
+            "id": 2,
+            "title": "Status endpoints",
+            "description": "GET /status, /entity/{id}",
+            "details": "Aggregate + per-entity integration status.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 15
+          }
+        ]
       },
       {
         "id": 16,
