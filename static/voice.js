@@ -266,6 +266,7 @@
     const body = new FormData();
     body.append("session_id", sessionId);
     body.append("message", message);
+    body.append("voice", "1"); // ask the agent for a short, spoken-style reply
     const res = await fetch("/api/chat", { method: "POST", body });
     const data = await res.json();
     if (data.error) throw new Error(data.error);

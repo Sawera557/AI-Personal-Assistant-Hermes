@@ -20,6 +20,10 @@ _IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _TEXT_MAX_CHARS = 200_000
 
 
+def _truthy(value) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _build_attachments(files) -> list[dict]:
     """Turn uploaded files into Claude content blocks."""
     blocks: list[dict] = []
@@ -90,11 +94,13 @@ def chat():
         session_id = request.form.get("session_id") or str(uuid.uuid4())
         message = (request.form.get("message") or "").strip()
         attachments = _build_attachments(request.files.getlist("files"))
+        voice = _truthy(request.form.get("voice"))
     else:
         data = request.get_json(silent=True) or {}
         session_id = data.get("session_id") or str(uuid.uuid4())
         message = (data.get("message") or "").strip()
         attachments = []
+        voice = _truthy(data.get("voice"))
 
     if not message and not attachments:
         return jsonify({"error": "Provide a message or at least one file."}), 400
@@ -104,7 +110,7 @@ def chat():
         content.append({"type": "text", "text": message})
 
     try:
-        result = run_turn(session_id, content)
+        result = run_turn(session_id, content, voice=voice)
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the client
         return jsonify({"error": f"Agent error: {exc}"}), 500
 
@@ -181,3 +187,10 @@ if __name__ == "__main__":
         f"(model: {Config.MODEL}, voice: {voice})"
     )
     app.run(host="0.0.0.0", port=Config.PORT, debug=True)
+
+
+#AI Stack, All platforms connectors apis mcps cost
+# Questions related to AI Dashboard
+# API cost
+# Which AI you need and you dont need
+# Agentic features
