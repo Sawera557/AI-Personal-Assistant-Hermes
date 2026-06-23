@@ -10,7 +10,53 @@
         "status": "pending",
         "dependencies": [],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Design identity schema",
+            "description": "users, roles, entities, user_entity_access tables",
+            "details": "Define columns + FK relations; entities cover the 8 businesses; user_entity_access maps owner->entities.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 1
+          },
+          {
+            "id": 2,
+            "title": "Login + session/JWT",
+            "description": "Secure login issuing scoped sessions",
+            "details": "Password hashing, JWT/session issuance carrying user_id + role.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 1
+          },
+          {
+            "id": 3,
+            "title": "MFA for owner/admin",
+            "description": "Second factor on privileged login",
+            "details": "TOTP or email/SMS OTP enforced for owner/admin roles.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 1
+          },
+          {
+            "id": 4,
+            "title": "Entity isolation helper",
+            "description": "Scope every query by entity_id",
+            "details": "Reusable dependency that injects active_entity_id and blocks cross-entity access.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 1
+          },
+          {
+            "id": 5,
+            "title": "Seed roles and entities",
+            "description": "Initial roles + 8 business entities",
+            "details": "Seed owner role and GAK Properties, GIF Properties, Comfort Services, Afro Farm, GAK Commodities, Nour Hammam, Personal, Kenya Ventures.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 1
+          }
+        ]
       },
       {
         "id": 2,
@@ -23,7 +69,53 @@
           1
         ],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Scaffold FastAPI app",
+            "description": "Project structure, routers, settings",
+            "details": "App factory, router layout, config via env, health endpoint.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 2
+          },
+          {
+            "id": 2,
+            "title": "API Gateway routing",
+            "description": "AWS API Gateway -> Lambda/FastAPI",
+            "details": "Gateway routes mapped to the FastAPI handler (Mangum/Lambda).",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 2
+          },
+          {
+            "id": 3,
+            "title": "PostgreSQL + migrations",
+            "description": "DB connection and Alembic",
+            "details": "SQLAlchemy session, Alembic migration baseline, connection pooling.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 2
+          },
+          {
+            "id": 4,
+            "title": "Shared base model columns",
+            "description": "entity_id, source_system, sensitivity_level, timestamps, status, metadata",
+            "details": "Mixin/base class enforcing the required columns on every business table.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 2
+          },
+          {
+            "id": 5,
+            "title": "Auth middleware wiring",
+            "description": "Verify user/role/entity per request",
+            "details": "Dependency that validates JWT + loads active_entity_id and permission_scope.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 2
+          }
+        ]
       },
       {
         "id": 3,
@@ -36,7 +128,44 @@
           2
         ],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Private S3 + presigned URLs",
+            "description": "Private buckets, presigned access only",
+            "details": "Block public access; helper to mint short-lived presigned GET/PUT URLs.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 3
+          },
+          {
+            "id": 2,
+            "title": "Secrets Manager integration",
+            "description": "Store/read tokens and credentials",
+            "details": "Connector tokens and DB/AI keys read from Secrets Manager at runtime.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 3
+          },
+          {
+            "id": 3,
+            "title": "audit_logs table + writer",
+            "description": "Record sensitive access",
+            "details": "audit_logs schema + helper invoked on AI/document/sync/approval events.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 3
+          },
+          {
+            "id": 4,
+            "title": "Secret-hygiene guardrails",
+            "description": "No secrets in frontend/logs/prompts",
+            "details": "Log redaction + checks preventing secrets in responses, logs, and AI prompts.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 3
+          }
+        ]
       },
       {
         "id": 4,
@@ -50,7 +179,53 @@
           2
         ],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "List available entities",
+            "description": "GET /api/entities/available-to-me",
+            "details": "Return entities the owner can access, derived from user_entity_access.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 4
+          },
+          {
+            "id": 2,
+            "title": "Switch active business",
+            "description": "POST /api/businesses/switch",
+            "details": "Validate owner access, set active_entity_id in session context.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 4
+          },
+          {
+            "id": 3,
+            "title": "Context loader",
+            "description": "Resolve scope on switch",
+            "details": "Load allowed_modules, allowed_apps, allowed_documents, allowed_ai_agents, allowed_actions.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 4
+          },
+          {
+            "id": 4,
+            "title": "All Businesses summary mode",
+            "description": "Cross-entity summaries only",
+            "details": "Return cross-business KPIs/health/activity summaries; no blind raw retrieval.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 4
+          },
+          {
+            "id": 5,
+            "title": "Modules endpoint",
+            "description": "GET /api/businesses/{entity_id}/modules",
+            "details": "Expose enabled modules for the selected entity.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 4
+          }
+        ]
       },
       {
         "id": 5,
@@ -63,7 +238,53 @@
           4
         ],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "App shell + sidebar",
+            "description": "Business switcher + owner nav",
+            "details": "Left sidebar with business list and Command Center/Ask Hermes/etc. navigation.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 5
+          },
+          {
+            "id": 2,
+            "title": "Top bar",
+            "description": "Search, notifications, badges, voice, profile",
+            "details": "Selected business, global search, pending approvals count, sync health badge, Hermes voice button.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 5
+          },
+          {
+            "id": 3,
+            "title": "Command center cards",
+            "description": "KPI card grid",
+            "details": "Pending approvals, urgent emails, today meetings, QuickBooks snapshot, failed syncs, pipeline/activity health.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 5
+          },
+          {
+            "id": 4,
+            "title": "Switch -> dashboard reload",
+            "description": "React to active_entity_id change",
+            "details": "On business switch, refetch dashboard scoped to the selected entity.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 5
+          },
+          {
+            "id": 5,
+            "title": "Login + protected routes",
+            "description": "Auth screen and guards",
+            "details": "Owner login (with MFA), session handling, route protection.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 5
+          }
+        ]
       },
       {
         "id": 6,
@@ -77,7 +298,53 @@
           4
         ],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Sessions/messages schema",
+            "description": "hermes_sessions, hermes_messages",
+            "details": "Persist chat sessions and messages scoped by entity_id.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 6
+          },
+          {
+            "id": 2,
+            "title": "Chat endpoint",
+            "description": "POST /api/hermes/jarvis/chat",
+            "details": "Carry active_entity_id; verify user/entity before answering.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 6
+          },
+          {
+            "id": 3,
+            "title": "Context + history",
+            "description": "GET /context and /history",
+            "details": "Return current business context and recent questions.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 6
+          },
+          {
+            "id": 4,
+            "title": "Sources + confidence",
+            "description": "Attach provenance to answers",
+            "details": "Response includes sources panel, confidence badge, approval-required badge.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 6
+          },
+          {
+            "id": 5,
+            "title": "Draft-only email guardrail",
+            "description": "Never auto-send",
+            "details": "Email drafting returns a draft + approval request, never sends.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 6
+          }
+        ]
       },
       {
         "id": 7,
@@ -90,7 +357,62 @@
           6
         ],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Agent-run schema",
+            "description": "hermes_agent_runs, hermes_tool_calls, ai_runs",
+            "details": "Track runs, tool calls, and AI invocations per entity.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 7
+          },
+          {
+            "id": 2,
+            "title": "Run endpoints",
+            "description": "POST /api/hermes/agent/run, GET /runs",
+            "details": "Execute a task via the runtime and list past runs.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 7
+          },
+          {
+            "id": 3,
+            "title": "Permission + scope gate",
+            "description": "Validate before any tool call",
+            "details": "Check user_id, role, active_entity_id, permission_scope, sensitivity before acting.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 7
+          },
+          {
+            "id": 4,
+            "title": "Orchestrator + agent registry",
+            "description": "Route tasks to agents",
+            "details": "Chief AI Orchestrator selects agents from an Agent Registry.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 7
+          },
+          {
+            "id": 5,
+            "title": "Approvals + audit logging",
+            "description": "Create approval records, write audit logs",
+            "details": "Sensitive actions create approval records; every action writes audit logs.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 7
+          },
+          {
+            "id": 6,
+            "title": "Hard prohibitions",
+            "description": "Block money/file/email/QB writes",
+            "details": "Runtime cannot move money, delete/overwrite files, send email/DocuSign, or change QuickBooks.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 7
+          }
+        ]
       },
       {
         "id": 8,
@@ -104,7 +426,53 @@
           7
         ],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Documents schema",
+            "description": "documents, document_chunks",
+            "details": "Document + chunk tables with entity_id and sensitivity_level.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 8
+          },
+          {
+            "id": 2,
+            "title": "Upload -> S3 + DB row",
+            "description": "POST /api/documents/upload",
+            "details": "Store raw file in private S3, create PostgreSQL document row.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 8
+          },
+          {
+            "id": 3,
+            "title": "Extraction + chunking",
+            "description": "Text/OCR then chunk",
+            "details": "Extract text (OCR for scans), chunk for embedding.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 8
+          },
+          {
+            "id": 4,
+            "title": "Embed + Pinecone upsert",
+            "description": "Index with entity metadata",
+            "details": "Embed chunks; upsert with chunk_id, document_id, entity_id, business_name/type, document_type, source_system, sensitivity_level, access_roles, region, version, is_active.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 8
+          },
+          {
+            "id": 5,
+            "title": "List/get documents",
+            "description": "GET /api/documents and /{id}",
+            "details": "List and fetch document metadata + status.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 8
+          }
+        ]
       },
       {
         "id": 9,
@@ -117,7 +485,53 @@
           8
         ],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Retrieval agent + filters",
+            "description": "Mandatory entity/role/sensitivity filters",
+            "details": "Pinecone Retrieval Agent rejects any query missing entity_id, role/access, or sensitivity filters.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 9
+          },
+          {
+            "id": 2,
+            "title": "Vector search endpoints",
+            "description": "POST /api/search/vector, /global",
+            "details": "Filtered vector + global search APIs.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 9
+          },
+          {
+            "id": 3,
+            "title": "Ask-document endpoint",
+            "description": "POST /api/ai/ask-document",
+            "details": "Source-backed answers with citations and confidence.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 9
+          },
+          {
+            "id": 4,
+            "title": "Entity status endpoint",
+            "description": "GET /api/pinecone/entity-status/{id}",
+            "details": "Report indexed/active vector counts per entity.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 9
+          },
+          {
+            "id": 5,
+            "title": "Retrieval logging + isolation",
+            "description": "Log all retrieval; no cross-entity",
+            "details": "Log every retrieval; cross-entity only in Owner All Businesses mode.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 9
+          }
+        ]
       },
       {
         "id": 10,
@@ -130,7 +544,53 @@
           8
         ],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Connector schema",
+            "description": "connected_apps, integration_connections, sync_jobs",
+            "details": "Tables tracking app connections and sync jobs per entity.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 10
+          },
+          {
+            "id": 2,
+            "title": "Drive connector",
+            "description": "Maton.ai/Lambda + Secrets Manager token",
+            "details": "Authenticate Drive, read token from Secrets Manager, fetch file list/changes.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 10
+          },
+          {
+            "id": 3,
+            "title": "Sync endpoint",
+            "description": "POST /api/integrations/{app_key}/sync",
+            "details": "Trigger a Drive sync for the active entity.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 10
+          },
+          {
+            "id": 4,
+            "title": "Trigger ingestion",
+            "description": "Feed files into document pipeline",
+            "details": "New/changed files enqueue the document ingestion flow.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 10
+          },
+          {
+            "id": 5,
+            "title": "Sync status + errors",
+            "description": "Record job outcome",
+            "details": "Update sync_jobs with status and capture failures for the pipeline dashboard.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 10
+          }
+        ]
       },
       {
         "id": 11,
@@ -251,7 +711,53 @@
           7
         ],
         "priority": "high",
-        "subtasks": []
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Approvals schema",
+            "description": "approvals table",
+            "details": "Approval records with entity_id, action type, payload, status, decision.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 19
+          },
+          {
+            "id": 2,
+            "title": "List/get approvals",
+            "description": "GET /api/approvals and /{id}",
+            "details": "List pending approvals and fetch one.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 19
+          },
+          {
+            "id": 3,
+            "title": "Decision endpoints",
+            "description": "POST approve/reject/edit",
+            "details": "Owner approves, rejects, or edits a proposed action.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 19
+          },
+          {
+            "id": 4,
+            "title": "Sensitive-action gate",
+            "description": "Detect actions needing approval",
+            "details": "Gate send email, send DocuSign, QuickBooks writes, external share, sensitive export, subscription cancel, permission change, high-risk retry.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 19
+          },
+          {
+            "id": 5,
+            "title": "Execute after approval",
+            "description": "Run only post-approval + audit",
+            "details": "Backend executes the action only after approval; audit log records the final action.",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 19
+          }
+        ]
       },
       {
         "id": 20,
