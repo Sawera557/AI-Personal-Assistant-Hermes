@@ -1,7 +1,12 @@
 """Flask entrypoint for the Hermes AI Agent — web chat UI + JSON API."""
 from __future__ import annotations
 
+import atexit
 import base64
+import importlib.util
+import os
+import subprocess
+import sys
 import uuid
 
 from flask import Flask, jsonify, render_template, request
@@ -137,11 +142,43 @@ def reset():
     return jsonify({"status": "reset"})
 
 
+def _maybe_launch_voice() -> None:
+    """Start the voice service (voice_server.py) alongside Flask.
+
+    Runs as a SEPARATE process so the heavy Pipecat/torch deps stay out of the
+    Flask process and a voice crash can't take down the web app.
+    Disable with HERMES_RUN_VOICE=false in your .env.
+    """
+    if os.getenv("HERMES_RUN_VOICE", "true").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    # Under Flask's auto-reloader the script runs twice; only the watcher parent
+    # (WERKZEUG_RUN_MAIN unset) should spawn the voice process.
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        return
+    if not Config.GROQ_API_KEY:
+        print("[Hermes] GROQ_API_KEY not set — voice service not started.")
+        return
+    # find_spec locates the package without importing it (no torch load).
+    if importlib.util.find_spec("pipecat") is None:
+        print("[Hermes] Pipecat not installed — voice disabled. To enable it:")
+        print("           pip install -r requirements.txt -r requirements-voice.txt")
+        return
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        proc = subprocess.Popen([sys.executable, "voice_server.py"], cwd=here)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Hermes] Could not start voice service: {exc}")
+        return
+    atexit.register(proc.terminate)
+    print(f"[Hermes] Voice service launched (pid {proc.pid}) on ws port {Config.VOICE_WS_PORT}.")
+
+
 if __name__ == "__main__":
     problems = Config.validate()
     if problems:
         print("[Hermes] Configuration warnings:")
         for p in problems:
             print(f"  - {p}")
+    _maybe_launch_voice()
     print(f"[Hermes] Starting on http://127.0.0.1:{Config.PORT}  (model: {Config.MODEL})")
     app.run(host="0.0.0.0", port=Config.PORT, debug=True)

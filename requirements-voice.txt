@@ -10,4 +10,4 @@
 # Pinned to the version this code was written against. If you bump it and an
 # import in voice_server.py breaks, that's expected — Pipecat moves module paths
 # between releases; adjust the imports flagged in voice_server.py.
-pipecat-ai[groq,silero,websocket]==1.4.0
+pipecat-ai[groq,silero,websocket]
