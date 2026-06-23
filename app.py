@@ -77,8 +77,8 @@ def index():
         model=Config.MODEL,
         web_search=Config.WEB_SEARCH,
         voice_enabled=Config.voice_enabled(),
-        voices=Config.TTS_VOICES,
-        voice=Config.GROQ_TTS_VOICE,
+        voices=Config.voice_voices(),
+        voice=Config.voice_tts_voice(),
     )
 
 
@@ -154,7 +154,7 @@ def voice_transcribe():
 
 @app.route("/api/voice/speak", methods=["POST"])
 def voice_speak():
-    """Text -> speech. Returns Groq PlayAI TTS audio for the agent's reply."""
+    """Text -> speech. Returns OpenAI TTS audio for the agent's reply."""
     data = request.get_json(silent=True) or {}
     text = speakable(data.get("text") or "")
     if not text:

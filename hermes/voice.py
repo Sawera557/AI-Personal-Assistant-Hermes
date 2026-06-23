@@ -1,15 +1,15 @@
-"""Groq voice layer for Hermes — speech-to-text and text-to-speech.
+"""Voice layer for Hermes — speech-to-text and text-to-speech.
 
 This module is ONLY the voice I/O. The agent "brain" stays Claude (`run_turn`
 in hermes.agent), so the voice agent has the exact same multi-app functionality
 as the typed chat. We just:
 
-    mic audio  --(Groq Whisper)-->  transcript  --(run_turn)-->  reply text
-    reply text --(Groq PlayAI TTS)-->  spoken audio
+    mic audio  --(STT)-->  transcript  --(run_turn)-->  reply text
+    reply text --(TTS)-->  spoken audio
 
-Calls go through Groq's OpenAI-compatible REST API with plain `requests`, so
-there is no extra SDK dependency and nothing Groq-specific leaks into the
-browser (the API key lives server-side only).
+The provider (OpenAI by default, Groq optional) is selected in config. Both
+expose the same OpenAI-style /audio/* REST endpoints, so we call them with plain
+`requests` — no extra SDK dependency, and the API key stays server-side only.
 """
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ from .config import Config
 _STT_TIMEOUT = 60
 _TTS_TIMEOUT = 60
 
-# Audio MIME -> a filename extension Groq's transcription endpoint accepts.
-# Whisper supports: flac, mp3, mp4, mpeg, mpga, m4a, ogg, opus, wav, webm.
+# Audio MIME -> a filename extension the transcription endpoint accepts.
+# Supported: flac, mp3, mp4, mpeg, mpga, m4a, ogg, opus, wav, webm.
 _EXT_BY_MIME = {
     "audio/webm": "webm",
     "audio/ogg": "ogg",
@@ -41,7 +41,7 @@ _EXT_BY_MIME = {
 
 
 class VoiceError(RuntimeError):
-    """Raised when a Groq voice call fails."""
+    """Raised when a voice (STT/TTS) call fails."""
 
 
 def _ext_for(mimetype: str | None) -> str:
@@ -52,23 +52,22 @@ def _ext_for(mimetype: str | None) -> str:
 
 
 def transcribe(audio: bytes, mimetype: str | None = None) -> str:
-    """Speech -> text via Groq Whisper. Returns the recognized transcript."""
-    if not Config.GROQ_API_KEY:
-        raise VoiceError("GROQ_API_KEY is not set — voice mode is unavailable.")
+    """Speech -> text. Returns the recognized transcript."""
+    if not Config.voice_api_key():
+        raise VoiceError("Voice API key is not set — voice mode is unavailable.")
     if not audio:
         raise VoiceError("No audio was received.")
 
     ext = _ext_for(mimetype)
-    url = f"{Config.GROQ_BASE_URL}/audio/transcriptions"
+    url = f"{Config.voice_base_url()}/audio/transcriptions"
     try:
         resp = requests.post(
             url,
-            headers={"Authorization": f"Bearer {Config.GROQ_API_KEY}"},
+            headers={"Authorization": f"Bearer {Config.voice_api_key()}"},
             files={"file": (f"speech.{ext}", audio, mimetype or "audio/webm")},
             data={
-                "model": Config.GROQ_STT_MODEL,
+                "model": Config.voice_stt_model(),
                 "response_format": "json",
-                "temperature": "0",
             },
             timeout=_STT_TIMEOUT,
         )
@@ -76,7 +75,7 @@ def transcribe(audio: bytes, mimetype: str | None = None) -> str:
         raise VoiceError(f"Network error during transcription: {exc}") from exc
 
     if not resp.ok:
-        raise VoiceError(_groq_error(resp, "transcription"))
+        raise VoiceError(_voice_error(resp, "transcription"))
 
     try:
         return (resp.json().get("text") or "").strip()
@@ -85,29 +84,29 @@ def transcribe(audio: bytes, mimetype: str | None = None) -> str:
 
 
 def resolve_voice(voice: str | None) -> str:
-    """Return a valid Orpheus voice, falling back to the configured default."""
+    """Return a valid voice for the active provider, else the configured default."""
     v = (voice or "").strip().lower()
-    return v if v in Config.TTS_VOICES else Config.GROQ_TTS_VOICE
+    return v if v in Config.voice_voices() else Config.voice_tts_voice()
 
 
 def synthesize(text: str, voice: str | None = None) -> tuple[bytes, str]:
-    """Text -> speech via Groq Orpheus TTS. Returns (audio_bytes, mimetype)."""
-    if not Config.GROQ_API_KEY:
-        raise VoiceError("GROQ_API_KEY is not set — voice mode is unavailable.")
+    """Text -> speech. Returns (audio_bytes, mimetype)."""
+    if not Config.voice_api_key():
+        raise VoiceError("Voice API key is not set — voice mode is unavailable.")
     text = (text or "").strip()
     if not text:
         raise VoiceError("Nothing to speak.")
 
-    url = f"{Config.GROQ_BASE_URL}/audio/speech"
+    url = f"{Config.voice_base_url()}/audio/speech"
     try:
         resp = requests.post(
             url,
             headers={
-                "Authorization": f"Bearer {Config.GROQ_API_KEY}",
+                "Authorization": f"Bearer {Config.voice_api_key()}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": Config.GROQ_TTS_MODEL,
+                "model": Config.voice_tts_model(),
                 "voice": resolve_voice(voice),
                 "input": text[:9_000],  # TTS caps input length
                 "response_format": "wav",
@@ -118,16 +117,15 @@ def synthesize(text: str, voice: str | None = None) -> tuple[bytes, str]:
         raise VoiceError(f"Network error during speech synthesis: {exc}") from exc
 
     if not resp.ok:
-        raise VoiceError(_groq_error(resp, "speech"))
+        raise VoiceError(_voice_error(resp, "speech"))
 
     return resp.content, "audio/wav"
 
 
-def _groq_error(resp: requests.Response, what: str) -> str:
-    """Turn a non-2xx Groq response into a helpful message.
+def _voice_error(resp: requests.Response, what: str) -> str:
+    """Turn a non-2xx provider response into a helpful message.
 
-    Groq's own messages already include the exact fix (e.g. the model-specific
-    terms-acceptance URL), so we surface them verbatim.
+    Provider error bodies usually include the exact fix, so we surface them.
     """
     detail: Any = resp.text
     try:
@@ -135,7 +133,7 @@ def _groq_error(resp: requests.Response, what: str) -> str:
         detail = body.get("error", {}).get("message") or body
     except ValueError:
         pass
-    return f"Groq {what} failed ({resp.status_code}): {detail}"
+    return f"Voice {what} failed ({resp.status_code}): {detail}"
 
 
 # --- Make agent replies sound natural when spoken --------------------------
