@@ -30,6 +30,17 @@
         <code class="model">{{ model }}</code>
       </div>
 
+      {% if voice_enabled %}
+      <div class="panel">
+        <h2>Voice</h2>
+        <select id="voice-select" class="voice-select" aria-label="Voice">
+          {% for v in voices %}
+          <option value="{{ v }}" {% if v == voice %}selected{% endif %}>{{ v|capitalize }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+
       <details class="panel apps-panel">
         <summary>
           <span class="apps-title">Connected apps</span>

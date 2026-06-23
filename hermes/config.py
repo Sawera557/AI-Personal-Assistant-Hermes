@@ -54,9 +54,12 @@ class Config:
     ).rstrip("/")
     GROQ_STT_MODEL: str = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
     # Groq retired PlayAI TTS; Orpheus is the current text-to-speech model.
-    # Voices: autumn, diana, hannah (female) / austin, daniel, troy (male).
     GROQ_TTS_MODEL: str = os.getenv("GROQ_TTS_MODEL", "canopylabs/orpheus-v1-english")
     GROQ_TTS_VOICE: str = os.getenv("GROQ_TTS_VOICE", "autumn")
+    # Voices Orpheus accepts on Groq. female: autumn/diana/hannah, male: austin/daniel/troy.
+    TTS_VOICES: tuple[str, ...] = (
+        "autumn", "diana", "hannah", "austin", "daniel", "troy",
+    )
 
     @classmethod
     def voice_enabled(cls) -> bool:

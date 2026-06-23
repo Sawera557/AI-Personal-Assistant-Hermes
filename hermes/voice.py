@@ -84,8 +84,14 @@ def transcribe(audio: bytes, mimetype: str | None = None) -> str:
         raise VoiceError("Transcription returned an unreadable response.") from exc
 
 
-def synthesize(text: str) -> tuple[bytes, str]:
-    """Text -> speech via Groq PlayAI TTS. Returns (audio_bytes, mimetype)."""
+def resolve_voice(voice: str | None) -> str:
+    """Return a valid Orpheus voice, falling back to the configured default."""
+    v = (voice or "").strip().lower()
+    return v if v in Config.TTS_VOICES else Config.GROQ_TTS_VOICE
+
+
+def synthesize(text: str, voice: str | None = None) -> tuple[bytes, str]:
+    """Text -> speech via Groq Orpheus TTS. Returns (audio_bytes, mimetype)."""
     if not Config.GROQ_API_KEY:
         raise VoiceError("GROQ_API_KEY is not set — voice mode is unavailable.")
     text = (text or "").strip()
@@ -102,8 +108,8 @@ def synthesize(text: str) -> tuple[bytes, str]:
             },
             json={
                 "model": Config.GROQ_TTS_MODEL,
-                "voice": Config.GROQ_TTS_VOICE,
-                "input": text[:9_000],  # PlayAI caps input length
+                "voice": resolve_voice(voice),
+                "input": text[:9_000],  # TTS caps input length
                 "response_format": "wav",
             },
             timeout=_TTS_TIMEOUT,

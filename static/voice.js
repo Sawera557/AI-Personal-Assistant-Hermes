@@ -17,12 +17,31 @@
   const captionEl = document.getElementById("call-caption");
   const muteBtn = document.getElementById("call-mute");
   const endBtn = document.getElementById("call-end");
+  const voiceSelect = document.getElementById("voice-select");
+
+  // ---- Voice selection (persisted) ----
+  const savedVoice = localStorage.getItem("hermes_voice");
+  if (voiceSelect) {
+    if (savedVoice) voiceSelect.value = savedVoice;
+    voiceSelect.addEventListener("change", () => {
+      localStorage.setItem("hermes_voice", voiceSelect.value);
+    });
+  }
+  const currentVoice = () =>
+    (voiceSelect && voiceSelect.value) || savedVoice || undefined;
 
   // ---- Tunables (VAD) ----
   const SILENCE_MS = 1100;    // silence after speech => end of your turn
   const MIN_SPEECH_MS = 250;  // ignore tiny blips / clicks
   const MAX_UTTER_MS = 20000; // hard cap on one utterance
   const TICK_MS = 16;         // ~60fps analyser loop
+
+  // ---- Barge-in (interrupt the assistant while it is speaking) ----
+  // High threshold + required duration so the TTS bleeding into the mic
+  // (despite echo cancellation) doesn't falsely trigger an interrupt.
+  const BARGE_RMS = 0.14;     // you must be clearly louder than the playback
+  const BARGE_MS = 320;       // sustained this long => interrupt
+  const BARGE_GRACE_MS = 350; // ignore the first moments of playback
 
   // ---- Call state ----
   let active = false;
@@ -35,6 +54,10 @@
   let chunks = [];
   let rafTimer = null;
   let player = null;
+  let playerUrl = null;
+  let bargeTimer = null;
+  let playStartedAt = 0;
+  let bargeStartedAt = 0;
 
   // VAD bookkeeping
   let noiseFloor = 0.01;
@@ -95,11 +118,11 @@
   function endCall() {
     active = false;
     stopRaf();
+    stopPlayback();
     if (recorder && recorder.state !== "inactive") {
       try { recorder.onstop = null; recorder.stop(); } catch (_) {}
     }
     recorder = null;
-    if (player) { try { player.pause(); } catch (_) {} player = null; }
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
     if (audioCtx) { try { audioCtx.close(); } catch (_) {} audioCtx = null; }
     analyser = null;
@@ -110,6 +133,19 @@
 
   function stopRaf() {
     if (rafTimer) { clearTimeout(rafTimer); rafTimer = null; }
+  }
+
+  function stopBarge() {
+    if (bargeTimer) { clearTimeout(bargeTimer); bargeTimer = null; }
+  }
+
+  function stopPlayback() {
+    stopBarge();
+    if (player) {
+      try { player.onended = null; player.onerror = null; player.pause(); } catch (_) {}
+    }
+    if (playerUrl) { try { URL.revokeObjectURL(playerUrl); } catch (_) {} playerUrl = null; }
+    player = null;
   }
 
   // ---- Listening with voice-activity detection ----
@@ -251,7 +287,7 @@
       res = await fetch("/api/voice/speak", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: clean }),
+        body: JSON.stringify({ text: clean, voice: currentVoice() }),
       });
     } catch (err) {
       captionEl.textContent = "Couldn't reach the voice service.";
@@ -268,17 +304,50 @@
     }
 
     const audioBlob = await res.blob();
-    const url = URL.createObjectURL(audioBlob);
-    player = new Audio(url);
+    playerUrl = URL.createObjectURL(audioBlob);
+    player = new Audio(playerUrl);
 
     setPhase("speaking");
     statusEl.textContent = "Speaking…";
-    captionEl.textContent = shorten(clean);
+    captionEl.textContent = shorten(clean) + "   (just talk to interrupt)";
 
-    const done = () => { URL.revokeObjectURL(url); player = null; resumeAfterTurn(); };
+    const done = () => { stopPlayback(); resumeAfterTurn(); };
     player.onended = done;
     player.onerror = done;
-    try { await player.play(); } catch (_) { done(); }
+    try {
+      await player.play();
+      playStartedAt = Date.now();
+      bargeStartedAt = 0;
+      monitorBargeIn();
+    } catch (_) { done(); }
+  }
+
+  // While the assistant is speaking, listen for the user cutting in.
+  function monitorBargeIn() {
+    if (!active || muted || phase !== "speaking" || !analyser || !player) return;
+
+    const buf = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = (buf[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / buf.length);
+    const now = Date.now();
+
+    if (now - playStartedAt > BARGE_GRACE_MS && rms > BARGE_RMS) {
+      if (!bargeStartedAt) bargeStartedAt = now;
+      if (now - bargeStartedAt > BARGE_MS) {
+        // User cut in — stop talking and start listening to them immediately.
+        stopPlayback();
+        if (active && !muted) beginListening();
+        return;
+      }
+    } else {
+      bargeStartedAt = 0;
+    }
+    bargeTimer = setTimeout(monitorBargeIn, TICK_MS);
   }
 
   function resumeAfterTurn(delay = 250) {
@@ -299,6 +368,7 @@
     muteBtn.textContent = muted ? "Unmute" : "Mute";
     if (muted) {
       stopRaf();
+      stopBarge();
       if (recorder && recorder.state !== "inactive") {
         try { recorder.onstop = null; recorder.stop(); } catch (_) {}
       }

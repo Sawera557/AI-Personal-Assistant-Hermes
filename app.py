@@ -73,6 +73,8 @@ def index():
         model=Config.MODEL,
         web_search=Config.WEB_SEARCH,
         voice_enabled=Config.voice_enabled(),
+        voices=Config.TTS_VOICES,
+        voice=Config.GROQ_TTS_VOICE,
     )
 
 
@@ -152,7 +154,7 @@ def voice_speak():
     if not text:
         return jsonify({"error": "Nothing to speak."}), 400
     try:
-        audio, mimetype = synthesize(text)
+        audio, mimetype = synthesize(text, voice=data.get("voice"))
     except VoiceError as exc:
         return jsonify({"error": str(exc)}), 502
     return Response(audio, mimetype=mimetype)
