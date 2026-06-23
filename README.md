@@ -16,6 +16,9 @@ It ships with a browser chat UI **and** a JSON API.
 - **Conversation memory** — remembers context per chat session.
 - **Web search** — Anthropic's built-in server-side web search & fetch.
 - **File / document Q&A** — upload PDFs, images, CSVs, or text and ask about them.
+- **Hands-free voice agent** — talk to Hermes like a phone call. Groq handles the
+  voice (Whisper speech-to-text + Orpheus text-to-speech); the *brain stays
+  Claude*, so voice has the **exact same app functionality** as the typed chat.
 
 ## Architecture
 
@@ -26,11 +29,16 @@ Browser chat UI ──► Flask (app.py)
                       ├─ hermes/tools.py     tool schemas + dispatch
                       ├─ hermes/maton.py     Maton API gateway client
                       ├─ hermes/memory.py    per-session conversation store
+                      ├─ hermes/voice.py     Groq STT + TTS (voice mode only)
                       └─ hermes/config.py    env config
                       │
                       ▼
-        Anthropic API  +  Maton gateway (api.maton.ai)
+        Anthropic API  +  Maton gateway (api.maton.ai)  +  Groq (voice)
 ```
+
+**Voice mode** (`static/voice.js` + `/api/voice/*`) does
+`mic → Groq Whisper → /api/chat (same Claude agent) → Groq Orpheus → speaker`,
+with browser-side voice-activity detection driving a continuous, hands-free call.
 
 The agent exposes three Maton tools to Claude — `maton_request` (generic native
 API passthrough for any connected app), `maton_list_connections`, and
@@ -49,6 +57,10 @@ API passthrough for any connected app), `maton_list_connections`, and
    ```
    - `ANTHROPIC_API_KEY` — from https://platform.claude.com
    - `MATON_API_KEY` — from https://maton.ai/api-keys
+   - `GROQ_API_KEY` *(optional, voice mode)* — from https://console.groq.com/keys.
+     Also accept the Orpheus TTS terms once at
+     https://console.groq.com/playground?model=canopylabs%2Forpheus-v1-english
+     Leave the key blank to hide the voice button.
 
 3. **Run it:**
    ```bash
@@ -74,6 +86,8 @@ Known slugs: `quickbooks`, `pdf-co`, `google-contacts`, `fathom`, `google-meet`,
 | GET    | `/api/connections`  | `?app=&status=ACTIVE` — list Maton connections            |
 | POST   | `/api/connections`  | JSON `{app}` — start OAuth, returns `{data:{url}}`         |
 | POST   | `/api/reset`        | JSON `{session_id}` — clear a conversation                 |
+| POST   | `/api/voice/transcribe` | multipart `audio` — Groq Whisper, returns `{text}`    |
+| POST   | `/api/voice/speak`  | JSON `{text}` — returns Groq Orpheus audio (`audio/wav`)   |
 | GET    | `/api/health`       | config check                                              |
 
 Example:

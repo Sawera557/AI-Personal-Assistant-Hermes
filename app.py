@@ -4,12 +4,13 @@ from __future__ import annotations
 import base64
 import uuid
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from hermes.agent import run_turn
 from hermes.config import Config
 from hermes.maton import MatonClient, MatonError
 from hermes.memory import store
+from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
 app = Flask(__name__)
 app.secret_key = Config.FLASK_SECRET
@@ -71,6 +72,7 @@ def index():
         apps=Config.apps(),
         model=Config.MODEL,
         web_search=Config.WEB_SEARCH,
+        voice_enabled=Config.voice_enabled(),
     )
 
 
@@ -127,6 +129,35 @@ def connections():
         return jsonify({"error": str(exc)}), 502
 
 
+@app.route("/api/voice/transcribe", methods=["POST"])
+def voice_transcribe():
+    """Speech -> text. The browser posts a recorded audio clip; Groq Whisper
+    returns the transcript, which the client then sends through /api/chat so the
+    voice agent runs the exact same Claude + Maton agent as the typed chat."""
+    f = request.files.get("audio")
+    if not f:
+        return jsonify({"error": "No audio uploaded."}), 400
+    try:
+        text = transcribe(f.read(), f.mimetype)
+    except VoiceError as exc:
+        return jsonify({"error": str(exc)}), 502
+    return jsonify({"text": text})
+
+
+@app.route("/api/voice/speak", methods=["POST"])
+def voice_speak():
+    """Text -> speech. Returns Groq PlayAI TTS audio for the agent's reply."""
+    data = request.get_json(silent=True) or {}
+    text = speakable(data.get("text") or "")
+    if not text:
+        return jsonify({"error": "Nothing to speak."}), 400
+    try:
+        audio, mimetype = synthesize(text)
+    except VoiceError as exc:
+        return jsonify({"error": str(exc)}), 502
+    return Response(audio, mimetype=mimetype)
+
+
 @app.route("/api/reset", methods=["POST"])
 def reset():
     data = request.get_json(silent=True) or {}
@@ -142,5 +173,9 @@ if __name__ == "__main__":
         print("[Hermes] Configuration warnings:")
         for p in problems:
             print(f"  - {p}")
-    print(f"[Hermes] Starting on http://127.0.0.1:{Config.PORT}  (model: {Config.MODEL})")
+    voice = "on" if Config.voice_enabled() else "off (set GROQ_API_KEY)"
+    print(
+        f"[Hermes] Starting on http://127.0.0.1:{Config.PORT}  "
+        f"(model: {Config.MODEL}, voice: {voice})"
+    )
     app.run(host="0.0.0.0", port=Config.PORT, debug=True)

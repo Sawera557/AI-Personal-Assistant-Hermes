@@ -45,6 +45,23 @@ class Config:
 
     WEB_SEARCH: bool = _bool(os.getenv("HERMES_WEB_SEARCH"), True)
 
+    # ---- Groq voice layer (speech-to-text + text-to-speech) ---------------
+    # The agent "brain" stays Claude (`run_turn`) so the voice agent keeps the
+    # EXACT same app functionality as the typed chat. Groq only does voice I/O.
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "").strip()
+    GROQ_BASE_URL: str = os.getenv(
+        "GROQ_BASE_URL", "https://api.groq.com/openai/v1"
+    ).rstrip("/")
+    GROQ_STT_MODEL: str = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
+    # Groq retired PlayAI TTS; Orpheus is the current text-to-speech model.
+    # Voices: tara, leah, jess, leo, dan, mia, zac, zoe.
+    GROQ_TTS_MODEL: str = os.getenv("GROQ_TTS_MODEL", "canopylabs/orpheus-v1-english")
+    GROQ_TTS_VOICE: str = os.getenv("GROQ_TTS_VOICE", "tara")
+
+    @classmethod
+    def voice_enabled(cls) -> bool:
+        return bool(cls.GROQ_API_KEY)
+
     FLASK_SECRET: str = os.getenv("FLASK_SECRET", "dev-secret-change-me")
     PORT: int = int(os.getenv("PORT", "5000"))
 
