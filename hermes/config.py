@@ -48,6 +48,17 @@ class Config:
     FLASK_SECRET: str = os.getenv("FLASK_SECRET", "dev-secret-change-me")
     PORT: int = int(os.getenv("PORT", "5000"))
 
+    # ---- Voice mode (Pipecat + Groq) — READ-ONLY ----
+    # One Groq key covers STT + LLM + TTS. Server-side only; never sent to the
+    # browser. The voice service runs as a separate process from Flask.
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "").strip()
+    GROQ_STT_MODEL: str = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
+    GROQ_LLM_MODEL: str = os.getenv("GROQ_LLM_MODEL", "llama-3.3-70b-versatile")
+    GROQ_TTS_MODEL: str = os.getenv("GROQ_TTS_MODEL", "playai-tts")
+    GROQ_TTS_VOICE: str = os.getenv("GROQ_TTS_VOICE", "Celeste-PlayAI")
+    VOICE_WS_HOST: str = os.getenv("VOICE_WS_HOST", "0.0.0.0")
+    VOICE_WS_PORT: int = int(os.getenv("VOICE_WS_PORT", "8765"))
+
     @classmethod
     def apps(cls) -> list[str]:
         raw = os.getenv(

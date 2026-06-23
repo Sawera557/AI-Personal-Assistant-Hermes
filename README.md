@@ -66,6 +66,35 @@ Known slugs: `quickbooks`, `pdf-co`, `google-contacts`, `fathom`, `google-meet`,
 `google-forms`, `google-sheets`, `google-docs`, `google-drive`,
 `google-calendar`, `google-mail` (Gmail). Adjust the list with `HERMES_APPS`.
 
+## Voice mode (read-only)
+
+A real-time, phone-call-style voice assistant powered by **Groq** (STT + LLM +
+TTS) via **Pipecat**. You talk, Hermes talks back — no push-to-talk. It can
+**read and summarize** data from your connected Maton apps, but is **hard-locked
+to read-only** in code (`hermes/voice_tools.py`): it cannot send, create, edit,
+or delete anything. Your `GROQ_API_KEY` stays server-side; the browser only ever
+connects to your own voice service, never to `api.groq.com`.
+
+The voice service runs as a **separate process** from Flask:
+
+```bash
+# 1. Add GROQ_API_KEY to your .env  (https://console.groq.com/keys)
+# 2. Install the voice deps (heavy — pulls torch via silero):
+pip install -r requirements.txt -r requirements-voice.txt
+# 3. Run Flask (terminal A) and the voice service (terminal B):
+python app.py
+python voice_server.py        # listens on ws://0.0.0.0:8765
+```
+
+Then open the web app and click **🎙 Start voice** in the sidebar. Speak a
+question ("what are my most recent emails about?") and Hermes answers aloud. You
+can interrupt it mid-sentence (barge-in). A status pill shows connecting /
+listening / speaking.
+
+Voice settings live in `.env` (`GROQ_STT_MODEL`, `GROQ_LLM_MODEL`,
+`GROQ_TTS_MODEL`, `GROQ_TTS_VOICE`, `VOICE_WS_PORT`). The typed/Claude assistant
+is unchanged and still handles any writes (with its own confirmation step).
+
 ## JSON API
 
 | Method | Endpoint            | Body / notes                                              |

@@ -71,6 +71,7 @@ def index():
         apps=Config.apps(),
         model=Config.MODEL,
         web_search=Config.WEB_SEARCH,
+        voice_ws_port=Config.VOICE_WS_PORT,
     )
 
 

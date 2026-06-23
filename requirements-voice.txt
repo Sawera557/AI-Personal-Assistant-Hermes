@@ -1,0 +1,13 @@
+# ---- Hermes voice mode (Pipecat + Groq) ----
+# Install ONLY in the runtime that hosts the voice service:
+#     pip install -r requirements.txt -r requirements-voice.txt
+#     python voice_server.py
+#
+# Kept separate from requirements.txt on purpose: pipecat-ai[silero] pulls in
+# heavy native deps (torch), which the Flask app / serverless deploy does not
+# need and which would bloat or break that deploy.
+#
+# Pinned to the version this code was written against. If you bump it and an
+# import in voice_server.py breaks, that's expected — Pipecat moves module paths
+# between releases; adjust the imports flagged in voice_server.py.
+pipecat-ai[groq,silero,websocket]==1.4.0
