@@ -86,9 +86,10 @@ Run one user turn through the Claude + Maton agent. Accepts **JSON** or
 | `message` | string | ✅* | The user's message |
 | `session_id` | string | – | Conversation id; auto-generated if omitted |
 | `entity_id` | string | – | Tenant/user scope (see above) |
+| `attachment_ids` | string[] | – | Ids from `POST /api/attachments` to include |
 | `voice` | bool | – | `true` → short, spoken-style reply |
 
-\* `message` or at least one file is required.
+\* `message`, at least one file, or at least one `attachment_id` is required.
 
 ```bash
 curl -X POST http://localhost:5000/api/chat \
@@ -122,6 +123,70 @@ curl -X POST http://localhost:5000/api/chat \
   "entity_id": "customer-42"
 }
 ```
+
+---
+
+### `POST /api/attachments`
+Upload one or more files **once** and get back stable `attachment_id`s, then
+reference them from `/api/chat` (via `attachment_ids`) without re-uploading.
+Handy when the same document is used across several turns, or when the upload
+and the chat happen in separate requests. Supports PDFs, images, and text-like
+files (csv, json, md, code, …).
+
+Attachments are scoped to `entity_id` — only the same entity can reference,
+read, or delete them.
+
+**multipart/form-data**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `files` | file(s) | ✅ | One or more files (repeat the field) |
+| `entity_id` | string | – | Tenant/user scope (see above) |
+
+```bash
+curl -X POST http://localhost:5000/api/attachments \
+  -F "entity_id=customer-42" \
+  -F "files=@/path/to/report.pdf" \
+  -F "files=@/path/to/chart.png"
+```
+
+**Response**
+
+```json
+{
+  "attachments": [
+    { "attachment_id": "9f1c…", "filename": "report.pdf", "type": "document", "bytes": 18432 },
+    { "attachment_id": "a73e…", "filename": "chart.png",  "type": "image",    "bytes": 5120 }
+  ],
+  "entity_id": "customer-42"
+}
+```
+
+Then send them through chat:
+
+```bash
+curl -X POST http://localhost:5000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+        "message": "Summarize the report and describe the chart.",
+        "entity_id": "customer-42",
+        "attachment_ids": ["9f1c…", "a73e…"]
+      }'
+```
+
+A reference to an unknown or non-owned id returns `400 Unknown attachment_id`.
+
+### `GET /api/attachments/{attachment_id}?entity_id=…`
+Return an attachment's metadata. `404` if it doesn't exist or belongs to another
+entity.
+
+```json
+{ "attachment_id": "9f1c…", "filename": "report.pdf", "type": "document", "bytes": 18432, "entity_id": "customer-42" }
+```
+
+### `DELETE /api/attachments/{attachment_id}?entity_id=…`
+Delete an attachment. Returns `{ "status": "deleted", "attachment_id": "9f1c…" }`,
+or `404` if not found / not owned.
 
 ---
 
@@ -230,6 +295,7 @@ listening (STT) and speaking (TTS).
 app.py            # FastAPI app (routes only — no UI)
 hermes/
   agent.py        # Claude tool-use loop (the agent brain)
+  attachments.py  # In-memory attachment store (swap for Redis/object storage)
   config.py       # Env-based configuration
   maton.py        # Maton API gateway client
   memory.py       # In-memory conversation store (swap for Redis/DB to persist)
@@ -239,9 +305,10 @@ requirements.txt
 vercel.json       # Vercel deployment config
 ```
 
-> **Note:** conversation memory is in-process (`hermes/memory.py`). For a
-> multi-instance deployment, swap the store for Redis or a database — the
-> `get / set / reset` interface is all the agent depends on.
+> **Note:** conversation memory (`hermes/memory.py`) and uploaded attachments
+> (`hermes/attachments.py`) are held in-process. For a multi-instance
+> deployment, swap these stores for Redis / object storage / a database — their
+> small public interfaces are all the API depends on.
 
 ---
 

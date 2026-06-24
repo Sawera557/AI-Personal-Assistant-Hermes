@@ -5,13 +5,16 @@ every route returns JSON (or audio bytes), so you can host this backend on its
 own and point any frontend, mobile app, or service at it.
 
 Endpoints:
-    GET  /api/health            — liveness + config check
-    POST /api/chat              — run a turn through the Claude + Maton agent
-    POST /api/voice/transcribe  — speech -> text (multipart audio upload)
-    POST /api/voice/speak       — text -> speech (returns audio bytes)
-    GET  /api/voice/voices      — list available TTS voices + current default
-    GET/POST /api/connections   — list / create Maton app connections
-    POST /api/reset             — clear a conversation's history
+    GET  /api/health             — liveness + config check
+    POST /api/chat               — run a turn through the Claude + Maton agent
+    POST /api/attachments        — upload files, get attachment ids for /api/chat
+    GET  /api/attachments/{id}   — attachment metadata
+    DELETE /api/attachments/{id} — delete an attachment
+    POST /api/voice/transcribe   — speech -> text (multipart audio upload)
+    POST /api/voice/speak        — text -> speech (returns audio bytes)
+    GET  /api/voice/voices       — list available TTS voices + current default
+    GET/POST /api/connections    — list / create Maton app connections
+    POST /api/reset              — clear a conversation's history
 
 Interactive docs are auto-generated at /docs (Swagger) and /redoc.
 
@@ -28,8 +31,12 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+# Starlette's form parser yields starlette.UploadFile, which is the BASE class of
+# fastapi.UploadFile — so isinstance checks on parsed form files must use this.
+from starlette.datastructures import UploadFile as FormUploadFile
 
 from hermes.agent import run_turn
+from hermes.attachments import store as attachment_store
 from hermes.config import Config
 from hermes.maton import MatonClient, MatonError
 from hermes.memory import store
@@ -73,47 +80,46 @@ def _session_key(entity_id: str | None, session_id: str) -> str:
     return f"{eid}:{session_id}" if eid else session_id
 
 
+def _block_for(name: str, mime: str, raw: bytes) -> tuple[dict, str]:
+    """Turn one uploaded file into a Claude content block + its kind.
+
+    Returns (block, kind) where kind is "document", "image", or "text"."""
+    mime = (mime or "").lower()
+
+    if mime == "application/pdf" or name.lower().endswith(".pdf"):
+        block = {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": base64.standard_b64encode(raw).decode("utf-8"),
+            },
+            "title": name,
+        }
+        return block, "document"
+
+    if mime in _IMAGE_TYPES:
+        block = {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime,
+                "data": base64.standard_b64encode(raw).decode("utf-8"),
+            },
+        }
+        return block, "image"
+
+    # Treat anything else as text (csv, json, md, code, ...).
+    try:
+        text = raw.decode("utf-8", errors="replace")[:_TEXT_MAX_CHARS]
+    except Exception:  # noqa: BLE001
+        text = "(could not decode file as text)"
+    return {"type": "text", "text": f"Attached file '{name}':\n\n{text}"}, "text"
+
+
 def _build_attachments(files: list[tuple[str, str, bytes]]) -> list[dict]:
     """Turn uploaded files (name, mimetype, raw bytes) into Claude content blocks."""
-    blocks: list[dict] = []
-    for name, mime, raw in files:
-        if not name:
-            continue
-        mime = (mime or "").lower()
-
-        if mime == "application/pdf" or name.lower().endswith(".pdf"):
-            blocks.append(
-                {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": base64.standard_b64encode(raw).decode("utf-8"),
-                    },
-                    "title": name,
-                }
-            )
-        elif mime in _IMAGE_TYPES:
-            blocks.append(
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": mime,
-                        "data": base64.standard_b64encode(raw).decode("utf-8"),
-                    },
-                }
-            )
-        else:
-            # Treat anything else as text (csv, json, md, code, ...).
-            try:
-                text = raw.decode("utf-8", errors="replace")[:_TEXT_MAX_CHARS]
-            except Exception:  # noqa: BLE001
-                text = "(could not decode file as text)"
-            blocks.append(
-                {"type": "text", "text": f"Attached file '{name}':\n\n{text}"}
-            )
-    return blocks
+    return [_block_for(name, mime, raw)[0] for name, mime, raw in files if name]
 
 
 @app.get("/api/health")
@@ -133,9 +139,10 @@ async def chat(request: Request):
         entity_id = form.get("entity_id")
         message = (form.get("message") or "").strip()
         voice = _truthy(form.get("voice"))
+        attachment_ids = [a for a in form.getlist("attachment_ids") if isinstance(a, str)]
         files: list[tuple[str, str, bytes]] = []
         for upload in form.getlist("files"):
-            if isinstance(upload, UploadFile) and upload.filename:
+            if isinstance(upload, FormUploadFile) and upload.filename:
                 files.append((upload.filename, upload.content_type or "", await upload.read()))
         attachments = _build_attachments(files)
     else:
@@ -148,14 +155,24 @@ async def chat(request: Request):
         entity_id = data.get("entity_id")
         message = (data.get("message") or "").strip()
         voice = _truthy(data.get("voice"))
+        attachment_ids = data.get("attachment_ids") or []
         attachments = []
 
-    if not message and not attachments:
+    if not message and not attachments and not attachment_ids:
         return JSONResponse(
-            {"error": "Provide a message or at least one file."}, status_code=400
+            {"error": "Provide a message, a file, or an attachment_id."}, status_code=400
         )
 
-    content: list[dict] = list(attachments)
+    # Pull any previously-uploaded attachments (scoped to this entity) first.
+    content: list[dict] = []
+    for aid in attachment_ids:
+        block = attachment_store.block(str(aid), entity_id)
+        if block is None:
+            return JSONResponse(
+                {"error": f"Unknown attachment_id: {aid}"}, status_code=400
+            )
+        content.append(block)
+    content.extend(attachments)
     if message:
         content.append({"type": "text", "text": message})
 
@@ -169,6 +186,61 @@ async def chat(request: Request):
     result["session_id"] = session_id
     result["entity_id"] = entity_id
     return result
+
+
+@app.post("/api/attachments")
+async def upload_attachments(request: Request):
+    """Upload one or more files and get back stable attachment ids.
+
+    Pass those ids as `attachment_ids` to /api/chat to include the files in a
+    turn without re-uploading them. Attachments are scoped to `entity_id`, so
+    only the same entity can reference or delete them.
+
+    Multipart fields: `files` (one or more, required), `entity_id` (optional)."""
+    form = await request.form()
+    entity_id = form.get("entity_id")
+    uploads = [
+        u for u in form.getlist("files")
+        if isinstance(u, FormUploadFile) and u.filename
+    ]
+    if not uploads:
+        return JSONResponse(
+            {"error": "No files uploaded. Use the multipart field 'files'."},
+            status_code=400,
+        )
+
+    out = []
+    for upload in uploads:
+        raw = await upload.read()
+        block, kind = _block_for(upload.filename, upload.content_type or "", raw)
+        rec = attachment_store.add(entity_id, upload.filename, kind, len(raw), block)
+        out.append(
+            {
+                "attachment_id": rec["attachment_id"],
+                "filename": rec["filename"],
+                "type": rec["type"],
+                "bytes": rec["bytes"],
+            }
+        )
+    return {"attachments": out, "entity_id": entity_id}
+
+
+@app.get("/api/attachments/{attachment_id}")
+def get_attachment(attachment_id: str, entity_id: str | None = None):
+    """Return an attachment's metadata (filename, type, size). Pass the same
+    `entity_id` it was uploaded with as a query parameter."""
+    meta = attachment_store.meta(attachment_id, entity_id)
+    if meta is None:
+        return JSONResponse({"error": "Attachment not found."}, status_code=404)
+    return meta
+
+
+@app.delete("/api/attachments/{attachment_id}")
+def delete_attachment(attachment_id: str, entity_id: str | None = None):
+    """Delete an attachment. Pass the same `entity_id` it was uploaded with."""
+    if attachment_store.remove(attachment_id, entity_id):
+        return {"status": "deleted", "attachment_id": attachment_id}
+    return JSONResponse({"error": "Attachment not found."}, status_code=404)
 
 
 class ConnectionRequest(BaseModel):
