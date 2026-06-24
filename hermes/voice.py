@@ -51,6 +51,29 @@ def _ext_for(mimetype: str | None) -> str:
     return _EXT_BY_MIME.get(base, "webm")
 
 
+# Brand/product names speech-to-text commonly mangles. Seeding these into the
+# transcription `prompt` biases it to output the right spelling (e.g. "Vercel"
+# instead of "Warsaw") — which also helps a lot with accents.
+_BASE_VOCAB = (
+    "Vercel, Maton, Hermes, Claude, Anthropic, OpenAI, Groq, QuickBooks, Gmail, "
+    "Google Drive, Google Docs, Google Sheets, Google Calendar, Google Forms, "
+    "Google Meet, Google Contacts, Fathom, PDF.co, GitHub, OAuth, API, webhook, "
+    "endpoint, deploy, dashboard, invoice"
+)
+
+
+def _stt_prompt() -> str:
+    """A short context prompt that nudges STT toward the right spellings."""
+    terms = _BASE_VOCAB
+    if Config.VOICE_VOCAB:
+        terms += ", " + Config.VOICE_VOCAB
+    return (
+        "Conversation with an AI work assistant about business apps and the web. "
+        "Transcribe these names with their correct spelling when you hear them: "
+        + terms + "."
+    )
+
+
 def transcribe(audio: bytes, mimetype: str | None = None) -> str:
     """Speech -> text. Returns the recognized transcript."""
     if not Config.voice_api_key():
@@ -70,6 +93,8 @@ def transcribe(audio: bytes, mimetype: str | None = None) -> str:
                 "response_format": "json",
                 # Lock recognition to one language so it can't drift to another.
                 "language": Config.VOICE_LANGUAGE,
+                # Bias toward known brand/product names (accents + jargon).
+                "prompt": _stt_prompt(),
             },
             timeout=_STT_TIMEOUT,
         )

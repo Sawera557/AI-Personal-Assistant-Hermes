@@ -53,13 +53,17 @@ class Config:
     VOICE_PROVIDER: str = os.getenv("VOICE_PROVIDER", "openai").strip().lower()
     # ISO-639-1 language the voice agent listens and replies in (English only).
     VOICE_LANGUAGE: str = os.getenv("VOICE_LANGUAGE", "en").strip().lower()
+    # Extra words/brand names to help speech-to-text spell them right (comma-
+    # separated). Add anything it keeps mishearing, e.g. project or client names.
+    VOICE_VOCAB: str = os.getenv("VOICE_VOCAB", "").strip()
 
     # OpenAI (default voice provider)
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "").strip()
     OPENAI_BASE_URL: str = os.getenv(
         "OPENAI_BASE_URL", "https://api.openai.com/v1"
     ).rstrip("/")
-    OPENAI_STT_MODEL: str = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
+    # Full transcribe model handles accents + proper nouns far better than mini.
+    OPENAI_STT_MODEL: str = os.getenv("OPENAI_STT_MODEL", "gpt-4o-transcribe")
     OPENAI_TTS_MODEL: str = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
     OPENAI_TTS_VOICE: str = os.getenv("OPENAI_TTS_VOICE", "alloy")
     OPENAI_TTS_VOICES: tuple[str, ...] = (
