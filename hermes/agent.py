@@ -28,7 +28,9 @@ _VOICE_STYLE = (
     "sentence or two unless they ask for detail. Do NOT use markdown, headings, "
     "bullet lists, tables, code blocks, emoji, or long quotes or URLs (they sound "
     "wrong read out). Use plain spoken sentences. Lead with the answer, and if you "
-    "need to confirm a write action, ask in one short spoken question."
+    "need to confirm a write action, ask in one short spoken question. "
+    "Always respond in English, even if the user's words are unclear or sound like "
+    "another language."
 )
 
 

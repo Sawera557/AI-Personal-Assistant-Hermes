@@ -51,6 +51,8 @@ class Config:
     # does the listening (STT) and speaking (TTS). Both OpenAI and Groq expose
     # the same OpenAI-style /audio/* endpoints, so switching is just config.
     VOICE_PROVIDER: str = os.getenv("VOICE_PROVIDER", "openai").strip().lower()
+    # ISO-639-1 language the voice agent listens and replies in (English only).
+    VOICE_LANGUAGE: str = os.getenv("VOICE_LANGUAGE", "en").strip().lower()
 
     # OpenAI (default voice provider)
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "").strip()

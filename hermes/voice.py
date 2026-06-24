@@ -68,6 +68,8 @@ def transcribe(audio: bytes, mimetype: str | None = None) -> str:
             data={
                 "model": Config.voice_stt_model(),
                 "response_format": "json",
+                # Lock recognition to one language so it can't drift to another.
+                "language": Config.VOICE_LANGUAGE,
             },
             timeout=_STT_TIMEOUT,
         )
