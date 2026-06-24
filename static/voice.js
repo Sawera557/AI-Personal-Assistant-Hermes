@@ -31,9 +31,12 @@
     (voiceSelect && voiceSelect.value) || savedVoice || undefined;
 
   // ---- Tunables (VAD) ----
-  const SILENCE_MS = 1100;    // silence after speech => end of your turn
+  // Endpointing waits for a real pause and uses two thresholds (hysteresis):
+  // a higher one to START a turn, a lower one to KEEP it open — so trailing-off
+  // words and brief mid-sentence breaths don't get cut off as "you stopped".
+  const SILENCE_MS = 1600;    // continuous quiet after speech => end of your turn
   const MIN_SPEECH_MS = 250;  // ignore tiny blips / clicks
-  const MAX_UTTER_MS = 20000; // hard cap on one utterance
+  const MAX_UTTER_MS = 45000; // hard cap on one utterance (~45s)
   const TICK_MS = 16;         // ~60fps analyser loop
 
   // ---- Barge-in (interrupt the assistant while it is speaking) ----
@@ -185,19 +188,24 @@
       sum += v * v;
     }
     const rms = Math.sqrt(sum / buf.length);
-    smoothRms = smoothRms * 0.8 + rms * 0.2;
+    smoothRms = smoothRms * 0.85 + rms * 0.15;
 
-    const threshold = Math.max(0.02, noiseFloor * 1.8 + 0.012);
+    // Two thresholds: high to begin a turn, low to keep it alive (hysteresis).
+    const startThresh = Math.max(0.024, noiseFloor * 2.0 + 0.015);
+    const keepThresh = Math.max(0.012, noiseFloor * 1.25 + 0.006);
     const now = Date.now();
-    const speaking = smoothRms > threshold;
+    // Before you've started: only loud sound counts. After: any voiced sound
+    // above the lower threshold keeps the turn open.
+    const voiced = speechStartedAt ? smoothRms > keepThresh : smoothRms > startThresh;
 
-    if (speaking) {
+    if (voiced) {
       if (!speechStartedAt) speechStartedAt = now;
       lastVoiceAt = now;
       orb.style.setProperty("--level", Math.min(1, smoothRms * 6).toFixed(2));
     } else {
-      // Adapt the noise floor only while no one is talking.
-      noiseFloor = noiseFloor * 0.95 + smoothRms * 0.05;
+      // Adapt the noise floor only while waiting for you to start talking,
+      // never during a pause mid-utterance (that would cut you off early).
+      if (!speechStartedAt) noiseFloor = noiseFloor * 0.95 + smoothRms * 0.05;
       orb.style.setProperty("--level", "0");
     }
 
