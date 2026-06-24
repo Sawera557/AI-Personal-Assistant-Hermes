@@ -1,10 +1,28 @@
-"""Flask entrypoint for the Hermes AI Agent — web chat UI + JSON API."""
+"""Flask entrypoint for the Hermes AI Agent — JSON API backend (no UI).
+
+This is the headless, deploy-anywhere API for Hermes. There is no web UI here:
+every route returns JSON (or audio bytes), so you can host this backend on its
+own and point any frontend, mobile app, or service at it.
+
+Endpoints:
+    GET  /api/health            — liveness + config check
+    POST /api/chat              — run a turn through the Claude + Maton agent
+    POST /api/voice/transcribe  — speech -> text (multipart audio upload)
+    POST /api/voice/speak       — text -> speech (returns audio bytes)
+    GET  /api/voice/voices      — list available TTS voices + current default
+    GET/POST /api/connections   — list / create Maton app connections
+    POST /api/reset             — clear a conversation's history
+
+Every agent/voice endpoint accepts an optional `entity_id` so a single backend
+can serve many tenants/users with isolated conversation memory.
+"""
 from __future__ import annotations
 
 import base64
 import uuid
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, request
+from flask_cors import CORS
 
 from hermes.agent import run_turn
 from hermes.config import Config
@@ -12,9 +30,13 @@ from hermes.maton import MatonClient, MatonError
 from hermes.memory import store
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder=None)  # API only — no static files served
 app.secret_key = Config.FLASK_SECRET
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB upload cap
+
+# Allow a separately-deployed frontend / client to call this API. Lock down the
+# origins in production via CORS_ORIGINS (comma-separated) — defaults to "*".
+CORS(app, resources={r"/api/*": {"origins": Config.cors_origins()}})
 
 _IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _TEXT_MAX_CHARS = 200_000
@@ -22,6 +44,12 @@ _TEXT_MAX_CHARS = 200_000
 
 def _truthy(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _session_key(entity_id: str | None, session_id: str) -> str:
+    """Namespace a session by entity so tenants never share conversation memory."""
+    eid = (entity_id or "").strip()
+    return f"{eid}:{session_id}" if eid else session_id
 
 
 def _build_attachments(files) -> list[dict]:
@@ -69,19 +97,6 @@ def _build_attachments(files) -> list[dict]:
     return blocks
 
 
-@app.route("/")
-def index():
-    return render_template(
-        "index.html",
-        apps=Config.apps(),
-        model=Config.MODEL,
-        web_search=Config.WEB_SEARCH,
-        voice_enabled=Config.voice_enabled(),
-        voices=Config.voice_voices(),
-        voice=Config.voice_tts_voice(),
-    )
-
-
 @app.route("/api/health")
 def health():
     return jsonify({"status": "ok", "problems": Config.validate()})
@@ -92,12 +107,14 @@ def chat():
     # Accept JSON or multipart (multipart carries file attachments).
     if request.content_type and request.content_type.startswith("multipart/"):
         session_id = request.form.get("session_id") or str(uuid.uuid4())
+        entity_id = request.form.get("entity_id")
         message = (request.form.get("message") or "").strip()
         attachments = _build_attachments(request.files.getlist("files"))
         voice = _truthy(request.form.get("voice"))
     else:
         data = request.get_json(silent=True) or {}
         session_id = data.get("session_id") or str(uuid.uuid4())
+        entity_id = data.get("entity_id")
         message = (data.get("message") or "").strip()
         attachments = []
         voice = _truthy(data.get("voice"))
@@ -110,11 +127,12 @@ def chat():
         content.append({"type": "text", "text": message})
 
     try:
-        result = run_turn(session_id, content, voice=voice)
+        result = run_turn(_session_key(entity_id, session_id), content, voice=voice)
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the client
         return jsonify({"error": f"Agent error: {exc}"}), 500
 
     result["session_id"] = session_id
+    result["entity_id"] = entity_id
     return jsonify(result)
 
 
@@ -139,22 +157,29 @@ def connections():
 
 @app.route("/api/voice/transcribe", methods=["POST"])
 def voice_transcribe():
-    """Speech -> text. The browser posts a recorded audio clip; Groq Whisper
-    returns the transcript, which the client then sends through /api/chat so the
-    voice agent runs the exact same Claude + Maton agent as the typed chat."""
+    """Speech -> text. The client posts a recorded audio clip; the configured
+    provider (OpenAI/Groq Whisper) returns the transcript, which the client then
+    sends through /api/chat so the voice agent runs the exact same Claude + Maton
+    agent as the typed chat.
+
+    Multipart fields: `audio` (file, required), `entity_id` (optional)."""
     f = request.files.get("audio")
     if not f:
         return jsonify({"error": "No audio uploaded."}), 400
+    entity_id = request.form.get("entity_id")
     try:
         text = transcribe(f.read(), f.mimetype)
     except VoiceError as exc:
         return jsonify({"error": str(exc)}), 502
-    return jsonify({"text": text})
+    return jsonify({"text": text, "entity_id": entity_id})
 
 
 @app.route("/api/voice/speak", methods=["POST"])
 def voice_speak():
-    """Text -> speech. Returns OpenAI TTS audio for the agent's reply."""
+    """Text -> speech. Returns TTS audio for the agent's reply.
+
+    JSON body: `text` (required), `voice` (optional override), `entity_id`
+    (optional — echoed back in the X-Entity-Id response header)."""
     data = request.get_json(silent=True) or {}
     text = speakable(data.get("text") or "")
     if not text:
@@ -163,15 +188,34 @@ def voice_speak():
         audio, mimetype = synthesize(text, voice=data.get("voice"))
     except VoiceError as exc:
         return jsonify({"error": str(exc)}), 502
-    return Response(audio, mimetype=mimetype)
+    resp = Response(audio, mimetype=mimetype)
+    if data.get("entity_id"):
+        resp.headers["X-Entity-Id"] = str(data["entity_id"])
+    return resp
+
+
+@app.route("/api/voice/voices", methods=["GET"])
+def voice_voices():
+    """List the TTS voices available for the active provider, plus the current
+    default. A client uses this to let the user change voice; pass the chosen
+    name as `voice` to /api/voice/speak."""
+    return jsonify(
+        {
+            "provider": Config.VOICE_PROVIDER,
+            "default": Config.voice_tts_voice(),
+            "voices": list(Config.voice_voices()),
+            "enabled": Config.voice_enabled(),
+        }
+    )
 
 
 @app.route("/api/reset", methods=["POST"])
 def reset():
     data = request.get_json(silent=True) or {}
     session_id = data.get("session_id")
+    entity_id = data.get("entity_id")
     if session_id:
-        store.reset(session_id)
+        store.reset(_session_key(entity_id, session_id))
     return jsonify({"status": "reset"})
 
 
@@ -181,16 +225,9 @@ if __name__ == "__main__":
         print("[Hermes] Configuration warnings:")
         for p in problems:
             print(f"  - {p}")
-    voice = "on" if Config.voice_enabled() else "off (set GROQ_API_KEY)"
+    voice = "on" if Config.voice_enabled() else "off (set OPENAI_API_KEY)"
     print(
-        f"[Hermes] Starting on http://127.0.0.1:{Config.PORT}  "
+        f"[Hermes] API backend starting on http://127.0.0.1:{Config.PORT}  "
         f"(model: {Config.MODEL}, voice: {voice})"
     )
     app.run(host="0.0.0.0", port=Config.PORT, debug=True)
-
-
-#AI Stack, All platforms connectors apis mcps cost
-# Questions related to AI Dashboard
-# API cost
-# Which AI you need and you dont need
-# Agentic features

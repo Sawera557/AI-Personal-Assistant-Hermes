@@ -1,115 +1,251 @@
-# Hermes AI Agent
+# Hermes AI Agent — API Backend
 
-A Flask-based AI assistant powered by **Claude (Opus 4.8)** that acts across your
-business apps through **[Maton](https://maton.ai)**, searches the web, and answers
-questions about documents you upload.
+A headless JSON API for **Hermes**, an AI executive assistant powered by Claude
+that acts across your connected business apps (via the [Maton](https://maton.ai)
+gateway), the web, and your documents — plus a voice layer (speech-to-text and
+text-to-speech).
 
-It ships with a browser chat UI **and** a JSON API.
+> This branch is **backend-only**. There is no UI: every route returns JSON (or
+> raw audio bytes). Deploy it on its own and point any frontend, mobile app, or
+> service at it.
 
-## What it can do
+---
 
-- **Connect to your apps via Maton** — QuickBooks, PDF.co, Gmail, Google
-  Drive / Docs / Sheets / Forms / Contacts / Calendar / Meet, and Fathom. Maton
-  handles OAuth and proxies native API calls; Hermes just asks for the data.
-- **Tool / function calling** — Claude decides which app + endpoint to call and
-  chains calls to complete a task.
-- **Conversation memory** — remembers context per chat session.
-- **Web search** — Anthropic's built-in server-side web search & fetch.
-- **File / document Q&A** — upload PDFs, images, CSVs, or text and ask about them.
-- **Hands-free voice agent** — talk to Hermes like a phone call. OpenAI handles
-  the voice (`gpt-4o-mini-transcribe` speech-to-text + `gpt-4o-mini-tts`
-  text-to-speech); the *brain stays Claude*, so voice has the **exact same app
-  functionality** as the typed chat. (Set `VOICE_PROVIDER=groq` to use Groq
-  Whisper + Orpheus instead.)
+## Quick start
 
-## Architecture
-
-```
-Browser chat UI ──► Flask (app.py)
-                      │
-                      ├─ hermes/agent.py    Claude tool-use loop (Opus 4.8)
-                      ├─ hermes/tools.py     tool schemas + dispatch
-                      ├─ hermes/maton.py     Maton API gateway client
-                      ├─ hermes/memory.py    per-session conversation store
-                      ├─ hermes/voice.py     STT + TTS (voice mode only)
-                      └─ hermes/config.py    env config
-                      │
-                      ▼
-        Anthropic API  +  Maton gateway (api.maton.ai)  +  OpenAI (voice)
-```
-
-**Voice mode** (`static/voice.js` + `/api/voice/*`) does
-`mic → OpenAI STT → /api/chat (same Claude agent) → OpenAI TTS → speaker`,
-with browser-side voice-activity detection driving a continuous, hands-free call.
-
-The agent exposes three Maton tools to Claude — `maton_request` (generic native
-API passthrough for any connected app), `maton_list_connections`, and
-`maton_create_connection` — plus Anthropic's `web_search` / `web_fetch`.
-
-## Setup
-
-1. **Python 3.10+**, then install deps:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Configure keys** — copy the example env file and fill it in:
-   ```bash
-   cp .env.example .env      # Windows: copy .env.example .env
-   ```
-   - `ANTHROPIC_API_KEY` — from https://platform.claude.com
-   - `MATON_API_KEY` — from https://maton.ai/api-keys
-   - `OPENAI_API_KEY` *(voice mode)* — from https://platform.openai.com/api-keys.
-     Powers speech-to-text + text-to-speech. Leave blank to hide the voice button.
-     (To use Groq instead, set `VOICE_PROVIDER=groq` and provide `GROQ_API_KEY`.)
-
-3. **Run it:**
-   ```bash
-   python app.py
-   ```
-   Open http://127.0.0.1:5000
-
-## Connecting an app
-
-In the sidebar, type an app slug (e.g. `quickbooks`, `google-mail`) and click
-**Connect** — you'll get an OAuth link to authorize that account. You can also
-just ask Hermes ("connect my QuickBooks") and it will return the link.
-
-Known slugs: `quickbooks`, `pdf-co`, `google-contacts`, `fathom`, `google-meet`,
-`google-forms`, `google-sheets`, `google-docs`, `google-drive`,
-`google-calendar`, `google-mail` (Gmail). Adjust the list with `HERMES_APPS`.
-
-## JSON API
-
-| Method | Endpoint            | Body / notes                                              |
-|--------|---------------------|-----------------------------------------------------------|
-| POST   | `/api/chat`         | JSON `{session_id, message}` or multipart with `files`    |
-| GET    | `/api/connections`  | `?app=&status=ACTIVE` — list Maton connections            |
-| POST   | `/api/connections`  | JSON `{app}` — start OAuth, returns `{data:{url}}`         |
-| POST   | `/api/reset`        | JSON `{session_id}` — clear a conversation                 |
-| POST   | `/api/voice/transcribe` | multipart `audio` — OpenAI STT, returns `{text}`      |
-| POST   | `/api/voice/speak`  | JSON `{text, voice}` — returns OpenAI TTS audio (`audio/wav`) |
-| GET    | `/api/health`       | config check                                              |
-
-Example:
 ```bash
-curl -X POST http://127.0.0.1:5000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"session_id":"demo","message":"List my 5 most recent Gmail messages"}'
+# 1. Install dependencies
+pip install -r requirements.txt
+
+# 2. Configure your keys
+cp .env.example .env      # then edit .env and fill in your API keys
+
+# 3. Run the API
+python app.py             # serves on http://127.0.0.1:5000
 ```
 
-## Safety
+For production, run it under a WSGI server:
 
-Hermes is instructed to perform **read-only** calls first and to **ask for
-confirmation before any write/destructive action** (sending email, editing
-QuickBooks, deleting Drive files, etc.). Your `MATON_API_KEY` and
-`ANTHROPIC_API_KEY` are server-side only and never sent to the browser.
+```bash
+gunicorn app:app --bind 0.0.0.0:5000 --workers 2 --timeout 120
+```
 
-## Notes / next steps
+### Required configuration
 
-- Conversation memory is in-process (`hermes/memory.py`). Swap in Redis or a DB
-  for persistence across restarts / multiple workers.
-- App slugs follow Maton's naming; if a call 404s, verify the slug and native
-  path against Maton's docs.
-- For production, run behind a real WSGI server (e.g. `gunicorn app:app`) and set
-  a strong `FLASK_SECRET`.
+| Variable | Required | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | ✅ | Claude — the agent's brain |
+| `MATON_API_KEY` | ✅ | Maton gateway — connected app access |
+| `OPENAI_API_KEY` | for voice | Speech-to-text + text-to-speech |
+| `CORS_ORIGINS` | optional | Allowed frontend origins (default `*`) |
+
+See [`.env.example`](.env.example) for the full list (model, voice provider,
+voices, app list, etc.).
+
+---
+
+## The `entity_id` field
+
+Every agent/voice endpoint accepts an optional **`entity_id`** in the request
+body. It lets a single backend serve many tenants/users while keeping their
+conversation memory **isolated** — internally the store is keyed by
+`entity_id` + `session_id`, so two callers with the same `session_id` but
+different `entity_id` never see each other's history. It is also echoed back in
+responses so the client can correlate them.
+
+- Omit it for a single-tenant deployment — everything still works.
+- Pass a stable per-customer / per-user id for multi-tenant isolation.
+
+---
+
+## Endpoints
+
+Base URL: `http://<host>:<port>`  •  All bodies are JSON unless noted.
+
+### `GET /api/health`
+Liveness + configuration check.
+
+```json
+{ "status": "ok", "problems": [] }
+```
+`problems` lists any missing required keys (empty when healthy).
+
+---
+
+### `POST /api/chat`
+Run one user turn through the Claude + Maton agent. Accepts **JSON** or
+**multipart/form-data** (use multipart to attach files — PDFs, images, text).
+
+**JSON body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `message` | string | ✅* | The user's message |
+| `session_id` | string | – | Conversation id; auto-generated if omitted |
+| `entity_id` | string | – | Tenant/user scope (see above) |
+| `voice` | bool | – | `true` → short, spoken-style reply |
+
+\* `message` or at least one file is required.
+
+```bash
+curl -X POST http://localhost:5000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+        "message": "What meetings do I have tomorrow?",
+        "session_id": "abc123",
+        "entity_id": "customer-42"
+      }'
+```
+
+**With file attachments (multipart):**
+
+```bash
+curl -X POST http://localhost:5000/api/chat \
+  -F "message=Summarize this PDF" \
+  -F "session_id=abc123" \
+  -F "entity_id=customer-42" \
+  -F "files=@/path/to/report.pdf"
+```
+
+**Response**
+
+```json
+{
+  "reply": "You have two meetings tomorrow...",
+  "thinking": "…summarized reasoning, or null…",
+  "tool_calls": [ { "tool": "maton_request", "input": {}, "ok": true } ],
+  "stop_reason": "end_turn",
+  "session_id": "abc123",
+  "entity_id": "customer-42"
+}
+```
+
+---
+
+### `POST /api/voice/transcribe`
+Speech → text. Post a recorded audio clip; returns the transcript. Send the
+returned text back through `/api/chat` to run the full agent.
+
+**multipart/form-data**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `audio` | file | ✅ | webm, ogg, wav, mp4, mpeg/mp3, m4a, flac |
+| `entity_id` | string | – | Tenant/user scope; echoed back |
+
+```bash
+curl -X POST http://localhost:5000/api/voice/transcribe \
+  -F "audio=@clip.webm" \
+  -F "entity_id=customer-42"
+```
+
+**Response**
+
+```json
+{ "text": "what meetings do I have tomorrow", "entity_id": "customer-42" }
+```
+
+---
+
+### `POST /api/voice/speak`
+Text → speech. Returns raw audio bytes (`audio/wav`). Markdown/URLs/code are
+stripped first so the reply reads cleanly aloud.
+
+**JSON body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `text` | string | ✅ | Text to speak |
+| `voice` | string | – | Override the default voice (see `/api/voice/voices`) |
+| `entity_id` | string | – | Echoed back in the `X-Entity-Id` response header |
+
+```bash
+curl -X POST http://localhost:5000/api/voice/speak \
+  -H "Content-Type: application/json" \
+  -d '{ "text": "You have two meetings tomorrow.", "voice": "alloy", "entity_id": "customer-42" }' \
+  --output reply.wav
+```
+
+---
+
+### `GET /api/voice/voices`
+List the TTS voices available for the active provider, plus the current default.
+Use this to let the user **change voice**, then pass the chosen name as `voice`
+to `/api/voice/speak`.
+
+```json
+{
+  "provider": "openai",
+  "default": "alloy",
+  "voices": ["alloy", "ash", "ballad", "coral", "echo", "fable",
+             "onyx", "nova", "sage", "shimmer", "verse"],
+  "enabled": true
+}
+```
+
+---
+
+### `GET|POST /api/connections`
+Manage Maton app connections.
+
+- **GET** — list connections. Optional query params: `app`, `status`
+  (`ACTIVE` | `PENDING` | `FAILED`).
+- **POST** `{ "app": "google-mail" }` — start an OAuth connection; the response
+  contains a `url` the user opens to authorize the app.
+
+---
+
+### `POST /api/reset`
+Clear a conversation's history.
+
+```json
+{ "session_id": "abc123", "entity_id": "customer-42" }
+```
+
+Returns `{ "status": "reset" }`. Scope it the same way you created it — pass the
+same `entity_id` you used for `/api/chat`.
+
+---
+
+## Typical voice flow
+
+```
+record audio ──► POST /api/voice/transcribe ──► transcript
+transcript   ──► POST /api/chat (voice=true)  ──► reply text
+reply text   ──► POST /api/voice/speak        ──► spoken audio
+```
+
+The agent's brain is always Claude (`run_turn`), so the voice path has the exact
+same multi-app capabilities as the typed chat — the voice provider only does the
+listening (STT) and speaking (TTS).
+
+---
+
+## Project layout
+
+```
+app.py            # Flask API (routes only — no UI)
+hermes/
+  agent.py        # Claude tool-use loop (the agent brain)
+  config.py       # Env-based configuration
+  maton.py        # Maton API gateway client
+  memory.py       # In-memory conversation store (swap for Redis/DB to persist)
+  tools.py        # Tool definitions + dispatcher
+  voice.py        # Speech-to-text / text-to-speech
+requirements.txt
+vercel.json       # Vercel deployment config
+```
+
+> **Note:** conversation memory is in-process (`hermes/memory.py`). For a
+> multi-instance deployment, swap the store for Redis or a database — the
+> `get / set / reset` interface is all the agent depends on.
+
+---
+
+## Deployment
+
+- **Vercel** — `vercel.json` is included; `vercel deploy` works out of the box.
+- **Any host / container** — run with `gunicorn app:app` (see Quick start) and
+  set the environment variables from `.env.example`.
+
+Set `CORS_ORIGINS` to your frontend's origin(s) in production instead of `*`.

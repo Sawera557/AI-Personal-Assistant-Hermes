@@ -120,6 +120,14 @@ class Config:
     PORT: int = int(os.getenv("PORT", "5000"))
 
     @classmethod
+    def cors_origins(cls) -> list[str] | str:
+        """Allowed origins for the API. Comma-separated CORS_ORIGINS, or "*"."""
+        raw = os.getenv("CORS_ORIGINS", "*").strip()
+        if raw == "*" or not raw:
+            return "*"
+        return [o.strip() for o in raw.split(",") if o.strip()]
+
+    @classmethod
     def apps(cls) -> list[str]:
         raw = os.getenv(
             "HERMES_APPS",
