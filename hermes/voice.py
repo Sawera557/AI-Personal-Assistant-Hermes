@@ -18,7 +18,7 @@ from typing import Any
 
 import requests
 
-from .config import Config
+from .config import APP_LABELS, Config
 
 _STT_TIMEOUT = 60
 _TTS_TIMEOUT = 60
@@ -51,26 +51,23 @@ def _ext_for(mimetype: str | None) -> str:
     return _EXT_BY_MIME.get(base, "webm")
 
 
-# Brand/product names speech-to-text commonly mangles. Seeding these into the
-# transcription `prompt` biases it to output the right spelling (e.g. "Vercel"
-# instead of "Warsaw") — which also helps a lot with accents.
-_BASE_VOCAB = (
-    "Vercel, Maton, Hermes, Claude, Anthropic, OpenAI, Groq, QuickBooks, Gmail, "
-    "Google Drive, Google Docs, Google Sheets, Google Calendar, Google Forms, "
-    "Google Meet, Google Contacts, Fathom, PDF.co, GitHub, OAuth, API, webhook, "
-    "endpoint, deploy, dashboard, invoice"
-)
-
-
 def _stt_prompt() -> str:
-    """A short context prompt that nudges STT toward the right spellings."""
-    terms = _BASE_VOCAB
+    """A light context prompt so STT spells the user's real app/brand names right.
+
+    Kept to genuinely-relevant terms only: the assistant name plus the user's
+    actually-connected apps (and any VOICE_VOCAB they add). Over-stuffing this
+    with speculative names makes STT *insert* them where they weren't said, so we
+    describe context and tell it to transcribe verbatim rather than push words.
+    """
+    names = ["Hermes", "Maton"]
+    names += [APP_LABELS.get(slug, slug) for slug in Config.apps()]
     if Config.VOICE_VOCAB:
-        terms += ", " + Config.VOICE_VOCAB
+        names += [t.strip() for t in Config.VOICE_VOCAB.split(",") if t.strip()]
     return (
-        "Conversation with an AI work assistant about business apps and the web. "
-        "Transcribe these names with their correct spelling when you hear them: "
-        + terms + "."
+        "The user is talking to an AI work assistant called Hermes about their "
+        "connected apps (" + ", ".join(names) + ") and the web. "
+        "Transcribe exactly what they say, word for word; do not substitute or "
+        "add app or brand names that were not actually spoken."
     )
 
 
