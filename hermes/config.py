@@ -116,7 +116,6 @@ class Config:
     def voice_enabled(cls) -> bool:
         return bool(cls.voice_api_key())
 
-    FLASK_SECRET: str = os.getenv("FLASK_SECRET", "dev-secret-change-me")
     PORT: int = int(os.getenv("PORT", "5000"))
 
     @classmethod

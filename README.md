@@ -1,6 +1,6 @@
 # Hermes AI Agent — API Backend
 
-A headless JSON API for **Hermes**, an AI executive assistant powered by Claude
+A headless **FastAPI** JSON API for **Hermes**, an AI executive assistant powered by Claude
 that acts across your connected business apps (via the [Maton](https://maton.ai)
 gateway), the web, and your documents — plus a voice layer (speech-to-text and
 text-to-speech).
@@ -21,13 +21,16 @@ pip install -r requirements.txt
 cp .env.example .env      # then edit .env and fill in your API keys
 
 # 3. Run the API
-python app.py             # serves on http://127.0.0.1:5000
+python app.py             # serves on http://127.0.0.1:5000 (auto-reload)
 ```
 
-For production, run it under a WSGI server:
+Interactive API docs are auto-generated:
+**Swagger UI → `/docs`**, **ReDoc → `/redoc`**.
+
+For production, run it under an ASGI server:
 
 ```bash
-gunicorn app:app --bind 0.0.0.0:5000 --workers 2 --timeout 120
+uvicorn app:app --host 0.0.0.0 --port 5000 --workers 2
 ```
 
 ### Required configuration
@@ -224,7 +227,7 @@ listening (STT) and speaking (TTS).
 ## Project layout
 
 ```
-app.py            # Flask API (routes only — no UI)
+app.py            # FastAPI app (routes only — no UI)
 hermes/
   agent.py        # Claude tool-use loop (the agent brain)
   config.py       # Env-based configuration
@@ -244,8 +247,8 @@ vercel.json       # Vercel deployment config
 
 ## Deployment
 
-- **Vercel** — `vercel.json` is included; `vercel deploy` works out of the box.
-- **Any host / container** — run with `gunicorn app:app` (see Quick start) and
+- **Vercel** — `vercel.json` is included; the ASGI `app` is detected automatically.
+- **Any host / container** — run with `uvicorn app:app` (see Quick start) and
   set the environment variables from `.env.example`.
 
 Set `CORS_ORIGINS` to your frontend's origin(s) in production instead of `*`.
