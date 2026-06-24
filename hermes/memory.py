@@ -1,32 +1,125 @@
 """In-memory conversation store keyed by session id.
 
-Swap this for Redis / a database to persist across restarts. The public
-interface (get / append / reset) is all the agent depends on.
+Holds two things per conversation:
+
+* ``messages`` — the raw Claude message list the agent loop reads/writes. This
+  is the model's working memory for the turn-by-turn tool-use loop.
+* ``transcript`` + metadata (title, timestamps) — a lightweight, display-only
+  record of the conversation used to power the UI's conversation-history
+  sidebar (list past chats, switch between them, replay them).
+
+Both are kept in process memory, so history lives for as long as the server is
+running. Swap this for Redis / a database to persist across restarts — the
+public interface (get / set / reset for the agent, plus record_turn /
+conversations / transcript for history) is all the rest of the app depends on.
 """
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
+
+
+def _now() -> float:
+    return time.time()
 
 
 class ConversationStore:
     def __init__(self, max_messages: int = 100):
         self._lock = threading.Lock()
-        self._sessions: dict[str, list[dict[str, Any]]] = {}
+        self._sessions: dict[str, dict[str, Any]] = {}
         self._max_messages = max_messages
 
-    def get(self, session_id: str) -> list[dict[str, Any]]:
-        with self._lock:
-            return list(self._sessions.get(session_id, []))
+    def _record(self, key: str) -> dict[str, Any]:
+        """Get (or lazily create) the record for a session key. Caller holds the lock."""
+        rec = self._sessions.get(key)
+        if rec is None:
+            now = _now()
+            rec = {
+                "messages": [],      # raw Claude messages (agent working memory)
+                "transcript": [],    # display turns for the UI history
+                "title": "",
+                "entity_id": None,
+                "session_id": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+            self._sessions[key] = rec
+        return rec
 
-    def set(self, session_id: str, messages: list[dict[str, Any]]) -> None:
+    # ---- Agent-facing API (keyed by the full namespaced session key) -------
+    def get(self, key: str) -> list[dict[str, Any]]:
         with self._lock:
+            rec = self._sessions.get(key)
+            return list(rec["messages"]) if rec else []
+
+    def set(self, key: str, messages: list[dict[str, Any]]) -> None:
+        with self._lock:
+            rec = self._record(key)
             # Keep the most recent turns to bound memory growth.
-            self._sessions[session_id] = messages[-self._max_messages :]
+            rec["messages"] = messages[-self._max_messages :]
+            rec["updated_at"] = _now()
 
-    def reset(self, session_id: str) -> None:
+    def reset(self, key: str) -> None:
         with self._lock:
-            self._sessions.pop(session_id, None)
+            self._sessions.pop(key, None)
+
+    # ---- History API (used by the conversation-history UI) -----------------
+    def record_turn(
+        self,
+        key: str,
+        entity_id: str | None,
+        session_id: str,
+        user_text: str,
+        result: dict[str, Any],
+    ) -> None:
+        """Append one user+assistant exchange to the conversation's transcript.
+
+        Called after each successful agent turn so the history sidebar can list
+        and replay the conversation. The first user message becomes the title.
+        """
+        with self._lock:
+            rec = self._record(key)
+            rec["entity_id"] = entity_id or None
+            rec["session_id"] = session_id
+            if not rec["title"] and user_text:
+                rec["title"] = user_text.strip()[:60]
+            rec["transcript"].append({"role": "user", "text": user_text})
+            rec["transcript"].append(
+                {
+                    "role": "assistant",
+                    "text": result.get("reply") or "",
+                    "thinking": result.get("thinking"),
+                    "tool_calls": result.get("tool_calls") or [],
+                }
+            )
+            rec["updated_at"] = _now()
+
+    def conversations(self, entity_id: str | None) -> list[dict[str, Any]]:
+        """List an entity's conversations (newest first) for the sidebar."""
+        target = entity_id or None
+        with self._lock:
+            out = [
+                {
+                    "session_id": rec["session_id"],
+                    "title": rec["title"] or "New conversation",
+                    "created_at": rec["created_at"],
+                    "updated_at": rec["updated_at"],
+                    "message_count": len(rec["transcript"]),
+                }
+                for rec in self._sessions.values()
+                if rec["session_id"] is not None
+                and rec["transcript"]
+                and (rec["entity_id"] or None) == target
+            ]
+        out.sort(key=lambda c: c["updated_at"], reverse=True)
+        return out
+
+    def transcript(self, key: str) -> list[dict[str, Any]]:
+        """Return a conversation's display transcript for replay in the UI."""
+        with self._lock:
+            rec = self._sessions.get(key)
+            return list(rec["transcript"]) if rec else []
 
 
 store = ConversationStore()

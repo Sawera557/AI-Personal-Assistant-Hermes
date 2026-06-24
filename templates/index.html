@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, interactive-widget=resizes-content" />
+  <meta name="theme-color" content="#0b0e14" />
+  <title>Hermes AI Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app" id="app">
+    <div class="overlay" id="overlay"></div>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="logo">⚡</div>
+        <div>
+          <h1>Hermes</h1>
+          <p class="tag">AI Agent</p>
+        </div>
+        <button class="drawer-close" id="drawer-close" aria-label="Close menu">✕</button>
+      </div>
+
+      <button id="reset-btn" class="ghost new-convo">＋ New conversation</button>
+
+      <div class="panel history-panel">
+        <h2>History</h2>
+        <ul class="convos" id="convos"></ul>
+        <p class="hint" id="convos-empty">No conversations yet.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Model</h2>
+        <code class="model">{{ model }}</code>
+      </div>
+
+      {% if voice_enabled %}
+      <div class="panel">
+        <h2>Voice</h2>
+        <select id="voice-select" class="voice-select" aria-label="Voice">
+          {% for v in voices %}
+          <option value="{{ v }}" {% if v == voice %}selected{% endif %}>{{ v|capitalize }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+
+      <details class="panel apps-panel">
+        <summary>
+          <span class="apps-title">Connected apps</span>
+          <span class="badge">{{ apps|length }}</span>
+          <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </summary>
+        <div class="apps-body">
+          <ul class="apps">
+            {% for a in apps %}<li>{{ a }}</li>{% endfor %}
+          </ul>
+          <div class="connect-row">
+            <input id="connect-app" placeholder="app slug e.g. quickbooks" autocomplete="off" />
+            <button id="connect-btn" title="Get OAuth link">Connect</button>
+          </div>
+          <p id="connect-result" class="hint"></p>
+        </div>
+      </details>
+
+      {% if web_search %}
+      <div class="panel push-bottom">
+        <p class="hint">🌐 Web search enabled</p>
+      </div>
+      {% endif %}
+    </aside>
+
+    <main class="chat">
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm">⚡</span> Hermes</div>
+        <button class="icon-btn plus" id="reset-top" aria-label="New conversation">＋</button>
+      </header>
+
+      <div id="messages" class="messages">
+        <div class="msg assistant">
+          <div class="bubble">Hi! I'm connected to your business apps. How can I help you?</div>
+        </div>
+      </div>
+
+      <form id="composer" class="composer">
+        <div id="attachments" class="attachments"></div>
+        <div class="composer-row">
+          <label class="attach-btn" title="Attach files" aria-label="Attach files">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            <input id="file-input" type="file" multiple hidden />
+          </label>
+          <textarea id="input" rows="1" placeholder="Message Hermes…"></textarea>
+          {% if voice_enabled %}
+          <button id="voice-btn" type="button" class="voice-btn" title="Start voice call" aria-label="Start voice call">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </button>
+          {% endif %}
+          <button id="send-btn" type="submit" aria-label="Send">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  {% if voice_enabled %}
+  <!-- Hands-free voice call overlay -->
+  <div class="call" id="call" aria-hidden="true">
+    <div class="call-card">
+      <div class="call-orb" id="call-orb">
+        <span class="orb-ring"></span>
+        <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+      </div>
+      <h2 class="call-status" id="call-status">Connecting…</h2>
+      <p class="call-caption" id="call-caption">Tap the mic to talk. I'll listen, then reply out loud.</p>
+      <div class="call-actions">
+        <button class="call-mute" id="call-mute" type="button">Mute</button>
+        <button class="call-end" id="call-end" type="button" aria-label="End call">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.99.99 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.66-1.85.998.998 0 0 1-.56-.9v-3.1A15.6 15.6 0 0 0 12 9z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="/static/app.js"></script>
+  {% if voice_enabled %}<script src="/static/voice.js"></script>{% endif %}
+</body>
+</html>

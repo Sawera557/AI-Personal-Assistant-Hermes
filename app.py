@@ -1,12 +1,16 @@
-"""FastAPI entrypoint for the Hermes AI Agent — JSON API backend (no UI).
+"""FastAPI entrypoint for the Hermes AI Agent — web chat UI + JSON API.
 
-This is the headless, deploy-anywhere API for Hermes. There is no web UI here:
-every route returns JSON (or audio bytes), so you can host this backend on its
-own and point any frontend, mobile app, or service at it.
+Serves a single-page web chat at `/` (with a conversation-history sidebar) and
+the full JSON API under `/api/*`. The API is self-contained, so you can also
+ignore the UI and point any frontend, mobile app, or service at the backend.
 
 Endpoints:
+    GET  /                       — web chat UI (conversation history sidebar)
     GET  /api/health             — liveness + config check
     POST /api/chat               — run a turn through the Claude + Maton agent
+    GET  /api/conversations      — list past conversations (history sidebar)
+    GET  /api/conversations/{id} — replay one conversation's transcript
+    DELETE /api/conversations/{id} — delete a conversation from history
     POST /api/attachments        — upload files, get attachment ids for /api/chat
     GET  /api/attachments/{id}   — attachment metadata
     DELETE /api/attachments/{id} — delete an attachment
@@ -19,17 +23,20 @@ Endpoints:
 Interactive docs are auto-generated at /docs (Swagger) and /redoc.
 
 Every agent/voice endpoint accepts an optional `entity_id` so a single backend
-can serve many tenants/users with isolated conversation memory.
+can serve many tenants/users with isolated conversation memory and history.
 """
 from __future__ import annotations
 
 import base64
 import uuid
+from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 # Starlette's form parser yields starlette.UploadFile, which is the BASE class of
 # fastapi.UploadFile — so isinstance checks on parsed form files must use this.
@@ -43,6 +50,11 @@ from hermes.memory import store
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
 app = FastAPI(title="Hermes AI Agent API", version="0.1.0")
+
+# ---- Web UI (single-page chat with conversation history) ------------------
+_BASE_DIR = Path(__file__).resolve().parent
+app.mount("/static", StaticFiles(directory=_BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=str(_BASE_DIR / "templates"))
 
 # Allow a separately-deployed frontend / client to call this API. Lock down the
 # origins in production via CORS_ORIGINS (comma-separated) — defaults to "*".
@@ -122,6 +134,23 @@ def _build_attachments(files: list[tuple[str, str, bytes]]) -> list[dict]:
     return [_block_for(name, mime, raw)[0] for name, mime, raw in files if name]
 
 
+@app.get("/")
+def index(request: Request):
+    """Render the web chat UI. Config drives what the sidebar shows."""
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "apps": Config.apps(),
+            "model": Config.MODEL,
+            "web_search": Config.WEB_SEARCH,
+            "voice_enabled": Config.voice_enabled(),
+            "voices": Config.voice_voices(),
+            "voice": Config.voice_tts_voice(),
+        },
+    )
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "problems": Config.validate()}
@@ -176,16 +205,49 @@ async def chat(request: Request):
     if message:
         content.append({"type": "text", "text": message})
 
+    key = _session_key(entity_id, session_id)
     try:
-        result = await run_in_threadpool(
-            run_turn, _session_key(entity_id, session_id), content, voice
-        )
+        result = await run_in_threadpool(run_turn, key, content, voice)
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the client
         return JSONResponse({"error": f"Agent error: {exc}"}, status_code=500)
+
+    # Record this exchange so the conversation-history sidebar can list/replay it.
+    file_names = [name for name, _, _ in files] if content_type.startswith("multipart/") else []
+    n_files = len(file_names) + len(attachment_ids)
+    user_text = message
+    if n_files:
+        names = ", ".join(file_names) if file_names else f"{n_files} file(s)"
+        note = f"📎 {names}"
+        user_text = f"{message}\n{note}" if message else note
+    store.record_turn(key, entity_id, session_id, user_text, result)
 
     result["session_id"] = session_id
     result["entity_id"] = entity_id
     return result
+
+
+@app.get("/api/conversations")
+def list_conversations(entity_id: str | None = None):
+    """List this entity's past conversations (newest first) for the history
+    sidebar. Each item has session_id, title, timestamps, and message_count."""
+    return {"conversations": store.conversations(entity_id), "entity_id": entity_id}
+
+
+@app.get("/api/conversations/{session_id}")
+def get_conversation(session_id: str, entity_id: str | None = None):
+    """Replay one conversation: returns its display transcript (user/assistant
+    turns with thinking + tool traces) so the UI can re-render it."""
+    transcript = store.transcript(_session_key(entity_id, session_id))
+    if not transcript:
+        return JSONResponse({"error": "Conversation not found."}, status_code=404)
+    return {"session_id": session_id, "entity_id": entity_id, "transcript": transcript}
+
+
+@app.delete("/api/conversations/{session_id}")
+def delete_conversation(session_id: str, entity_id: str | None = None):
+    """Delete a conversation (its agent memory and its history transcript)."""
+    store.reset(_session_key(entity_id, session_id))
+    return {"status": "deleted", "session_id": session_id}
 
 
 @app.post("/api/attachments")
