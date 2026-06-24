@@ -20,9 +20,23 @@ def _anthropic() -> anthropic.Anthropic:
     return _client
 
 
-def _system_prompt() -> str:
+# Extra guidance for voice mode — the reply is spoken aloud on a phone-style call.
+_VOICE_STYLE = (
+    "\n\nVOICE CALL MODE: You are on a one-to-one, real-time voice call with the "
+    "user, like a phone call. Your reply will be spoken aloud, so answer short, "
+    "simple, and natural — the way you'd actually talk to someone. Keep it to a "
+    "sentence or two unless they ask for detail. Do NOT use markdown, headings, "
+    "bullet lists, tables, code blocks, emoji, or long quotes or URLs (they sound "
+    "wrong read out). Use plain spoken sentences. Lead with the answer, and if you "
+    "need to confirm a write action, ask in one short spoken question. "
+    "Always respond in English, even if the user's words are unclear or sound like "
+    "another language."
+)
+
+
+def _system_prompt(voice: bool = False) -> str:
     today = datetime.date.today().isoformat()
-    return (
+    base = (
         "You are Hermes, a capable AI executive assistant. You help the user get "
         "real work done across their connected business apps, the web, and their "
         "documents.\n\n"
@@ -42,6 +56,7 @@ def _system_prompt() -> str:
         "- Lead with the answer; be concise and practical.\n"
         f"Today's date is {today}."
     )
+    return base + _VOICE_STYLE if voice else base
 
 
 def _dump(content: Any) -> list[dict[str, Any]]:
@@ -66,9 +81,15 @@ def _thinking_of(content: list[dict[str, Any]]) -> str:
 
 
 def run_turn(
-    session_id: str, user_content: str | list[dict[str, Any]]
+    session_id: str,
+    user_content: str | list[dict[str, Any]],
+    voice: bool = False,
 ) -> dict[str, Any]:
-    """Run one user turn through the agent loop and return a structured result."""
+    """Run one user turn through the agent loop and return a structured result.
+
+    `voice=True` adds spoken-call style guidance so replies are short and natural
+    when read aloud; the agent's tools and abilities are otherwise identical.
+    """
     client = _anthropic()
     tools = build_tools()
 
@@ -87,7 +108,7 @@ def run_turn(
         resp = client.messages.create(
             model=Config.MODEL,
             max_tokens=Config.MAX_TOKENS,
-            system=_system_prompt(),
+            system=_system_prompt(voice),
             tools=tools,
             thinking={"type": "adaptive", "display": "summarized"},
             output_config={"effort": Config.EFFORT},

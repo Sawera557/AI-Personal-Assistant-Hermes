@@ -16,6 +16,11 @@ It ships with a browser chat UI **and** a JSON API.
 - **Conversation memory** — remembers context per chat session.
 - **Web search** — Anthropic's built-in server-side web search & fetch.
 - **File / document Q&A** — upload PDFs, images, CSVs, or text and ask about them.
+- **Hands-free voice agent** — talk to Hermes like a phone call. OpenAI handles
+  the voice (`gpt-4o-mini-transcribe` speech-to-text + `gpt-4o-mini-tts`
+  text-to-speech); the *brain stays Claude*, so voice has the **exact same app
+  functionality** as the typed chat. (Set `VOICE_PROVIDER=groq` to use Groq
+  Whisper + Orpheus instead.)
 
 ## Architecture
 
@@ -26,11 +31,16 @@ Browser chat UI ──► Flask (app.py)
                       ├─ hermes/tools.py     tool schemas + dispatch
                       ├─ hermes/maton.py     Maton API gateway client
                       ├─ hermes/memory.py    per-session conversation store
+                      ├─ hermes/voice.py     STT + TTS (voice mode only)
                       └─ hermes/config.py    env config
                       │
                       ▼
-        Anthropic API  +  Maton gateway (api.maton.ai)
+        Anthropic API  +  Maton gateway (api.maton.ai)  +  OpenAI (voice)
 ```
+
+**Voice mode** (`static/voice.js` + `/api/voice/*`) does
+`mic → OpenAI STT → /api/chat (same Claude agent) → OpenAI TTS → speaker`,
+with browser-side voice-activity detection driving a continuous, hands-free call.
 
 The agent exposes three Maton tools to Claude — `maton_request` (generic native
 API passthrough for any connected app), `maton_list_connections`, and
@@ -49,6 +59,9 @@ API passthrough for any connected app), `maton_list_connections`, and
    ```
    - `ANTHROPIC_API_KEY` — from https://platform.claude.com
    - `MATON_API_KEY` — from https://maton.ai/api-keys
+   - `OPENAI_API_KEY` *(voice mode)* — from https://platform.openai.com/api-keys.
+     Powers speech-to-text + text-to-speech. Leave blank to hide the voice button.
+     (To use Groq instead, set `VOICE_PROVIDER=groq` and provide `GROQ_API_KEY`.)
 
 3. **Run it:**
    ```bash
@@ -74,6 +87,8 @@ Known slugs: `quickbooks`, `pdf-co`, `google-contacts`, `fathom`, `google-meet`,
 | GET    | `/api/connections`  | `?app=&status=ACTIVE` — list Maton connections            |
 | POST   | `/api/connections`  | JSON `{app}` — start OAuth, returns `{data:{url}}`         |
 | POST   | `/api/reset`        | JSON `{session_id}` — clear a conversation                 |
+| POST   | `/api/voice/transcribe` | multipart `audio` — OpenAI STT, returns `{text}`      |
+| POST   | `/api/voice/speak`  | JSON `{text, voice}` — returns OpenAI TTS audio (`audio/wav`) |
 | GET    | `/api/health`       | config check                                              |
 
 Example:

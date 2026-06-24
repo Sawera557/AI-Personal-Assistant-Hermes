@@ -263,6 +263,100 @@ body {
 #send-btn:active { transform: scale(0.94); }
 #send-btn:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
 
+/* Voice picker in the sidebar */
+.voice-select {
+  width: 100%; background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); padding: 9px 11px; border-radius: 10px; font-size: 13px;
+  font-family: inherit; cursor: pointer; appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239aa3b2' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center; padding-right: 32px;
+}
+.voice-select:focus { outline: none; border-color: var(--accent); }
+.voice-select option { background: var(--bg-2); color: var(--text); }
+
+/* Voice call button in the composer */
+.voice-btn {
+  width: 46px; height: 46px; flex-shrink: 0;
+  background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 14px; cursor: pointer; display: grid; place-items: center;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.voice-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--surface-2); }
+.voice-btn:active { transform: scale(0.94); }
+
+/* ---------- Hands-free call overlay ---------- */
+.call {
+  position: fixed; inset: 0; z-index: 60;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(6, 8, 13, 0.72);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  padding: calc(24px + env(safe-area-inset-top)) 22px calc(24px + env(safe-area-inset-bottom));
+}
+.call.open { display: flex; animation: rise 0.25s ease both; }
+
+.call-card {
+  width: 100%; max-width: 380px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+
+.call-orb {
+  width: 150px; height: 150px; border-radius: 50%; position: relative;
+  display: grid; place-items: center; color: #1a1206; margin-bottom: 14px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 12px 50px rgba(245, 166, 35, 0.4);
+  transition: transform 0.2s, box-shadow 0.3s, background 0.3s;
+}
+.orb-ring {
+  position: absolute; inset: -6px; border-radius: 50%;
+  border: 2px solid rgba(245, 166, 35, 0.5); opacity: 0;
+}
+
+/* State styling driven by data-state on #call-orb */
+.call-orb[data-state="listening"] {
+  background: linear-gradient(135deg, var(--blue), var(--blue-2)); color: #fff;
+  box-shadow: 0 12px 50px rgba(59, 130, 246, 0.45);
+}
+.call-orb[data-state="listening"] .orb-ring { opacity: 1; animation: pulse 1.4s ease-out infinite; }
+.call-orb[data-state="thinking"] {
+  background: linear-gradient(135deg, #8b5cf6, #6366f1); color: #fff;
+  box-shadow: 0 12px 50px rgba(139, 92, 246, 0.45);
+}
+.call-orb[data-state="thinking"] { animation: breathe 1.1s ease-in-out infinite; }
+.call-orb[data-state="speaking"] .orb-ring { opacity: 1; animation: pulse 0.9s ease-out infinite; }
+.call-orb[data-state="muted"] { background: var(--surface-2); color: var(--muted); box-shadow: none; }
+/* Live mic level scales the orb while listening (set via --level). */
+.call-orb[data-state="listening"] { transform: scale(calc(1 + 0.18 * var(--level, 0))); }
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+.call-status { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: -0.3px; }
+.call-caption {
+  margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5;
+  min-height: 42px; max-width: 320px;
+}
+
+.call-actions { display: flex; align-items: center; gap: 18px; margin-top: 22px; }
+.call-mute {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  padding: 11px 20px; border-radius: 24px; font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.call-mute:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.call-mute.is-muted { color: var(--accent); border-color: var(--accent); }
+.call-end {
+  width: 60px; height: 60px; border-radius: 50%; border: none; cursor: pointer;
+  background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff;
+  display: grid; place-items: center; box-shadow: 0 8px 24px rgba(239, 68, 68, 0.4);
+}
+.call-end:active { transform: scale(0.94); }
+
 .typing { display: inline-flex; gap: 5px; padding: 2px 0; }
 .typing span { width: 7px; height: 7px; background: var(--muted); border-radius: 50%; animation: blink 1.2s infinite both; }
 .typing span:nth-child(2) { animation-delay: 0.2s; }

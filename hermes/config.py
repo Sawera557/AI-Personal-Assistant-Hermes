@@ -45,6 +45,77 @@ class Config:
 
     WEB_SEARCH: bool = _bool(os.getenv("HERMES_WEB_SEARCH"), True)
 
+    # ---- Voice layer (speech-to-text + text-to-speech) --------------------
+    # The agent "brain" stays Claude (`run_turn`), so the voice agent keeps the
+    # EXACT same app functionality as the typed chat. The voice provider only
+    # does the listening (STT) and speaking (TTS). Both OpenAI and Groq expose
+    # the same OpenAI-style /audio/* endpoints, so switching is just config.
+    VOICE_PROVIDER: str = os.getenv("VOICE_PROVIDER", "openai").strip().lower()
+    # ISO-639-1 language the voice agent listens and replies in (English only).
+    VOICE_LANGUAGE: str = os.getenv("VOICE_LANGUAGE", "en").strip().lower()
+    # Extra words/brand names to help speech-to-text spell them right (comma-
+    # separated). Add anything it keeps mishearing, e.g. project or client names.
+    VOICE_VOCAB: str = os.getenv("VOICE_VOCAB", "").strip()
+
+    # OpenAI (default voice provider)
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "").strip()
+    OPENAI_BASE_URL: str = os.getenv(
+        "OPENAI_BASE_URL", "https://api.openai.com/v1"
+    ).rstrip("/")
+    # Full transcribe model handles accents + proper nouns far better than mini.
+    OPENAI_STT_MODEL: str = os.getenv("OPENAI_STT_MODEL", "gpt-4o-transcribe")
+    OPENAI_TTS_MODEL: str = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+    OPENAI_TTS_VOICE: str = os.getenv("OPENAI_TTS_VOICE", "alloy")
+    OPENAI_TTS_VOICES: tuple[str, ...] = (
+        "alloy", "ash", "ballad", "coral", "echo",
+        "fable", "onyx", "nova", "sage", "shimmer", "verse",
+    )
+
+    # Groq (alternative — set VOICE_PROVIDER=groq to use it)
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "").strip()
+    GROQ_BASE_URL: str = os.getenv(
+        "GROQ_BASE_URL", "https://api.groq.com/openai/v1"
+    ).rstrip("/")
+    GROQ_STT_MODEL: str = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
+    GROQ_TTS_MODEL: str = os.getenv("GROQ_TTS_MODEL", "canopylabs/orpheus-v1-english")
+    GROQ_TTS_VOICE: str = os.getenv("GROQ_TTS_VOICE", "autumn")
+    GROQ_TTS_VOICES: tuple[str, ...] = (
+        "autumn", "diana", "hannah", "austin", "daniel", "troy",
+    )
+
+    # ---- Active-provider resolvers (used by hermes/voice.py and the UI) ----
+    @classmethod
+    def _use_groq(cls) -> bool:
+        return cls.VOICE_PROVIDER == "groq"
+
+    @classmethod
+    def voice_api_key(cls) -> str:
+        return cls.GROQ_API_KEY if cls._use_groq() else cls.OPENAI_API_KEY
+
+    @classmethod
+    def voice_base_url(cls) -> str:
+        return cls.GROQ_BASE_URL if cls._use_groq() else cls.OPENAI_BASE_URL
+
+    @classmethod
+    def voice_stt_model(cls) -> str:
+        return cls.GROQ_STT_MODEL if cls._use_groq() else cls.OPENAI_STT_MODEL
+
+    @classmethod
+    def voice_tts_model(cls) -> str:
+        return cls.GROQ_TTS_MODEL if cls._use_groq() else cls.OPENAI_TTS_MODEL
+
+    @classmethod
+    def voice_tts_voice(cls) -> str:
+        return cls.GROQ_TTS_VOICE if cls._use_groq() else cls.OPENAI_TTS_VOICE
+
+    @classmethod
+    def voice_voices(cls) -> tuple[str, ...]:
+        return cls.GROQ_TTS_VOICES if cls._use_groq() else cls.OPENAI_TTS_VOICES
+
+    @classmethod
+    def voice_enabled(cls) -> bool:
+        return bool(cls.voice_api_key())
+
     FLASK_SECRET: str = os.getenv("FLASK_SECRET", "dev-secret-change-me")
     PORT: int = int(os.getenv("PORT", "5000"))
 
