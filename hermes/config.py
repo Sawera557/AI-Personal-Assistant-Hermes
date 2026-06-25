@@ -37,7 +37,8 @@ class Config:
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "").strip()
     MATON_API_KEY: str = os.getenv("MATON_API_KEY", "").strip()
     MATON_BASE_URL: str = os.getenv("MATON_BASE_URL", "https://api.maton.ai").rstrip("/")
-
+    HERMES_ADMIN_TOKEN: str = os.getenv("HERMES_ADMIN_TOKEN", "").strip()
+    ALLOW_MATON_WRITES: bool = _bool(os.getenv("HERMES_ALLOW_MATON_WRITES"), False)
     MODEL: str = os.getenv("HERMES_MODEL", "claude-opus-4-8")
     EFFORT: str = os.getenv("HERMES_EFFORT", "medium")
     MAX_TOKENS: int = int(os.getenv("HERMES_MAX_TOKENS", "8000"))
@@ -144,4 +145,6 @@ class Config:
             problems.append("ANTHROPIC_API_KEY is not set")
         if not cls.MATON_API_KEY:
             problems.append("MATON_API_KEY is not set (app integrations will fail)")
+        if not cls.HERMES_ADMIN_TOKEN:
+            problems.append("HERMES_ADMIN_TOKEN is not set (raw API access disabled)")
         return problems

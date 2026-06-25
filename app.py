@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import base64
+import hmac
 import uuid
+from functools import wraps
 
 from flask import Flask, Response, jsonify, render_template, request
 
 from hermes.agent import run_turn
 from hermes.config import Config
-from hermes.maton import MatonClient, MatonError
+from hermes.maton import MatonClient, MatonError, sanitize_connection_payload
 from hermes.memory import store
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
@@ -19,6 +21,49 @@ app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB upload cap
 _IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _TEXT_MAX_CHARS = 200_000
 
+def _provided_admin_token() -> str:
+    auth = request.headers.get("Authorization", "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.headers.get("X-Hermes-Admin-Token", "").strip()
+
+
+def _is_admin_request() -> bool:
+    expected = Config.HERMES_ADMIN_TOKEN
+    provided = _provided_admin_token()
+    return bool(expected and provided and hmac.compare_digest(provided, expected))
+
+
+def _require_admin():
+    if not Config.HERMES_ADMIN_TOKEN:
+        return jsonify({"error": "Admin access is not configured."}), 503
+    if not _is_admin_request():
+        return jsonify({"error": "Admin authorization required."}), 401
+    return None
+
+
+def _admin_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        error = _require_admin()
+        if error:
+            return error
+        return view(*args, **kwargs)
+    return wrapper
+
+
+def _connector_health_from_connections(payload: dict) -> dict:
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    connections = data.get("connections") if isinstance(data, dict) else []
+    counts: dict[str, int] = {}
+    safe_connections = []
+    for item in connections or []:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "UNKNOWN")
+        counts[status] = counts.get(status, 0) + 1
+        safe_connections.append({"app": item.get("app"), "status": status, "last_updated_time": item.get("last_updated_time")})
+    return {"status": "ok" if payload.get("ok") else "degraded", "upstream_status": payload.get("status"), "counts": counts, "connections": safe_connections}
 
 def _truthy(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
@@ -84,10 +129,21 @@ def index():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "problems": Config.validate()})
+    body = {"status": "ok"}
+    if _is_admin_request():
+        body["problems"] = Config.validate()
+    return jsonify(body)
 
 
+
+@app.route("/api/connector-health")
+def connector_health():
+    try:
+        return jsonify(_connector_health_from_connections(MatonClient().list_connections()))
+    except MatonError as exc:
+        return jsonify({"status": "down", "error": str(exc)}), 502
 @app.route("/api/chat", methods=["POST"])
+@_admin_required
 def chat():
     # Accept JSON or multipart (multipart carries file attachments).
     if request.content_type and request.content_type.startswith("multipart/"):
@@ -119,6 +175,7 @@ def chat():
 
 
 @app.route("/api/connections", methods=["GET", "POST"])
+@_admin_required
 def connections():
     client = MatonClient()
     try:
@@ -127,7 +184,7 @@ def connections():
             app_slug = data.get("app")
             if not app_slug:
                 return jsonify({"error": "Missing 'app'."}), 400
-            return jsonify(client.create_connection(app_slug))
+            return jsonify(sanitize_connection_payload(client.create_connection(app_slug), include_authorization_url=True))
         return jsonify(
             client.list_connections(
                 app=request.args.get("app"), status=request.args.get("status")
@@ -138,6 +195,7 @@ def connections():
 
 
 @app.route("/api/voice/transcribe", methods=["POST"])
+@_admin_required
 def voice_transcribe():
     """Speech -> text. The browser posts a recorded audio clip; Groq Whisper
     returns the transcript, which the client then sends through /api/chat so the
@@ -153,6 +211,7 @@ def voice_transcribe():
 
 
 @app.route("/api/voice/speak", methods=["POST"])
+@_admin_required
 def voice_speak():
     """Text -> speech. Returns OpenAI TTS audio for the agent's reply."""
     data = request.get_json(silent=True) or {}
@@ -167,6 +226,7 @@ def voice_speak():
 
 
 @app.route("/api/reset", methods=["POST"])
+@_admin_required
 def reset():
     data = request.get_json(silent=True) or {}
     session_id = data.get("session_id")
