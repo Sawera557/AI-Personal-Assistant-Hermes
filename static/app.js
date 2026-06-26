@@ -11,6 +11,10 @@ const connectApp = document.getElementById("connect-app");
 const connectResult = document.getElementById("connect-result");
 const convosEl = document.getElementById("convos");
 const convosEmptyEl = document.getElementById("convos-empty");
+const convoSearchInput = document.getElementById("convo-search-input");
+
+// Current history search query (empty = show all conversations).
+let convoQuery = "";
 
 const GREETING = "Hi! I'm connected to your business apps. How can I help you?";
 
@@ -150,16 +154,30 @@ function renderTranscript(transcript) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// Wrap occurrences of the query term in <mark> (input already escaped).
+function highlightTerm(escapedText, query) {
+  const q = (query || "").trim();
+  if (!q) return escapedText;
+  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return escapedText.replace(new RegExp(safe, "gi"), (m) => `<mark>${m}</mark>`);
+}
+
 async function loadConversations() {
   let convos = [];
   try {
-    const res = await fetch("/api/conversations");
+    const url = convoQuery
+      ? `/api/conversations?q=${encodeURIComponent(convoQuery)}`
+      : "/api/conversations";
+    const res = await fetch(url);
     const data = await res.json();
     convos = data.conversations || [];
   } catch (_) { /* offline / first run — just show an empty list */ }
 
   convosEl.innerHTML = "";
   convosEmptyEl.style.display = convos.length ? "none" : "block";
+  convosEmptyEl.textContent = convoQuery
+    ? "No chats match your search."
+    : "No conversations yet.";
 
   convos.forEach((c) => {
     const li = document.createElement("li");
@@ -169,7 +187,11 @@ async function loadConversations() {
     const openBtn = document.createElement("button");
     openBtn.className = "convo-open";
     openBtn.title = c.title;
-    openBtn.textContent = c.title;
+    const titleHtml = highlightTerm(escapeHtml(c.title), convoQuery);
+    const snippetHtml = c.snippet
+      ? `<span class="convo-snippet">${highlightTerm(escapeHtml(c.snippet), convoQuery)}</span>`
+      : "";
+    openBtn.innerHTML = `<span class="convo-title">${titleHtml}</span>${snippetHtml}`;
     openBtn.onclick = () => openConversation(c.session_id);
 
     const delBtn = document.createElement("button");
@@ -189,6 +211,27 @@ async function loadConversations() {
 }
 // Let voice.js refresh the list after a spoken turn.
 window.hermesReloadConversations = loadConversations;
+
+// ---- History search ----------------------------------------------------
+// Debounce so we query on a pause, not on every keystroke.
+let convoSearchTimer = null;
+if (convoSearchInput) {
+  convoSearchInput.addEventListener("input", () => {
+    clearTimeout(convoSearchTimer);
+    convoSearchTimer = setTimeout(() => {
+      convoQuery = convoSearchInput.value.trim();
+      loadConversations();
+    }, 220);
+  });
+  // Esc clears the search and restores the full list.
+  convoSearchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      convoSearchInput.value = "";
+      convoQuery = "";
+      loadConversations();
+    }
+  });
+}
 
 async function openConversation(id) {
   if (!id) return;

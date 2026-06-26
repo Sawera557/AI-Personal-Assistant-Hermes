@@ -89,26 +89,43 @@ class PostgresConversationStore:
 
     # ---- Agent-facing API --------------------------------------------------
     def get(self, key: str) -> list[dict[str, Any]]:
-        """Rebuild prior turns as Claude messages so the agent has context."""
+        """Rebuild recent turns as Claude messages so the agent has context.
+
+        Only the most recent HERMES_HISTORY_MESSAGES messages are loaded, so token
+        cost stays bounded on long chats. The window is trimmed to start with a
+        `user` message, which the Claude API requires.
+        """
         session_id = _session_id_from_key(key)
         if not _is_uuid(session_id):
             return []
+        limit = self._history_limit()
         try:
             with cursor(commit=False) as cur:
+                # Take the last `limit` messages (newest first), then reverse.
                 cur.execute(
                     "SELECT role, content FROM hermes_messages "
                     "WHERE session_id = %s AND role IN ('user', 'assistant') "
-                    "ORDER BY seq;",
-                    (session_id,),
+                    "ORDER BY seq DESC LIMIT %s;",
+                    (session_id, limit),
                 )
-                rows = cur.fetchall()
+                rows = list(reversed(cur.fetchall()))
         except Exception as exc:  # noqa: BLE001 — degrade gracefully
             log.warning("get(%s) failed: %s", session_id, exc)
             return []
+        # The conversation Claude sees must begin with a user turn.
+        while rows and rows[0][0] != "user":
+            rows.pop(0)
         return [
             {"role": role, "content": [{"type": "text", "text": content or ""}]}
             for role, content in rows
         ]
+
+    @staticmethod
+    def _history_limit() -> int:
+        try:
+            return max(2, int(os.getenv("HERMES_HISTORY_MESSAGES", "40")))
+        except ValueError:
+            return 40
 
     def set(self, key: str, messages: list[dict[str, Any]]) -> None:
         """No-op: persistence happens in record_turn (which has the clean text).
@@ -193,49 +210,83 @@ class PostgresConversationStore:
         except Exception as exc:  # noqa: BLE001 — never break the reply on a write miss
             log.warning("record_turn(%s) failed: %s", session_id, exc)
 
-    def conversations(self, entity_id: str | None) -> list[dict[str, Any]]:
-        """List the owner's conversations (newest first) for the sidebar."""
+    def conversations(
+        self, entity_id: str | None, query: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List the owner's conversations (newest first) for the sidebar.
+
+        With `query`, returns only chats whose title or any message matches, and
+        includes a `snippet` of the first matching message.
+        """
+        q = (query or "").strip()
         try:
             with cursor(commit=False) as cur:
                 owner = self._owner(cur)
                 ent = self._resolve_entity_id(cur, entity_id)
-                params: list[Any] = [owner]
-                entity_clause = ""
+
+                # Built in clause order (SELECT params, then WHERE params), since
+                # positional %s placeholders must line up with the SQL text.
+                select_params: list[Any] = []
+                where = ["s.user_id = %s", "s.status <> 'deleted'"]
+                where_params: list[Any] = [owner]
+                snippet_select = ""
+
                 if entity_id:  # filter to chats that touched this business
-                    entity_clause = (
-                        " AND s.session_id IN "
+                    where.append(
+                        "s.session_id IN "
                         "(SELECT session_id FROM hermes_messages WHERE entity_id = %s)"
                     )
-                    params.append(ent)
+                    where_params.append(ent)
+
+                if q:
+                    like = f"%{q}%"
+                    snippet_select = (
+                        ", (SELECT mm.content FROM hermes_messages mm "
+                        "WHERE mm.session_id = s.session_id AND mm.content ILIKE %s "
+                        "ORDER BY mm.seq LIMIT 1) AS snippet"
+                    )
+                    select_params.append(like)
+                    where.append(
+                        "(s.title ILIKE %s OR s.session_id IN "
+                        "(SELECT session_id FROM hermes_messages WHERE content ILIKE %s))"
+                    )
+                    where_params.extend([like, like])
+
                 cur.execute(
                     f"""
                     SELECT s.session_id,
                            s.title,
                            extract(epoch FROM s.created_at),
                            extract(epoch FROM s.updated_at),
-                           count(m.message_id)
+                           count(m.message_id){snippet_select}
                     FROM hermes_sessions s
                     JOIN hermes_messages m ON m.session_id = s.session_id
-                    WHERE s.user_id = %s AND s.status <> 'deleted'{entity_clause}
+                    WHERE {' AND '.join(where)}
                     GROUP BY s.session_id
                     ORDER BY s.updated_at DESC;
                     """,
-                    params,
+                    select_params + where_params,
                 )
                 rows = cur.fetchall()
         except Exception as exc:  # noqa: BLE001
             log.warning("conversations() failed: %s", exc)
             return []
-        return [
-            {
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            sid, title, created, updated, count = row[:5]
+            snippet = row[5] if q and len(row) > 5 else None
+            if snippet:
+                snippet = " ".join(str(snippet).split())[:160]
+            out.append({
                 "session_id": str(sid),
                 "title": title or "New conversation",
                 "created_at": created,
                 "updated_at": updated,
                 "message_count": int(count),
-            }
-            for sid, title, created, updated, count in rows
-        ]
+                "snippet": snippet,
+            })
+        return out
 
     def transcript(self, key: str) -> list[dict[str, Any]]:
         """Full replay of one conversation (user + assistant turns with extras)."""

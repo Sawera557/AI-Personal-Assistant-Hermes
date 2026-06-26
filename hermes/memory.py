@@ -95,23 +95,43 @@ class ConversationStore:
             )
             rec["updated_at"] = _now()
 
-    def conversations(self, entity_id: str | None) -> list[dict[str, Any]]:
-        """List an entity's conversations (newest first) for the sidebar."""
+    def conversations(
+        self, entity_id: str | None, query: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List an entity's conversations (newest first) for the sidebar.
+
+        With `query`, returns only chats whose title or any message matches, and
+        includes a `snippet` of the first matching message.
+        """
         target = entity_id or None
+        q = (query or "").strip().lower()
+        out = []
         with self._lock:
-            out = [
-                {
+            for rec in self._sessions.values():
+                if rec["session_id"] is None or not rec["transcript"]:
+                    continue
+                if (rec["entity_id"] or None) != target:
+                    continue
+                snippet = None
+                if q:
+                    if q in (rec["title"] or "").lower():
+                        pass
+                    matches = [
+                        t for t in rec["transcript"]
+                        if q in (t.get("text") or "").lower()
+                    ]
+                    if not matches and q not in (rec["title"] or "").lower():
+                        continue
+                    if matches:
+                        snippet = " ".join(str(matches[0]["text"]).split())[:160]
+                out.append({
                     "session_id": rec["session_id"],
                     "title": rec["title"] or "New conversation",
                     "created_at": rec["created_at"],
                     "updated_at": rec["updated_at"],
                     "message_count": len(rec["transcript"]),
-                }
-                for rec in self._sessions.values()
-                if rec["session_id"] is not None
-                and rec["transcript"]
-                and (rec["entity_id"] or None) == target
-            ]
+                    "snippet": snippet,
+                })
         out.sort(key=lambda c: c["updated_at"], reverse=True)
         return out
 
@@ -129,6 +149,11 @@ def _make_store():
     transcript), so the rest of the app is identical either way.
     """
     import os
+
+    # Explicit escape hatch: force the in-memory store (tests / local dev / CI),
+    # so a test run never writes to the real database even when DBRDS_HOST is set.
+    if os.getenv("HERMES_DISABLE_DB", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return ConversationStore()
 
     if os.getenv("DBRDS_HOST", "").strip():
         try:

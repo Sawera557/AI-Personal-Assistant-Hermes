@@ -97,6 +97,24 @@ body {
   flex-direction: column;
   margin-bottom: 22px;
 }
+/* History search box */
+.convo-search { position: relative; margin-bottom: 10px; flex-shrink: 0; }
+.convo-search svg {
+  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); pointer-events: none;
+}
+.convo-search input {
+  width: 100%; background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); padding: 9px 11px 9px 34px; border-radius: 10px;
+  font-size: 13px; font-family: inherit;
+}
+.convo-search input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(245, 166, 35, 0.12);
+}
+.convo-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.convo-search input::placeholder { color: var(--muted); }
+
 .convos {
   list-style: none; margin: 0; padding: 0;
   overflow-y: auto; flex: 1 1 auto; min-height: 0;
@@ -113,9 +131,18 @@ body {
   flex: 1; min-width: 0; text-align: left; cursor: pointer;
   background: none; border: none; color: var(--text);
   padding: 9px 10px; font-size: 13px; font-family: inherit;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; flex-direction: column; gap: 2px; align-items: stretch;
 }
-.convo.active .convo-open { color: var(--accent); font-weight: 600; }
+.convo-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.convo-snippet {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  font-size: 11px; color: var(--muted); font-weight: 400;
+}
+.convo-open mark, .convo-snippet mark {
+  background: rgba(245, 166, 35, 0.30); color: var(--text);
+  border-radius: 3px; padding: 0 1px;
+}
+.convo.active .convo-open .convo-title { color: var(--accent); font-weight: 600; }
 .convo-del {
   flex-shrink: 0; background: none; border: none; cursor: pointer;
   color: var(--muted); width: 30px; height: 30px; margin-right: 4px;

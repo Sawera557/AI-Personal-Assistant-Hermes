@@ -45,8 +45,10 @@ from starlette.datastructures import UploadFile as FormUploadFile
 from hermes.agent import run_turn
 from hermes.attachments import store as attachment_store
 from hermes.config import Config
+from hermes.ingest import ingest_document
 from hermes.maton import MatonClient, MatonError
 from hermes.memory import store
+from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
 app = FastAPI(title="Hermes AI Agent API", version="0.1.0")
@@ -227,10 +229,17 @@ async def chat(request: Request):
 
 
 @app.get("/api/conversations")
-def list_conversations(entity_id: str | None = None):
+def list_conversations(entity_id: str | None = None, q: str | None = None):
     """List this entity's past conversations (newest first) for the history
-    sidebar. Each item has session_id, title, timestamps, and message_count."""
-    return {"conversations": store.conversations(entity_id), "entity_id": entity_id}
+    sidebar. Each item has session_id, title, timestamps, and message_count.
+
+    Pass `q` to search chats by title or message content; matching items also
+    carry a `snippet` of the first matching message."""
+    return {
+        "conversations": store.conversations(entity_id, q),
+        "entity_id": entity_id,
+        "q": q,
+    }
 
 
 @app.get("/api/conversations/{session_id}")
@@ -303,6 +312,75 @@ def delete_attachment(attachment_id: str, entity_id: str | None = None):
     if attachment_store.remove(attachment_id, entity_id):
         return {"status": "deleted", "attachment_id": attachment_id}
     return JSONResponse({"error": "Attachment not found."}, status_code=404)
+
+
+@app.post("/api/documents")
+async def upload_documents(request: Request):
+    """Ingest files into the knowledge base so they're searchable by meaning.
+
+    Each file is stored (S3, if configured), recorded in `documents`, chunked,
+    embedded, and upserted into the business's Pinecone namespace.
+
+    Multipart fields: `files` (one or more, required), `entity_id` (required —
+    which business the files belong to), `sensitivity_level` (optional, default
+    'internal'), `message_id` (optional, link to a chat message)."""
+    form = await request.form()
+    entity_id = (form.get("entity_id") or "").strip()
+    if not entity_id:
+        return JSONResponse({"error": "entity_id is required."}, status_code=400)
+    sensitivity = (form.get("sensitivity_level") or "internal").strip()
+    message_id = form.get("message_id") or None
+
+    uploads = [
+        u for u in form.getlist("files")
+        if isinstance(u, FormUploadFile) and u.filename
+    ]
+    if not uploads:
+        return JSONResponse(
+            {"error": "No files uploaded. Use the multipart field 'files'."},
+            status_code=400,
+        )
+
+    out = []
+    for upload in uploads:
+        raw = await upload.read()
+        try:
+            result = await run_in_threadpool(
+                ingest_document,
+                entity_id,
+                filename=upload.filename,
+                mime=upload.content_type or "",
+                raw=raw,
+                message_id=message_id,
+                sensitivity_level=sensitivity,
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse({"error": f"Ingest failed: {exc}"}, status_code=500)
+        out.append({"filename": upload.filename, **result})
+    return {"documents": out, "entity_id": entity_id}
+
+
+@app.get("/api/search")
+async def search(
+    q: str,
+    entity_id: str,
+    max_sensitivity: str = "internal",
+    top_k: int = 8,
+):
+    """Meaning search within one business. The backend is the guard: it scopes
+    the search to `entity_id`'s namespace and filters by sensitivity + region."""
+    try:
+        results = await run_in_threadpool(
+            semantic_search, entity_id, q,
+            max_sensitivity=max_sensitivity, top_k=top_k,
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Search failed: {exc}"}, status_code=502)
+    return {"entity_id": entity_id, "query": q, "results": results}
 
 
 class ConnectionRequest(BaseModel):

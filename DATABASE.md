@@ -83,7 +83,37 @@ Chat history is persisted in `hermes_sessions` + `hermes_messages`:
 Endpoints now reading/writing Postgres: `GET/DELETE /api/conversations[/{id}]`,
 and `POST /api/chat` (records each turn). No frontend or API changes were needed.
 
-## Still in-memory (next step)
-`hermes/attachments.py` still uses process memory. Migrating uploads to
-`documents` (+ S3 for the bytes, + `document_chunks` → Pinecone for search) is
-the follow-on — the schema and the Pinecone layer are both ready for it.
+## Document ingestion + meaning search — wired ✅
+
+Files can now be ingested into the knowledge base and searched by meaning:
+
+- `hermes/ingest.py` — `ingest_document()`: bytes → S3 (optional) → `documents`
+  row → chunk → embed → Pinecone upsert → `document_chunks` rows. Every vector
+  carries `entity_id` + `sensitivity_level` + `region` in its metadata.
+- `hermes/search.py` — `semantic_search()`: the **guarded** entry point. Scopes
+  to one business's namespace and enforces sensitivity (≤ clearance) + region +
+  `is_active`. The website/agent never touch Pinecone directly.
+- `hermes/storage.py` — S3 put + presigned GET links. Optional: if `S3_BUCKET`
+  is unset, documents are still recorded and indexed (bytes just aren't stored).
+- `hermes/db/documents.py` — rows for `documents` / `document_chunks`.
+
+New endpoints:
+- `POST /api/documents` — multipart `files` + `entity_id` (+ optional
+  `sensitivity_level`, `message_id`). Ingests each file.
+- `GET /api/search?q=&entity_id=&max_sensitivity=&top_k=` — meaning search,
+  with the entity + sensitivity + region gate applied.
+
+Verified live: ingest → `documents` + `document_chunks` rows + Pinecone vectors;
+search returns hits joined back to the document; the sensitivity gate hides
+higher-classification chunks from lower-clearance queries.
+
+## Still to wire (follow-ons)
+- **PDF / image text extraction** — `ingest_document` indexes text-decodable
+  files now; PDFs/images get a `documents` row but no chunks yet. Route them
+  through `pdf-co` (already a connected app) or `pypdf` to extract text.
+- **Auto-ingest chat attachments** — `/api/chat` still keeps uploads only as
+  Claude blocks (`hermes/attachments.py`, in-memory). Calling `ingest_document`
+  there would make chat uploads searchable too.
+- **Chat memory → Pinecone** — optionally embed each chat turn into
+  `user__<id>` so Hermes recalls past conversations by meaning.
+- **S3 bucket** — set `S3_BUCKET` to start persisting the original file bytes.

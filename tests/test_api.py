@@ -15,6 +15,10 @@ from __future__ import annotations
 import os
 import sys
 
+# Force the in-memory store BEFORE importing app, so tests never touch the real
+# database (even when DBRDS_HOST is configured in .env).
+os.environ["HERMES_DISABLE_DB"] = "1"
+
 # Make the project root importable when run as `python tests/test_api.py`.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
