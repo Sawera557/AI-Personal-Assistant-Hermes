@@ -122,4 +122,26 @@ class ConversationStore:
             return list(rec["transcript"]) if rec else []
 
 
-store = ConversationStore()
+def _make_store():
+    """Use Postgres when a database is configured (DBRDS_HOST); else in-memory.
+
+    Both expose the same interface (get/set/reset + record_turn/conversations/
+    transcript), so the rest of the app is identical either way.
+    """
+    import os
+
+    if os.getenv("DBRDS_HOST", "").strip():
+        try:
+            from .db.conversations import PostgresConversationStore
+
+            return PostgresConversationStore()
+        except Exception as exc:  # noqa: BLE001 — fall back rather than crash on boot
+            import logging
+
+            logging.getLogger("hermes.memory").warning(
+                "Postgres store unavailable, using in-memory store: %s", exc
+            )
+    return ConversationStore()
+
+
+store = _make_store()
