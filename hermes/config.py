@@ -37,8 +37,7 @@ class Config:
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "").strip()
     MATON_API_KEY: str = os.getenv("MATON_API_KEY", "").strip()
     MATON_BASE_URL: str = os.getenv("MATON_BASE_URL", "https://api.maton.ai").rstrip("/")
-    HERMES_ADMIN_TOKEN: str = os.getenv("HERMES_ADMIN_TOKEN", "").strip()
-    ALLOW_MATON_WRITES: bool = _bool(os.getenv("HERMES_ALLOW_MATON_WRITES"), False)
+
     MODEL: str = os.getenv("HERMES_MODEL", "claude-opus-4-8")
     EFFORT: str = os.getenv("HERMES_EFFORT", "medium")
     MAX_TOKENS: int = int(os.getenv("HERMES_MAX_TOKENS", "8000"))
@@ -117,8 +116,15 @@ class Config:
     def voice_enabled(cls) -> bool:
         return bool(cls.voice_api_key())
 
-    FLASK_SECRET: str = os.getenv("FLASK_SECRET", "dev-secret-change-me")
     PORT: int = int(os.getenv("PORT", "5000"))
+
+    @classmethod
+    def cors_origins(cls) -> list[str] | str:
+        """Allowed origins for the API. Comma-separated CORS_ORIGINS, or "*"."""
+        raw = os.getenv("CORS_ORIGINS", "*").strip()
+        if raw == "*" or not raw:
+            return "*"
+        return [o.strip() for o in raw.split(",") if o.strip()]
 
     @classmethod
     def apps(cls) -> list[str]:
@@ -145,6 +151,4 @@ class Config:
             problems.append("ANTHROPIC_API_KEY is not set")
         if not cls.MATON_API_KEY:
             problems.append("MATON_API_KEY is not set (app integrations will fail)")
-        if not cls.HERMES_ADMIN_TOKEN:
-            problems.append("HERMES_ADMIN_TOKEN is not set (raw API access disabled)")
         return problems

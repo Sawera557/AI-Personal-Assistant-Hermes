@@ -1,4 +1,4 @@
-// Hermes chat client
+// Hermes chat client — chat + conversation history sidebar.
 const messagesEl = document.getElementById("messages");
 const form = document.getElementById("composer");
 const input = document.getElementById("input");
@@ -9,6 +9,14 @@ const resetBtn = document.getElementById("reset-btn");
 const connectBtn = document.getElementById("connect-btn");
 const connectApp = document.getElementById("connect-app");
 const connectResult = document.getElementById("connect-result");
+const convosEl = document.getElementById("convos");
+const convosEmptyEl = document.getElementById("convos-empty");
+const convoSearchInput = document.getElementById("convo-search-input");
+
+// Current history search query (empty = show all conversations).
+let convoQuery = "";
+
+const GREETING = "Hi! I'm connected to your business apps. How can I help you?";
 
 // Stable session id so the agent remembers the conversation.
 let sessionId = localStorage.getItem("hermes_session");
@@ -112,6 +120,159 @@ function refreshAttachments() {
   });
 }
 
+// ---- Conversation history ----------------------------------------------
+// The active conversation is `sessionId`. The sidebar lists every past
+// conversation for this client and lets you switch to or delete them.
+
+function showGreeting() {
+  messagesEl.innerHTML = "";
+  addMessage("assistant", GREETING);
+}
+
+// Re-render an assistant turn from a stored transcript entry.
+function renderAssistantTurn(turn) {
+  const wrap = addMessage("assistant", "");
+  const bubble = wrap.querySelector(".bubble");
+  bubble.innerHTML =
+    renderMarkdown(turn.text) + renderThinking(turn.thinking) + renderToolTrace(turn.tool_calls);
+  highlightCode(bubble);
+}
+
+function renderTranscript(transcript) {
+  messagesEl.innerHTML = "";
+  if (!transcript || !transcript.length) {
+    showGreeting();
+    return;
+  }
+  transcript.forEach((turn) => {
+    if (turn.role === "user") {
+      addMessage("user", renderUserText(turn.text));
+    } else {
+      renderAssistantTurn(turn);
+    }
+  });
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// Wrap occurrences of the query term in <mark> (input already escaped).
+function highlightTerm(escapedText, query) {
+  const q = (query || "").trim();
+  if (!q) return escapedText;
+  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return escapedText.replace(new RegExp(safe, "gi"), (m) => `<mark>${m}</mark>`);
+}
+
+async function loadConversations() {
+  let convos = [];
+  try {
+    const url = convoQuery
+      ? `/api/conversations?q=${encodeURIComponent(convoQuery)}`
+      : "/api/conversations";
+    const res = await fetch(url);
+    const data = await res.json();
+    convos = data.conversations || [];
+  } catch (_) { /* offline / first run — just show an empty list */ }
+
+  convosEl.innerHTML = "";
+  convosEmptyEl.style.display = convos.length ? "none" : "block";
+  convosEmptyEl.textContent = convoQuery
+    ? "No chats match your search."
+    : "No conversations yet.";
+
+  convos.forEach((c) => {
+    const li = document.createElement("li");
+    li.className = "convo" + (c.session_id === sessionId ? " active" : "");
+    li.dataset.id = c.session_id;
+
+    const openBtn = document.createElement("button");
+    openBtn.className = "convo-open";
+    openBtn.title = c.title;
+    const titleHtml = highlightTerm(escapeHtml(c.title), convoQuery);
+    const snippetHtml = c.snippet
+      ? `<span class="convo-snippet">${highlightTerm(escapeHtml(c.snippet), convoQuery)}</span>`
+      : "";
+    openBtn.innerHTML = `<span class="convo-title">${titleHtml}</span>${snippetHtml}`;
+    openBtn.onclick = () => openConversation(c.session_id);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "convo-del";
+    delBtn.title = "Delete conversation";
+    delBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+    delBtn.onclick = (e) => {
+      e.stopPropagation();
+      deleteConversation(c.session_id);
+    };
+
+    li.appendChild(openBtn);
+    li.appendChild(delBtn);
+    convosEl.appendChild(li);
+  });
+}
+// Let voice.js refresh the list after a spoken turn.
+window.hermesReloadConversations = loadConversations;
+
+// ---- History search ----------------------------------------------------
+// Debounce so we query on a pause, not on every keystroke.
+let convoSearchTimer = null;
+if (convoSearchInput) {
+  convoSearchInput.addEventListener("input", () => {
+    clearTimeout(convoSearchTimer);
+    convoSearchTimer = setTimeout(() => {
+      convoQuery = convoSearchInput.value.trim();
+      loadConversations();
+    }, 220);
+  });
+  // Esc clears the search and restores the full list.
+  convoSearchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      convoSearchInput.value = "";
+      convoQuery = "";
+      loadConversations();
+    }
+  });
+}
+
+async function openConversation(id) {
+  if (!id) return;
+  sessionId = id;
+  localStorage.setItem("hermes_session", sessionId);
+  closeDrawer();
+  try {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
+    if (res.ok) {
+      const data = await res.json();
+      renderTranscript(data.transcript);
+    } else {
+      showGreeting();
+    }
+  } catch (_) {
+    showGreeting();
+  }
+  await loadConversations();
+}
+
+function startNewConversation() {
+  sessionId = crypto.randomUUID();
+  localStorage.setItem("hermes_session", sessionId);
+  showGreeting();
+  closeDrawer();
+  loadConversations();
+}
+
+async function deleteConversation(id) {
+  try {
+    await fetch(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch (_) { /* ignore */ }
+  if (id === sessionId) {
+    // Deleted the open conversation — fall back to a fresh one.
+    sessionId = crypto.randomUUID();
+    localStorage.setItem("hermes_session", sessionId);
+    showGreeting();
+  }
+  await loadConversations();
+}
+
 fileInput.addEventListener("change", () => {
   pendingFiles.push(...fileInput.files);
   fileInput.value = "";
@@ -167,6 +328,8 @@ form.addEventListener("submit", async (e) => {
       bubble.innerHTML =
         renderMarkdown(data.reply) + renderThinking(data.thinking) + renderToolTrace(data.tool_calls);
       highlightCode(bubble);
+      // A new turn was recorded — refresh the history list (title / new entry).
+      loadConversations();
     }
   } catch (err) {
     thinkingEl.querySelector(".bubble").innerHTML =
@@ -177,18 +340,9 @@ form.addEventListener("submit", async (e) => {
   }
 });
 
-resetBtn.addEventListener("click", async () => {
-  await fetch("/api/reset", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId }),
-  });
-  sessionId = crypto.randomUUID();
-  localStorage.setItem("hermes_session", sessionId);
-  messagesEl.innerHTML = "";
-  addMessage("assistant", "Hi! I'm connected to your business apps. How can I help you?");
-  appEl.classList.remove("drawer-open");
-});
+// "New conversation" starts a fresh chat WITHOUT deleting the current one —
+// past chats stay in the history sidebar.
+resetBtn.addEventListener("click", startNewConversation);
 
 // ---- Pin the app to the visible viewport (normal mobile chat behavior) ----
 // Anchors the layout to the area NOT covered by the keyboard, so the input
@@ -234,7 +388,7 @@ const closeDrawer = () => appEl.classList.remove("drawer-open");
 menuBtn?.addEventListener("click", openDrawer);
 overlay?.addEventListener("click", closeDrawer);
 drawerClose?.addEventListener("click", closeDrawer);
-resetTop?.addEventListener("click", () => resetBtn.click());
+resetTop?.addEventListener("click", startNewConversation);
 
 connectBtn.addEventListener("click", async () => {
   const app = connectApp.value.trim();
@@ -258,3 +412,18 @@ connectBtn.addEventListener("click", async () => {
     connectResult.textContent = "Error: " + String(err);
   }
 });
+
+// ---- On load: restore the active conversation (if any) and the history list ----
+(async function init() {
+  await loadConversations();
+  const known = convosEl.querySelector(`.convo[data-id="${CSS.escape(sessionId)}"]`);
+  if (known) {
+    try {
+      const res = await fetch(`/api/conversations/${encodeURIComponent(sessionId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        renderTranscript(data.transcript);
+      }
+    } catch (_) { /* keep the static greeting */ }
+  }
+})();

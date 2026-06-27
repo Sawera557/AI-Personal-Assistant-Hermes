@@ -84,6 +84,74 @@ body {
 .panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--muted); margin: 0 0 11px; }
 .model { display: block; background: var(--surface); border: 1px solid var(--border); padding: 9px 11px; border-radius: 10px; font-size: 12px; color: var(--accent); }
 
+/* "New conversation" button (top of the sidebar) */
+.new-convo { margin-bottom: 18px; }
+
+/* ---------- Conversation history ---------- */
+/* The history panel takes the available vertical space and scrolls on its own
+   so the Model / Voice / Apps panels below stay pinned and reachable. */
+.history-panel {
+  flex: 1 1 auto;
+  min-height: 90px;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 22px;
+}
+/* History search box */
+.convo-search { position: relative; margin-bottom: 10px; flex-shrink: 0; }
+.convo-search svg {
+  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); pointer-events: none;
+}
+.convo-search input {
+  width: 100%; background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); padding: 9px 11px 9px 34px; border-radius: 10px;
+  font-size: 13px; font-family: inherit;
+}
+.convo-search input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(245, 166, 35, 0.12);
+}
+.convo-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.convo-search input::placeholder { color: var(--muted); }
+
+.convos {
+  list-style: none; margin: 0; padding: 0;
+  overflow-y: auto; flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.convo {
+  display: flex; align-items: center; gap: 4px;
+  border-radius: 10px; border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.convo:hover { background: var(--surface); border-color: var(--border); }
+.convo.active { background: var(--surface-2); border-color: var(--border-strong); }
+.convo-open {
+  flex: 1; min-width: 0; text-align: left; cursor: pointer;
+  background: none; border: none; color: var(--text);
+  padding: 9px 10px; font-size: 13px; font-family: inherit;
+  display: flex; flex-direction: column; gap: 2px; align-items: stretch;
+}
+.convo-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.convo-snippet {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  font-size: 11px; color: var(--muted); font-weight: 400;
+}
+.convo-open mark, .convo-snippet mark {
+  background: rgba(245, 166, 35, 0.30); color: var(--text);
+  border-radius: 3px; padding: 0 1px;
+}
+.convo.active .convo-open .convo-title { color: var(--accent); font-weight: 600; }
+.convo-del {
+  flex-shrink: 0; background: none; border: none; cursor: pointer;
+  color: var(--muted); width: 30px; height: 30px; margin-right: 4px;
+  display: grid; place-items: center; border-radius: 8px;
+  opacity: 0; transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+.convo:hover .convo-del, .convo.active .convo-del { opacity: 1; }
+.convo-del:hover { color: var(--err); background: rgba(248, 113, 113, 0.12); }
+
 /* Collapsible "Connected apps" panel */
 .apps-panel { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 0; overflow: hidden; }
 .apps-panel summary {

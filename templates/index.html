@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <div class="app" id="app">
@@ -23,6 +23,18 @@
           <p class="tag">AI Agent</p>
         </div>
         <button class="drawer-close" id="drawer-close" aria-label="Close menu">✕</button>
+      </div>
+
+      <button id="reset-btn" class="ghost new-convo">＋ New conversation</button>
+
+      <div class="panel history-panel">
+        <h2>History</h2>
+        <div class="convo-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="convo-search-input" type="search" placeholder="Search chats…" autocomplete="off" aria-label="Search conversations" />
+        </div>
+        <ul class="convos" id="convos"></ul>
+        <p class="hint" id="convos-empty">No conversations yet.</p>
       </div>
 
       <div class="panel">
@@ -59,10 +71,11 @@
         </div>
       </details>
 
+      {% if web_search %}
       <div class="panel push-bottom">
-        <button id="reset-btn" class="ghost">＋ New conversation</button>
-        {% if web_search %}<p class="hint">🌐 Web search enabled</p>{% endif %}
+        <p class="hint">🌐 Web search enabled</p>
       </div>
+      {% endif %}
     </aside>
 
     <main class="chat">
@@ -124,7 +137,7 @@
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
-  {% if voice_enabled %}<script src="{{ url_for('static', filename='voice.js') }}"></script>{% endif %}
+  <script src="/static/app.js"></script>
+  {% if voice_enabled %}<script src="/static/voice.js"></script>{% endif %}
 </body>
 </html>

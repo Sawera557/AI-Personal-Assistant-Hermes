@@ -2,11 +2,11 @@
 //
 // Flow per turn:  mic --(VAD detects you stopped)--> /api/voice/transcribe
 //   --> /api/chat (the SAME Claude + Maton agent as the typed chat)
-//   --> /api/voice/speak (Groq TTS) --> play aloud --> listen again.
+//   --> /api/voice/speak (TTS) --> play aloud --> listen again.
 //
 // Reuses addMessage / renderMarkdown / renderThinking / renderToolTrace /
 // highlightCode / sessionId from app.js so the spoken conversation also shows
-// up in the normal chat thread.
+// up in the normal chat thread and in the conversation-history sidebar.
 (() => {
   const startBtn = document.getElementById("voice-btn");
   const callEl = document.getElementById("call");
@@ -284,6 +284,8 @@
     bubble.innerHTML =
       renderMarkdown(data.reply) + renderThinking(data.thinking) + renderToolTrace(data.tool_calls);
     highlightCode(bubble);
+    // The spoken turn was recorded server-side — refresh the history sidebar.
+    if (window.hermesReloadConversations) window.hermesReloadConversations();
     return data.reply || "";
   }
 

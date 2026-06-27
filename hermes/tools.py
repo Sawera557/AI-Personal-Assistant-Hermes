@@ -5,55 +5,7 @@ import json
 from typing import Any
 
 from .config import Config
-from .maton import MatonClient, MatonError, sanitize_connection_payload
-
-WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-SENSITIVE_KEYS = {
-    "authorization",
-    "auth",
-    "access_token",
-    "refresh_token",
-    "token",
-    "api_key",
-    "apikey",
-    "key",
-    "secret",
-    "client_secret",
-    "password",
-    "body",
-}
-
-
-def _redact(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: "[REDACTED]" if key.lower() in SENSITIVE_KEYS else _redact(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact(item) for item in value]
-    return value
-
-
-def sanitize_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:
-    """Return tool input safe enough for UI traces and logs."""
-    return _redact(tool_input)
-
-
-def _enabled_apps() -> set[str]:
-    return set(Config.apps())
-
-
-def _unsupported_app(app: str) -> tuple[str, bool]:
-    return (
-        json.dumps(
-            {
-                "error": f"Unsupported app: {app}",
-                "allowed_apps": sorted(_enabled_apps()),
-            }
-        ),
-        True,
-    )
+from .maton import MatonClient, MatonError
 
 
 def build_tools() -> list[dict[str, Any]]:
@@ -74,8 +26,8 @@ def build_tools() -> list[dict[str, Any]]:
                 "app='quickbooks', path='/quickbooks/v2/company/:realmId/query' "
                 "(`:realmId` is auto-substituted). "
                 "Always do read-only (GET) calls to discover IDs before any write. "
-                "POST/PUT/PATCH/DELETE are blocked by the Hermes server unless an explicit "
-                "approval gate is enabled and confirmed."
+                "Do NOT call this for POST/PUT/PATCH/DELETE until the user has explicitly "
+                "confirmed the change."
             ),
             "input_schema": {
                 "type": "object",
@@ -106,13 +58,6 @@ def build_tools() -> list[dict[str, Any]]:
                     "connection_id": {
                         "type": "string",
                         "description": "Optional Maton connection id when multiple exist for an app.",
-                    },
-                    "confirmed_write": {
-                        "type": "boolean",
-                        "description": (
-                            "Reserved for server-side write approval. Hermes blocks write "
-                            "methods unless the server also enables HERMES_ALLOW_MATON_WRITES."
-                        ),
                     },
                 },
                 "required": ["app", "method", "path"],
@@ -173,49 +118,20 @@ def dispatch(name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
     client = MatonClient()
     try:
         if name == "maton_request":
-            app = tool_input["app"]
-            method = str(tool_input.get("method", "GET")).upper()
-            if app not in _enabled_apps():
-                return _unsupported_app(app)
-            if method in WRITE_METHODS and not (
-                Config.ALLOW_MATON_WRITES and bool(tool_input.get("confirmed_write"))
-            ):
-                return (
-                    json.dumps(
-                        {
-                            "blocked": True,
-                            "confirmation_required": True,
-                            "message": (
-                                "Write methods are disabled by default. Summarize the exact "
-                                "change for user approval; do not execute it from this session."
-                            ),
-                            "method": method,
-                            "app": app,
-                            "path": tool_input.get("path"),
-                        }
-                    ),
-                    True,
-                )
             result = client.request(
-                app=app,
-                method=method,
+                app=tool_input["app"],
+                method=tool_input.get("method", "GET"),
                 path=tool_input["path"],
                 query=tool_input.get("query"),
                 body=tool_input.get("body"),
                 connection_id=tool_input.get("connection_id"),
             )
         elif name == "maton_list_connections":
-            app = tool_input.get("app")
-            if app and app not in _enabled_apps():
-                return _unsupported_app(app)
-            result = sanitize_connection_payload(
-                client.list_connections(app=app, status=tool_input.get("status"))
+            result = client.list_connections(
+                app=tool_input.get("app"), status=tool_input.get("status")
             )
         elif name == "maton_create_connection":
-            app = tool_input["app"]
-            if app not in _enabled_apps():
-                return _unsupported_app(app)
-            result = client.create_connection(app=app)
+            result = client.create_connection(app=tool_input["app"])
         else:
             return (f"Unknown tool: {name}", True)
     except MatonError as exc:

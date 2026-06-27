@@ -1,256 +1,490 @@
-"""Flask entrypoint for the Hermes AI Agent — web chat UI + JSON API."""
+"""FastAPI entrypoint for the Hermes AI Agent — web chat UI + JSON API.
+
+Serves a single-page web chat at `/` (with a conversation-history sidebar) and
+the full JSON API under `/api/*`. The API is self-contained, so you can also
+ignore the UI and point any frontend, mobile app, or service at the backend.
+
+Endpoints:
+    GET  /                       — web chat UI (conversation history sidebar)
+    GET  /api/health             — liveness + config check
+    POST /api/chat               — run a turn through the Claude + Maton agent
+    GET  /api/conversations      — list past conversations (history sidebar)
+    GET  /api/conversations/{id} — replay one conversation's transcript
+    DELETE /api/conversations/{id} — delete a conversation from history
+    POST /api/attachments        — upload files, get attachment ids for /api/chat
+    GET  /api/attachments/{id}   — attachment metadata
+    DELETE /api/attachments/{id} — delete an attachment
+    POST /api/voice/transcribe   — speech -> text (multipart audio upload)
+    POST /api/voice/speak        — text -> speech (returns audio bytes)
+    GET  /api/voice/voices       — list available TTS voices + current default
+    GET/POST /api/connections    — list / create Maton app connections
+    POST /api/reset              — clear a conversation's history
+
+Interactive docs are auto-generated at /docs (Swagger) and /redoc.
+
+Every agent/voice endpoint accepts an optional `entity_id` so a single backend
+can serve many tenants/users with isolated conversation memory and history.
+"""
 from __future__ import annotations
 
 import base64
-import hmac
 import uuid
-from functools import wraps
+from pathlib import Path
 
-from flask import Flask, Response, jsonify, render_template, request
+from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+# Starlette's form parser yields starlette.UploadFile, which is the BASE class of
+# fastapi.UploadFile — so isinstance checks on parsed form files must use this.
+from starlette.datastructures import UploadFile as FormUploadFile
 
 from hermes.agent import run_turn
+from hermes.attachments import store as attachment_store
 from hermes.config import Config
-from hermes.maton import MatonClient, MatonError, sanitize_connection_payload
+from hermes.ingest import ingest_document
+from hermes.maton import MatonClient, MatonError
 from hermes.memory import store
+from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
-app = Flask(__name__)
-app.secret_key = Config.FLASK_SECRET
-app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB upload cap
+app = FastAPI(title="Hermes AI Agent API", version="0.1.0")
+
+# ---- Web UI (single-page chat with conversation history) ------------------
+_BASE_DIR = Path(__file__).resolve().parent
+app.mount("/static", StaticFiles(directory=_BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=str(_BASE_DIR / "templates"))
+
+# Allow a separately-deployed frontend / client to call this API. Lock down the
+# origins in production via CORS_ORIGINS (comma-separated) — defaults to "*".
+_origins = Config.cors_origins()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins if isinstance(_origins, list) else ["*"],
+    allow_credentials=isinstance(_origins, list),
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Entity-Id"],
+)
 
 _IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _TEXT_MAX_CHARS = 200_000
-
-def _provided_admin_token() -> str:
-    auth = request.headers.get("Authorization", "").strip()
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return request.headers.get("X-Hermes-Admin-Token", "").strip()
+_MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB upload cap
 
 
-def _is_admin_request() -> bool:
-    expected = Config.HERMES_ADMIN_TOKEN
-    provided = _provided_admin_token()
-    return bool(expected and provided and hmac.compare_digest(provided, expected))
+@app.middleware("http")
+async def _limit_upload_size(request: Request, call_next):
+    """Reject oversized request bodies before we buffer them into memory."""
+    length = request.headers.get("content-length")
+    if length and length.isdigit() and int(length) > _MAX_UPLOAD_BYTES:
+        return JSONResponse({"error": "Request body too large (max 25 MB)."}, status_code=413)
+    return await call_next(request)
 
-
-def _require_admin():
-    if not Config.HERMES_ADMIN_TOKEN:
-        return jsonify({"error": "Admin access is not configured."}), 503
-    if not _is_admin_request():
-        return jsonify({"error": "Admin authorization required."}), 401
-    return None
-
-
-def _admin_required(view):
-    @wraps(view)
-    def wrapper(*args, **kwargs):
-        error = _require_admin()
-        if error:
-            return error
-        return view(*args, **kwargs)
-    return wrapper
-
-
-def _connector_health_from_connections(payload: dict) -> dict:
-    data = payload.get("data") if isinstance(payload, dict) else {}
-    connections = data.get("connections") if isinstance(data, dict) else []
-    counts: dict[str, int] = {}
-    safe_connections = []
-    for item in connections or []:
-        if not isinstance(item, dict):
-            continue
-        status = str(item.get("status") or "UNKNOWN")
-        counts[status] = counts.get(status, 0) + 1
-        safe_connections.append({"app": item.get("app"), "status": status, "last_updated_time": item.get("last_updated_time")})
-    return {"status": "ok" if payload.get("ok") else "degraded", "upstream_status": payload.get("status"), "counts": counts, "connections": safe_connections}
 
 def _truthy(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _build_attachments(files) -> list[dict]:
-    """Turn uploaded files into Claude content blocks."""
-    blocks: list[dict] = []
-    for f in files:
-        if not f or not f.filename:
-            continue
-        raw = f.read()
-        mime = (f.mimetype or "").lower()
-        name = f.filename
-
-        if mime == "application/pdf" or name.lower().endswith(".pdf"):
-            blocks.append(
-                {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": base64.standard_b64encode(raw).decode("utf-8"),
-                    },
-                    "title": name,
-                }
-            )
-        elif mime in _IMAGE_TYPES:
-            blocks.append(
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": mime,
-                        "data": base64.standard_b64encode(raw).decode("utf-8"),
-                    },
-                }
-            )
-        else:
-            # Treat anything else as text (csv, json, md, code, ...).
-            try:
-                text = raw.decode("utf-8", errors="replace")[:_TEXT_MAX_CHARS]
-            except Exception:  # noqa: BLE001
-                text = "(could not decode file as text)"
-            blocks.append(
-                {"type": "text", "text": f"Attached file '{name}':\n\n{text}"}
-            )
-    return blocks
+def _session_key(entity_id: str | None, session_id: str) -> str:
+    """Namespace a session by entity so tenants never share conversation memory."""
+    eid = (entity_id or "").strip()
+    return f"{eid}:{session_id}" if eid else session_id
 
 
-@app.route("/")
-def index():
-    return render_template(
-        "index.html",
-        apps=Config.apps(),
-        model=Config.MODEL,
-        web_search=Config.WEB_SEARCH,
-        voice_enabled=Config.voice_enabled(),
-        voices=Config.voice_voices(),
-        voice=Config.voice_tts_voice(),
+def _block_for(name: str, mime: str, raw: bytes) -> tuple[dict, str]:
+    """Turn one uploaded file into a Claude content block + its kind.
+
+    Returns (block, kind) where kind is "document", "image", or "text"."""
+    mime = (mime or "").lower()
+
+    if mime == "application/pdf" or name.lower().endswith(".pdf"):
+        block = {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": base64.standard_b64encode(raw).decode("utf-8"),
+            },
+            "title": name,
+        }
+        return block, "document"
+
+    if mime in _IMAGE_TYPES:
+        block = {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime,
+                "data": base64.standard_b64encode(raw).decode("utf-8"),
+            },
+        }
+        return block, "image"
+
+    # Treat anything else as text (csv, json, md, code, ...).
+    try:
+        text = raw.decode("utf-8", errors="replace")[:_TEXT_MAX_CHARS]
+    except Exception:  # noqa: BLE001
+        text = "(could not decode file as text)"
+    return {"type": "text", "text": f"Attached file '{name}':\n\n{text}"}, "text"
+
+
+def _build_attachments(files: list[tuple[str, str, bytes]]) -> list[dict]:
+    """Turn uploaded files (name, mimetype, raw bytes) into Claude content blocks."""
+    return [_block_for(name, mime, raw)[0] for name, mime, raw in files if name]
+
+
+@app.get("/")
+def index(request: Request):
+    """Render the web chat UI. Config drives what the sidebar shows."""
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "apps": Config.apps(),
+            "model": Config.MODEL,
+            "web_search": Config.WEB_SEARCH,
+            "voice_enabled": Config.voice_enabled(),
+            "voices": Config.voice_voices(),
+            "voice": Config.voice_tts_voice(),
+        },
     )
 
 
-@app.route("/api/health")
+@app.get("/api/health")
 def health():
-    body = {"status": "ok"}
-    if _is_admin_request():
-        body["problems"] = Config.validate()
-    return jsonify(body)
+    return {"status": "ok", "problems": Config.validate()}
 
 
+@app.post("/api/chat")
+async def chat(request: Request):
+    """Run one user turn through the Claude + Maton agent.
 
-@app.route("/api/connector-health")
-def connector_health():
-    try:
-        return jsonify(_connector_health_from_connections(MatonClient().list_connections()))
-    except MatonError as exc:
-        return jsonify({"status": "down", "error": str(exc)}), 502
-@app.route("/api/chat", methods=["POST"])
-@_admin_required
-def chat():
-    # Accept JSON or multipart (multipart carries file attachments).
-    if request.content_type and request.content_type.startswith("multipart/"):
-        session_id = request.form.get("session_id") or str(uuid.uuid4())
-        message = (request.form.get("message") or "").strip()
-        attachments = _build_attachments(request.files.getlist("files"))
-        voice = _truthy(request.form.get("voice"))
+    Accepts JSON or multipart/form-data (multipart carries file attachments)."""
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/"):
+        form = await request.form()
+        session_id = form.get("session_id") or str(uuid.uuid4())
+        entity_id = form.get("entity_id")
+        message = (form.get("message") or "").strip()
+        voice = _truthy(form.get("voice"))
+        attachment_ids = [a for a in form.getlist("attachment_ids") if isinstance(a, str)]
+        files: list[tuple[str, str, bytes]] = []
+        for upload in form.getlist("files"):
+            if isinstance(upload, FormUploadFile) and upload.filename:
+                files.append((upload.filename, upload.content_type or "", await upload.read()))
+        attachments = _build_attachments(files)
     else:
-        data = request.get_json(silent=True) or {}
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001 — tolerate empty/invalid bodies
+            data = {}
+        data = data or {}
         session_id = data.get("session_id") or str(uuid.uuid4())
+        entity_id = data.get("entity_id")
         message = (data.get("message") or "").strip()
-        attachments = []
         voice = _truthy(data.get("voice"))
+        attachment_ids = data.get("attachment_ids") or []
+        attachments = []
 
-    if not message and not attachments:
-        return jsonify({"error": "Provide a message or at least one file."}), 400
+    if not message and not attachments and not attachment_ids:
+        return JSONResponse(
+            {"error": "Provide a message, a file, or an attachment_id."}, status_code=400
+        )
 
-    content: list[dict] = list(attachments)
+    # Pull any previously-uploaded attachments (scoped to this entity) first.
+    content: list[dict] = []
+    for aid in attachment_ids:
+        block = attachment_store.block(str(aid), entity_id)
+        if block is None:
+            return JSONResponse(
+                {"error": f"Unknown attachment_id: {aid}"}, status_code=400
+            )
+        content.append(block)
+    content.extend(attachments)
     if message:
         content.append({"type": "text", "text": message})
 
+    key = _session_key(entity_id, session_id)
     try:
-        result = run_turn(session_id, content, voice=voice)
+        result = await run_in_threadpool(run_turn, key, content, voice)
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the client
-        return jsonify({"error": f"Agent error: {exc}"}), 500
+        return JSONResponse({"error": f"Agent error: {exc}"}, status_code=500)
+
+    # Record this exchange so the conversation-history sidebar can list/replay it.
+    file_names = [name for name, _, _ in files] if content_type.startswith("multipart/") else []
+    n_files = len(file_names) + len(attachment_ids)
+    user_text = message
+    if n_files:
+        names = ", ".join(file_names) if file_names else f"{n_files} file(s)"
+        note = f"📎 {names}"
+        user_text = f"{message}\n{note}" if message else note
+    store.record_turn(key, entity_id, session_id, user_text, result)
 
     result["session_id"] = session_id
-    return jsonify(result)
+    result["entity_id"] = entity_id
+    return result
 
 
-@app.route("/api/connections", methods=["GET", "POST"])
-@_admin_required
-def connections():
-    client = MatonClient()
-    try:
-        if request.method == "POST":
-            data = request.get_json(silent=True) or {}
-            app_slug = data.get("app")
-            if not app_slug:
-                return jsonify({"error": "Missing 'app'."}), 400
-            return jsonify(sanitize_connection_payload(client.create_connection(app_slug), include_authorization_url=True))
-        return jsonify(
-            client.list_connections(
-                app=request.args.get("app"), status=request.args.get("status")
-            )
+@app.get("/api/conversations")
+def list_conversations(entity_id: str | None = None, q: str | None = None):
+    """List this entity's past conversations (newest first) for the history
+    sidebar. Each item has session_id, title, timestamps, and message_count.
+
+    Pass `q` to search chats by title or message content; matching items also
+    carry a `snippet` of the first matching message."""
+    return {
+        "conversations": store.conversations(entity_id, q),
+        "entity_id": entity_id,
+        "q": q,
+    }
+
+
+@app.get("/api/conversations/{session_id}")
+def get_conversation(session_id: str, entity_id: str | None = None):
+    """Replay one conversation: returns its display transcript (user/assistant
+    turns with thinking + tool traces) so the UI can re-render it."""
+    transcript = store.transcript(_session_key(entity_id, session_id))
+    if not transcript:
+        return JSONResponse({"error": "Conversation not found."}, status_code=404)
+    return {"session_id": session_id, "entity_id": entity_id, "transcript": transcript}
+
+
+@app.delete("/api/conversations/{session_id}")
+def delete_conversation(session_id: str, entity_id: str | None = None):
+    """Delete a conversation (its agent memory and its history transcript)."""
+    store.reset(_session_key(entity_id, session_id))
+    return {"status": "deleted", "session_id": session_id}
+
+
+@app.post("/api/attachments")
+async def upload_attachments(request: Request):
+    """Upload one or more files and get back stable attachment ids.
+
+    Pass those ids as `attachment_ids` to /api/chat to include the files in a
+    turn without re-uploading them. Attachments are scoped to `entity_id`, so
+    only the same entity can reference or delete them.
+
+    Multipart fields: `files` (one or more, required), `entity_id` (optional)."""
+    form = await request.form()
+    entity_id = form.get("entity_id")
+    uploads = [
+        u for u in form.getlist("files")
+        if isinstance(u, FormUploadFile) and u.filename
+    ]
+    if not uploads:
+        return JSONResponse(
+            {"error": "No files uploaded. Use the multipart field 'files'."},
+            status_code=400,
         )
+
+    out = []
+    for upload in uploads:
+        raw = await upload.read()
+        block, kind = _block_for(upload.filename, upload.content_type or "", raw)
+        rec = attachment_store.add(entity_id, upload.filename, kind, len(raw), block)
+        out.append(
+            {
+                "attachment_id": rec["attachment_id"],
+                "filename": rec["filename"],
+                "type": rec["type"],
+                "bytes": rec["bytes"],
+            }
+        )
+    return {"attachments": out, "entity_id": entity_id}
+
+
+@app.get("/api/attachments/{attachment_id}")
+def get_attachment(attachment_id: str, entity_id: str | None = None):
+    """Return an attachment's metadata (filename, type, size). Pass the same
+    `entity_id` it was uploaded with as a query parameter."""
+    meta = attachment_store.meta(attachment_id, entity_id)
+    if meta is None:
+        return JSONResponse({"error": "Attachment not found."}, status_code=404)
+    return meta
+
+
+@app.delete("/api/attachments/{attachment_id}")
+def delete_attachment(attachment_id: str, entity_id: str | None = None):
+    """Delete an attachment. Pass the same `entity_id` it was uploaded with."""
+    if attachment_store.remove(attachment_id, entity_id):
+        return {"status": "deleted", "attachment_id": attachment_id}
+    return JSONResponse({"error": "Attachment not found."}, status_code=404)
+
+
+@app.post("/api/documents")
+async def upload_documents(request: Request):
+    """Ingest files into the knowledge base so they're searchable by meaning.
+
+    Each file is stored (S3, if configured), recorded in `documents`, chunked,
+    embedded, and upserted into the business's Pinecone namespace.
+
+    Multipart fields: `files` (one or more, required), `entity_id` (required —
+    which business the files belong to), `sensitivity_level` (optional, default
+    'internal'), `message_id` (optional, link to a chat message)."""
+    form = await request.form()
+    entity_id = (form.get("entity_id") or "").strip()
+    if not entity_id:
+        return JSONResponse({"error": "entity_id is required."}, status_code=400)
+    sensitivity = (form.get("sensitivity_level") or "internal").strip()
+    message_id = form.get("message_id") or None
+
+    uploads = [
+        u for u in form.getlist("files")
+        if isinstance(u, FormUploadFile) and u.filename
+    ]
+    if not uploads:
+        return JSONResponse(
+            {"error": "No files uploaded. Use the multipart field 'files'."},
+            status_code=400,
+        )
+
+    out = []
+    for upload in uploads:
+        raw = await upload.read()
+        try:
+            result = await run_in_threadpool(
+                ingest_document,
+                entity_id,
+                filename=upload.filename,
+                mime=upload.content_type or "",
+                raw=raw,
+                message_id=message_id,
+                sensitivity_level=sensitivity,
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse({"error": f"Ingest failed: {exc}"}, status_code=500)
+        out.append({"filename": upload.filename, **result})
+    return {"documents": out, "entity_id": entity_id}
+
+
+@app.get("/api/search")
+async def search(
+    q: str,
+    entity_id: str,
+    max_sensitivity: str = "internal",
+    top_k: int = 8,
+):
+    """Meaning search within one business. The backend is the guard: it scopes
+    the search to `entity_id`'s namespace and filters by sensitivity + region."""
+    try:
+        results = await run_in_threadpool(
+            semantic_search, entity_id, q,
+            max_sensitivity=max_sensitivity, top_k=top_k,
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Search failed: {exc}"}, status_code=502)
+    return {"entity_id": entity_id, "query": q, "results": results}
+
+
+class ConnectionRequest(BaseModel):
+    app: str | None = None
+
+
+@app.get("/api/connections")
+def list_connections(app: str | None = None, status: str | None = None):
+    try:
+        return MatonClient().list_connections(app=app, status=status)
     except MatonError as exc:
-        return jsonify({"error": str(exc)}), 502
+        return JSONResponse({"error": str(exc)}, status_code=502)
 
 
-@app.route("/api/voice/transcribe", methods=["POST"])
-@_admin_required
-def voice_transcribe():
-    """Speech -> text. The browser posts a recorded audio clip; Groq Whisper
-    returns the transcript, which the client then sends through /api/chat so the
-    voice agent runs the exact same Claude + Maton agent as the typed chat."""
-    f = request.files.get("audio")
-    if not f:
-        return jsonify({"error": "No audio uploaded."}), 400
+@app.post("/api/connections")
+def create_connection(body: ConnectionRequest):
+    if not body.app:
+        return JSONResponse({"error": "Missing 'app'."}, status_code=400)
     try:
-        text = transcribe(f.read(), f.mimetype)
+        return MatonClient().create_connection(body.app)
+    except MatonError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.post("/api/voice/transcribe")
+async def voice_transcribe(
+    audio: UploadFile | None = File(default=None),
+    entity_id: str | None = Form(default=None),
+):
+    """Speech -> text. The client posts a recorded audio clip; the configured
+    provider (OpenAI/Groq Whisper) returns the transcript, which the client then
+    sends through /api/chat so the voice agent runs the exact same Claude + Maton
+    agent as the typed chat.
+
+    Multipart fields: `audio` (file, required), `entity_id` (optional)."""
+    if audio is None:
+        return JSONResponse({"error": "No audio uploaded."}, status_code=400)
+    raw = await audio.read()
+    try:
+        text = await run_in_threadpool(transcribe, raw, audio.content_type)
     except VoiceError as exc:
-        return jsonify({"error": str(exc)}), 502
-    return jsonify({"text": text})
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return {"text": text, "entity_id": entity_id}
 
 
-@app.route("/api/voice/speak", methods=["POST"])
-@_admin_required
-def voice_speak():
-    """Text -> speech. Returns OpenAI TTS audio for the agent's reply."""
-    data = request.get_json(silent=True) or {}
-    text = speakable(data.get("text") or "")
+class SpeakRequest(BaseModel):
+    text: str | None = None
+    voice: str | None = None
+    entity_id: str | None = None
+
+
+@app.post("/api/voice/speak")
+async def voice_speak(body: SpeakRequest):
+    """Text -> speech. Returns TTS audio for the agent's reply.
+
+    JSON body: `text` (required), `voice` (optional override), `entity_id`
+    (optional — echoed back in the X-Entity-Id response header)."""
+    text = speakable(body.text or "")
     if not text:
-        return jsonify({"error": "Nothing to speak."}), 400
+        return JSONResponse({"error": "Nothing to speak."}, status_code=400)
     try:
-        audio, mimetype = synthesize(text, voice=data.get("voice"))
+        audio, mimetype = await run_in_threadpool(synthesize, text, body.voice)
     except VoiceError as exc:
-        return jsonify({"error": str(exc)}), 502
-    return Response(audio, mimetype=mimetype)
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    headers = {"X-Entity-Id": str(body.entity_id)} if body.entity_id else None
+    return Response(content=audio, media_type=mimetype, headers=headers)
 
 
-@app.route("/api/reset", methods=["POST"])
-@_admin_required
-def reset():
-    data = request.get_json(silent=True) or {}
-    session_id = data.get("session_id")
-    if session_id:
-        store.reset(session_id)
-    return jsonify({"status": "reset"})
+@app.get("/api/voice/voices")
+def voice_voices():
+    """List the TTS voices available for the active provider, plus the current
+    default. A client uses this to let the user change voice; pass the chosen
+    name as `voice` to /api/voice/speak."""
+    return {
+        "provider": Config.VOICE_PROVIDER,
+        "default": Config.voice_tts_voice(),
+        "voices": list(Config.voice_voices()),
+        "enabled": Config.voice_enabled(),
+    }
+
+
+class ResetRequest(BaseModel):
+    session_id: str | None = None
+    entity_id: str | None = None
+
+
+@app.post("/api/reset")
+def reset(body: ResetRequest):
+    if body.session_id:
+        store.reset(_session_key(body.entity_id, body.session_id))
+    return {"status": "reset"}
 
 
 if __name__ == "__main__":
+    import uvicorn
+
     problems = Config.validate()
     if problems:
         print("[Hermes] Configuration warnings:")
         for p in problems:
             print(f"  - {p}")
-    voice = "on" if Config.voice_enabled() else "off (set GROQ_API_KEY)"
+    voice = "on" if Config.voice_enabled() else "off (set OPENAI_API_KEY)"
     print(
-        f"[Hermes] Starting on http://127.0.0.1:{Config.PORT}  "
+        f"[Hermes] API backend starting on http://127.0.0.1:{Config.PORT}  "
         f"(model: {Config.MODEL}, voice: {voice})"
     )
-    app.run(host="0.0.0.0", port=Config.PORT, debug=True)
-
-
-#AI Stack, All platforms connectors apis mcps cost
-# Questions related to AI Dashboard
-# API cost
-# Which AI you need and you dont need
-# Agentic features
+    uvicorn.run("app:app", host="0.0.0.0", port=Config.PORT, reload=True)

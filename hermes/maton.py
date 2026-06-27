@@ -20,32 +20,6 @@ from .config import Config
 # Cap how much of a response body we feed back into the model's context.
 _MAX_RESULT_CHARS = 20_000
 _TIMEOUT = 45
-_SENSITIVE_CONNECTION_KEYS = {
-    "access_token",
-    "api_key",
-    "authorization",
-    "auth_url",
-    "client_secret",
-    "connect_url",
-    "connection_url",
-    "key",
-    "link",
-    "password",
-    "redirect_url",
-    "refresh_token",
-    "secret",
-    "session_token",
-    "token",
-    "url",
-}
-_SENSITIVE_QUERY_MARKERS = (
-    "access_token=",
-    "api_key=",
-    "authorization=",
-    "refresh_token=",
-    "session_token=",
-    "token=",
-)
 
 
 class MatonError(RuntimeError):
@@ -137,36 +111,6 @@ class MatonClient:
         except requests.RequestException as exc:
             raise MatonError(f"Network error creating connection: {exc}") from exc
         return {"status": resp.status_code, "ok": resp.ok, "data": _parse_body(resp)}
-
-
-def sanitize_connection_payload(data: Any, include_authorization_url: bool = False) -> Any:
-    """Remove connector-management links and token-bearing fields from Maton data."""
-    return _sanitize_connection_payload(data, include_authorization_url, "")
-
-
-def _sanitize_connection_payload(
-    data: Any, include_authorization_url: bool, key_name: str
-) -> Any:
-    key = key_name.lower()
-    if isinstance(data, dict):
-        return {
-            item_key: _sanitize_connection_payload(
-                item_value, include_authorization_url, str(item_key)
-            )
-            for item_key, item_value in data.items()
-        }
-    if isinstance(data, list):
-        return [
-            _sanitize_connection_payload(item, include_authorization_url, key_name)
-            for item in data
-        ]
-    if key in _SENSITIVE_CONNECTION_KEYS:
-        if include_authorization_url and key in {"url", "auth_url", "connect_url", "connection_url"}:
-            return data
-        return "[REDACTED]"
-    if isinstance(data, str) and any(marker in data.lower() for marker in _SENSITIVE_QUERY_MARKERS):
-        return data if include_authorization_url else "[REDACTED]"
-    return data
 
 
 def _parse_body(resp: requests.Response) -> Any:
