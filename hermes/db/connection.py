@@ -66,23 +66,37 @@ def _password(cfg: dict[str, str]) -> str:
 
 
 def connect() -> psycopg.Connection:
-    """Open a new Postgres connection (caller owns its lifecycle)."""
+    """Open a new Postgres connection (caller owns its lifecycle).
+
+    Retries transient failures (DNS hiccups, connection resets) so a cold start
+    doesn't surface as an empty result. Tune with DB_CONNECT_RETRIES.
+    """
     cfg = _cfg()
     if not cfg["host"]:
         raise RuntimeError("DBRDS_HOST is not set — cannot connect to Postgres.")
 
-    kwargs: dict[str, object] = {
-        "host": cfg["host"],
-        "port": cfg["port"],
-        "dbname": cfg["dbname"],
-        "user": cfg["user"],
-        "password": _password(cfg),
-        "sslmode": cfg["sslmode"],
-        "connect_timeout": 10,
-    }
-    if cfg["sslrootcert"]:
-        kwargs["sslrootcert"] = cfg["sslrootcert"]
-    return psycopg.connect(**kwargs)
+    attempts = max(1, int(os.getenv("DB_CONNECT_RETRIES", "3")))
+    last_exc: Exception | None = None
+    for i in range(attempts):
+        kwargs: dict[str, object] = {
+            "host": cfg["host"],
+            "port": cfg["port"],
+            "dbname": cfg["dbname"],
+            "user": cfg["user"],
+            "password": _password(cfg),
+            "sslmode": cfg["sslmode"],
+            "connect_timeout": 10,
+        }
+        if cfg["sslrootcert"]:
+            kwargs["sslrootcert"] = cfg["sslrootcert"]
+        try:
+            return psycopg.connect(**kwargs)
+        except (psycopg.OperationalError, OSError) as exc:
+            # OSError covers socket.gaierror (DNS "getaddrinfo failed").
+            last_exc = exc
+            if i < attempts - 1:
+                time.sleep(0.4 * (i + 1))
+    raise last_exc  # type: ignore[misc]
 
 
 @contextmanager
