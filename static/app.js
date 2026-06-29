@@ -16,14 +16,29 @@ const convoSearchInput = document.getElementById("convo-search-input");
 // Current history search query (empty = show all conversations).
 let convoQuery = "";
 
+// ---- Scroll behavior -----------------------------------------------------
+// Auto-scroll to the newest message ONLY while the user is already at the
+// bottom. The moment they scroll up to read, we stop following — and we don't
+// pull them back down until they return to the bottom themselves.
+let stickToBottom = true;
+function isAtBottom() {
+  return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+}
+function scrollToBottom() {
+  stickToBottom = true;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+// The user's own scrolling is the single source of truth for stickToBottom.
+messagesEl.addEventListener("scroll", () => {
+  stickToBottom = isAtBottom();
+});
+
 const GREETING = "Hi! I'm connected to your business apps. How can I help you?";
 
-// Stable session id so the agent remembers the conversation.
-let sessionId = localStorage.getItem("hermes_session");
-if (!sessionId) {
-  sessionId = crypto.randomUUID();
-  localStorage.setItem("hermes_session", sessionId);
-}
+// Each page load starts a fresh, blank conversation. Past chats live in the
+// History sidebar and are opened only when the user clicks one.
+let sessionId = crypto.randomUUID();
+localStorage.setItem("hermes_session", sessionId);
 
 let pendingFiles = [];
 
@@ -85,7 +100,7 @@ function addMessage(role, html) {
   wrap.className = `msg ${role}`;
   wrap.innerHTML = `<div class="bubble">${html}</div>`;
   messagesEl.appendChild(wrap);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  if (stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
   return wrap;
 }
 
@@ -151,7 +166,9 @@ function renderTranscript(transcript) {
       renderAssistantTurn(turn);
     }
   });
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  // Open at the bottom (newest message), like ChatGPT. From here, the user's
+  // own scrolling controls whether we keep following.
+  scrollToBottom();
 }
 
 // Wrap occurrences of the query term in <mark> (input already escaped).
@@ -300,6 +317,7 @@ form.addEventListener("submit", async (e) => {
     ? `<div class="hint">📎 ${pendingFiles.map((f) => escapeHtml(f.name)).join(", ")}</div>`
     : "";
   addMessage("user", renderUserText(text) + fileNote);
+  scrollToBottom();  // sending always jumps to the newest message
 
   const body = new FormData();
   body.append("session_id", sessionId);
@@ -336,7 +354,7 @@ form.addEventListener("submit", async (e) => {
       `<span class="tool-err">Network error: ${escapeHtml(String(err))}</span>`;
   } finally {
     sendBtn.disabled = false;
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 });
 
@@ -355,7 +373,10 @@ function syncViewport() {
     const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
     appBox.style.bottom = kb + "px";
   }
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  // Only re-pin to the bottom if the user is already there (not reading history).
+  if (stickToBottom) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
 }
 if (window.visualViewport) {
   window.visualViewport.addEventListener("resize", syncViewport);
@@ -413,17 +434,10 @@ connectBtn.addEventListener("click", async () => {
   }
 });
 
-// ---- On load: restore the active conversation (if any) and the history list ----
+// ---- On load: start a blank conversation, just populate the history list ----
+// We do NOT auto-open a past conversation — the page opens fresh every time.
+// Past chats are reachable from the History sidebar.
 (async function init() {
+  showGreeting();
   await loadConversations();
-  const known = convosEl.querySelector(`.convo[data-id="${CSS.escape(sessionId)}"]`);
-  if (known) {
-    try {
-      const res = await fetch(`/api/conversations/${encodeURIComponent(sessionId)}`);
-      if (res.ok) {
-        const data = await res.json();
-        renderTranscript(data.transcript);
-      }
-    } catch (_) { /* keep the static greeting */ }
-  }
 })();

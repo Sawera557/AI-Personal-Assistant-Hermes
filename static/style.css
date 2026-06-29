@@ -232,7 +232,8 @@ body {
 .messages {
   flex: 1; overflow-y: auto; padding: 24px;
   display: flex; flex-direction: column; gap: 14px;
-  scroll-behavior: smooth;
+  /* No smooth scroll: a long programmatic scroll-to-bottom on open would
+     otherwise fight the user trying to scroll up. */
 }
 
 .msg { display: flex; animation: rise 0.28s ease both; }

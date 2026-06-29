@@ -28,7 +28,9 @@ can serve many tenants/users with isolated conversation memory and history.
 from __future__ import annotations
 
 import base64
+import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -51,7 +53,22 @@ from hermes.memory import store
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
-app = FastAPI(title="Hermes AI Agent API", version="0.1.0")
+@asynccontextmanager
+async def _lifespan(_app: "FastAPI"):
+    """Warm the DB connection (DNS + IAM token) in the background at boot, so the
+    first real request — e.g. loading the history sidebar when the page opens —
+    isn't the slow cold one that could otherwise come back empty."""
+    def _go() -> None:
+        try:
+            store.conversations(None)  # resolves owner + opens a connection
+        except Exception:  # noqa: BLE001 — best-effort; never block startup
+            pass
+
+    threading.Thread(target=_go, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Hermes AI Agent API", version="0.1.0", lifespan=_lifespan)
 
 # ---- Web UI (single-page chat with conversation history) ------------------
 _BASE_DIR = Path(__file__).resolve().parent
@@ -136,6 +153,18 @@ def _build_attachments(files: list[tuple[str, str, bytes]]) -> list[dict]:
     return [_block_for(name, mime, raw)[0] for name, mime, raw in files if name]
 
 
+def _asset_version() -> int:
+    """A version stamp that changes whenever a static asset changes, so browsers
+    fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
+    latest = 0.0
+    for name in ("app.js", "style.css", "voice.js"):
+        try:
+            latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
+        except OSError:
+            pass
+    return int(latest)
+
+
 @app.get("/")
 def index(request: Request):
     """Render the web chat UI. Config drives what the sidebar shows."""
@@ -149,6 +178,7 @@ def index(request: Request):
             "voice_enabled": Config.voice_enabled(),
             "voices": Config.voice_voices(),
             "voice": Config.voice_tts_voice(),
+            "v": _asset_version(),
         },
     )
 
