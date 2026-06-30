@@ -34,11 +34,21 @@ def put(key: str, data: bytes, content_type: str | None = None) -> str | None:
 
 
 def presign(s3_uri: str, expires: int = 900) -> str | None:
-    """Return a short-lived GET URL for an ``s3://bucket/key`` URI."""
+    """Return a short-lived GET URL for an ``s3://bucket/key`` URI.
+
+    Handles both plain bucket names and Access Point ARNs stored in S3_BUCKET.
+    """
     if not s3_uri or not s3_uri.startswith("s3://"):
         return None
     rest = s3_uri[len("s3://"):]
-    buck, _, key = rest.partition("/")
+    b = bucket()
+    if b and rest.startswith(b + "/"):
+        # URI was built with current bucket/ARN as prefix — works for ARNs too
+        key = rest[len(b) + 1:]
+        buck = b
+    else:
+        # Legacy plain-bucket URIs: s3://bucket-name/key
+        buck, _, key = rest.partition("/")
     if not key:
         return None
     return _client().generate_presigned_url(

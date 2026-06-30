@@ -144,6 +144,12 @@ class Config:
             lines.append(f"  - {slug}: {label}")
         return "\n".join(lines)
 
+    # ---- NuExtract (bill / invoice OCR) ------------------------------------
+    NUEXTRACT_API_KEY: str = os.getenv("NUEXTRACT_API_KEY", "").strip()
+    NUEXTRACT_BASE_URL: str = os.getenv(
+        "NUEXTRACT_BASE_URL", "https://api.nuextract.ai"
+    ).rstrip("/")
+
     @classmethod
     def validate(cls) -> list[str]:
         problems = []
@@ -151,4 +157,6 @@ class Config:
             problems.append("ANTHROPIC_API_KEY is not set")
         if not cls.MATON_API_KEY:
             problems.append("MATON_API_KEY is not set (app integrations will fail)")
+        if not cls.NUEXTRACT_API_KEY:
+            problems.append("NUEXTRACT_API_KEY is not set (bill extraction will fail)")
         return problems
