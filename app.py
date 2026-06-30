@@ -53,8 +53,10 @@ from hermes.bills import check_paid_bills, extract_bill, fetch_gmail_body, guess
 from hermes.config import Config
 from hermes import storage as s3
 from hermes.db.bills import (
+    _BILL_NOT_FOUND,
     cleanup_old_drive_bills,
     compute_insights,
+    delete_bill,
     get_bill,
     insert_bill,
     list_bills,
@@ -663,6 +665,28 @@ def api_patch_bill(bill_id: str, body: BillPatch):
     if not update_bill(bill_id, **updates):
         return JSONResponse({"error": "Bill not found."}, status_code=404)
     return {"bill_id": bill_id, "updated": updates}
+
+
+@app.delete("/api/bills/{bill_id}")
+async def api_delete_bill(bill_id: str):
+    """Permanently delete a bill record and its line items.
+
+    Also removes the original file from S3 if one was stored.
+    Returns 404 if the bill doesn't exist.
+    """
+    try:
+        file_url = await run_in_threadpool(delete_bill, bill_id)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    if file_url is _BILL_NOT_FOUND:
+        return JSONResponse({"error": "Bill not found."}, status_code=404)
+
+    # Best-effort S3 cleanup — don't fail the response if it errors
+    if file_url and file_url.startswith("s3://"):
+        await run_in_threadpool(s3.delete, file_url)
+
+    return {"deleted": True, "bill_id": bill_id}
 
 
 @app.get("/api/bills/insights")

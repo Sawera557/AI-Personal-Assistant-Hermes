@@ -874,6 +874,8 @@ body {
 .bv-assign-btn { color: var(--accent); border-color: rgba(245,166,35,.25); }
 .bv-assign-btn:hover { background: rgba(245,166,35,.08); }
 .bv-paid-btn[disabled] { opacity: .4; cursor: default; }
+.bv-delete-btn { color: #f87171; border-color: rgba(248,113,113,.25); }
+.bv-delete-btn:hover { background: rgba(248,113,113,.1); }
 
 .bv-close-btn {
   width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border);

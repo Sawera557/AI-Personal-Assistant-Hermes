@@ -33,6 +33,26 @@ def put(key: str, data: bytes, content_type: str | None = None) -> str | None:
     return f"s3://{bucket()}/{key}"
 
 
+def delete(s3_uri: str) -> bool:
+    """Delete an object by its ``s3://`` URI. Returns True if the call succeeded."""
+    if not s3_uri or not s3_uri.startswith("s3://"):
+        return False
+    rest = s3_uri[len("s3://"):]
+    b = bucket()
+    if b and rest.startswith(b + "/"):
+        key = rest[len(b) + 1:]
+        buck = b
+    else:
+        buck, _, key = rest.partition("/")
+    if not key:
+        return False
+    try:
+        _client().delete_object(Bucket=buck, Key=key)
+        return True
+    except Exception:
+        return False
+
+
 def presign(s3_uri: str, expires: int = 900) -> str | None:
     """Return a short-lived GET URL for an ``s3://bucket/key`` URI.
 

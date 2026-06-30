@@ -274,6 +274,30 @@ def cleanup_old_drive_bills() -> int:
         return 0
 
 
+_BILL_NOT_FOUND = object()  # sentinel distinguishing "not found" from "no file_url"
+
+
+def delete_bill(bill_id: str):
+    """Delete a bill and its line items.
+
+    Returns the file_url string (possibly None/empty) on success, or the
+    _BILL_NOT_FOUND sentinel if no row matched.  Callers check with
+    ``result is _BILL_NOT_FOUND``.
+    """
+    try:
+        with cursor() as cur:
+            cur.execute("SELECT file_url FROM bills WHERE bill_id = %s;", (bill_id,))
+            row = cur.fetchone()
+            if not row:
+                return _BILL_NOT_FOUND
+            file_url = row[0]
+            cur.execute("DELETE FROM bills WHERE bill_id = %s;", (bill_id,))
+            return file_url  # may be None if no S3 object
+    except Exception as exc:
+        log.error("delete_bill failed: %s", exc)
+        raise
+
+
 def source_ref_exists(source: str, source_ref: str) -> bool:
     """De-dupe: returns True if we already imported this email/drive item."""
     try:

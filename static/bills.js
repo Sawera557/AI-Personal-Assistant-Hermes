@@ -836,6 +836,51 @@ function assignFromViewer() {
   showConfirmOverlay(bill);
 }
 
+async function deleteFromViewer() {
+  if (!viewerBill) return;
+  const btn = document.getElementById("bv-delete-btn");
+
+  // First click: arm the button (ask for confirmation)
+  if (btn && !btn.dataset.armed) {
+    btn.dataset.armed = "1";
+    btn.textContent = "Confirm delete?";
+    btn.style.background = "rgba(248,113,113,.15)";
+    btn.style.borderColor = "rgba(248,113,113,.4)";
+    btn.style.color = "#f87171";
+    // Auto-disarm after 4 seconds if not confirmed
+    setTimeout(() => {
+      if (btn.dataset.armed) {
+        delete btn.dataset.armed;
+        btn.textContent = "🗑 Delete";
+        btn.style.cssText = "";
+      }
+    }, 4000);
+    return;
+  }
+
+  // Second click: confirmed — delete
+  const billId = viewerBill.bill_id;
+  if (btn) { btn.disabled = true; btn.textContent = "Deleting…"; }
+  try {
+    const resp = await fetch(`/api/bills/${billId}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const err = await resp.json();
+      showToast("Delete failed: " + (err.error || resp.status));
+      if (btn) { btn.disabled = false; btn.textContent = "🗑 Delete"; delete btn.dataset.armed; }
+      return;
+    }
+  } catch (e) {
+    console.error("deleteFromViewer:", e);
+    showToast("Delete failed — check console");
+    if (btn) { btn.disabled = false; btn.textContent = "🗑 Delete"; delete btn.dataset.armed; }
+    return;
+  }
+
+  closeBillViewer();
+  await reload();
+  showToast("🗑 Bill deleted");
+}
+
 function bindBillViewer() {
   document.getElementById("bv-overlay")?.addEventListener("click", e => {
     if (e.target === e.currentTarget) closeBillViewer();
