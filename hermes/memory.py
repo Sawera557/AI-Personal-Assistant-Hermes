@@ -80,7 +80,10 @@ class ConversationStore:
         """
         with self._lock:
             rec = self._record(key)
-            rec["entity_id"] = entity_id or None
+            # Lock the business to whatever the FIRST turn set — later turns
+            # must not change which business a conversation is scoped to.
+            if rec["entity_id"] is None:
+                rec["entity_id"] = entity_id or None
             rec["session_id"] = session_id
             if not rec["title"] and user_text:
                 rec["title"] = user_text.strip()[:60]
@@ -124,6 +127,7 @@ class ConversationStore:
                         continue
                     if matches:
                         snippet = " ".join(str(matches[0]["text"]).split())[:160]
+                from .businesses import to_business_slug
                 out.append({
                     "session_id": rec["session_id"],
                     "title": rec["title"] or "New conversation",
@@ -131,6 +135,7 @@ class ConversationStore:
                     "updated_at": rec["updated_at"],
                     "message_count": len(rec["transcript"]),
                     "snippet": snippet,
+                    "business": to_business_slug(rec["entity_id"]),
                 })
         out.sort(key=lambda c: c["updated_at"], reverse=True)
         return out
@@ -140,6 +145,14 @@ class ConversationStore:
         with self._lock:
             rec = self._sessions.get(key)
             return list(rec["transcript"]) if rec else []
+
+    def locked_business_slug(self, key: str) -> str | None:
+        """The business slug this conversation is locked to (its first turn's
+        entity_id), or None if it started as "All Businesses" / has no record."""
+        from .businesses import to_business_slug
+        with self._lock:
+            rec = self._sessions.get(key)
+            return to_business_slug(rec["entity_id"]) if rec else None
 
 
 def _make_store():

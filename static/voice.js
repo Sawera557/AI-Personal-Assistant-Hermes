@@ -273,6 +273,7 @@
   async function runAgent(message) {
     const body = new FormData();
     body.append("session_id", sessionId);
+    body.append("entity_id", entityIdForSend());
     body.append("message", message);
     body.append("voice", "1"); // ask the agent for a short, spoken-style reply
     const res = await fetch("/api/chat", { method: "POST", body });
@@ -284,6 +285,8 @@
     bubble.innerHTML =
       renderMarkdown(data.reply) + renderThinking(data.thinking) + renderToolTrace(data.tool_calls);
     highlightCode(bubble);
+    // Lock (or reaffirm) this session's business — same rule as the typed chat.
+    HermesBiz.setLock(sessionId, data.entity_id || "all");
     // The spoken turn was recorded server-side — refresh the history sidebar.
     if (window.hermesReloadConversations) window.hermesReloadConversations();
     return data.reply || "";

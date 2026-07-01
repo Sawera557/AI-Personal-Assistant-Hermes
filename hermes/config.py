@@ -38,6 +38,31 @@ class Config:
     MATON_API_KEY: str = os.getenv("MATON_API_KEY", "").strip()
     MATON_BASE_URL: str = os.getenv("MATON_BASE_URL", "https://api.maton.ai").rstrip("/")
 
+    # Per-business Maton API keys. Each business (see `businesses` table / slug
+    # column) can have its own key connecting its own Gmail/Drive/Calendar/etc.
+    # "per" (Personal & Family) intentionally aliases the plain default key —
+    # it's the original shared personal inbox, not a dedicated business account.
+    MATON_BUSINESS_KEYS: dict[str, str] = {
+        "afk": os.getenv("AFROFARMS_MATON_API_KEY", "").strip(),
+        "gak": os.getenv("GAK_PROPERTIES_MATON_API_KEY", "").strip(),
+        "gif": os.getenv("GIF_PROPERTIES_MATON_API_KEY", "").strip(),
+        "gakc": os.getenv("GAK_COMMODITIES_MATON_API_KEY", "").strip(),
+        "nh": os.getenv("NOUR_HAMMAM_MATON_API_KEY", "").strip(),
+        "per": os.getenv("MATON_API_KEY", "").strip(),
+    }
+
+    @classmethod
+    def maton_key_for_slug(cls, slug: str | None) -> str | None:
+        """The Maton API key configured for a business slug, or None if unset."""
+        if not slug:
+            return None
+        return cls.MATON_BUSINESS_KEYS.get(slug) or None
+
+    @classmethod
+    def connected_business_slugs(cls) -> list[str]:
+        """Business slugs that currently have a configured Maton key."""
+        return [slug for slug, key in cls.MATON_BUSINESS_KEYS.items() if key]
+
     MODEL: str = os.getenv("HERMES_MODEL", "claude-opus-4-8")
     EFFORT: str = os.getenv("HERMES_EFFORT", "medium")
     MAX_TOKENS: int = int(os.getenv("HERMES_MAX_TOKENS", "8000"))
@@ -144,6 +169,12 @@ class Config:
             lines.append(f"  - {slug}: {label}")
         return "\n".join(lines)
 
+    # ---- NuExtract (bill / invoice OCR) ------------------------------------
+    NUEXTRACT_API_KEY: str = os.getenv("NUEXTRACT_API_KEY", "").strip()
+    NUEXTRACT_BASE_URL: str = os.getenv(
+        "NUEXTRACT_BASE_URL", "https://api.nuextract.ai"
+    ).rstrip("/")
+
     @classmethod
     def validate(cls) -> list[str]:
         problems = []
@@ -151,4 +182,6 @@ class Config:
             problems.append("ANTHROPIC_API_KEY is not set")
         if not cls.MATON_API_KEY:
             problems.append("MATON_API_KEY is not set (app integrations will fail)")
+        if not cls.NUEXTRACT_API_KEY:
+            problems.append("NUEXTRACT_API_KEY is not set (bill extraction will fail)")
         return problems

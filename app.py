@@ -28,10 +28,13 @@ can serve many tenants/users with isolated conversation memory and history.
 from __future__ import annotations
 
 import base64
+import logging
 import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+log = logging.getLogger("hermes.app")
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -46,7 +49,22 @@ from starlette.datastructures import UploadFile as FormUploadFile
 
 from hermes.agent import run_turn
 from hermes.attachments import store as attachment_store
+from hermes.bills import check_paid_bills, extract_bill, fetch_gmail_body, guess_business, scan_drive, scan_gmail
+from hermes.businesses import to_business_slug, to_entity_slug
 from hermes.config import Config
+from hermes import storage as s3
+from hermes.db.bills import (
+    _BILL_NOT_FOUND,
+    cleanup_old_drive_bills,
+    compute_insights,
+    delete_bill,
+    get_bill,
+    insert_bill,
+    list_bills,
+    list_businesses,
+    update_bill,
+    upsert_business,
+)
 from hermes.ingest import ingest_document
 from hermes.maton import MatonClient, MatonError
 from hermes.memory import store
@@ -62,6 +80,12 @@ async def _lifespan(_app: "FastAPI"):
         try:
             store.conversations(None)  # resolves owner + opens a connection
         except Exception:  # noqa: BLE001 — best-effort; never block startup
+            pass
+        try:
+            removed = cleanup_old_drive_bills()
+            if removed:
+                log.info("Startup: removed %d pre-June-2026 Drive bill stubs", removed)
+        except Exception:  # noqa: BLE001
             pass
 
     threading.Thread(target=_go, daemon=True).start()
@@ -238,8 +262,20 @@ async def chat(request: Request):
         content.append({"type": "text", "text": message})
 
     key = _session_key(entity_id, session_id)
+
+    # Business scoping: a conversation's business is locked at creation and
+    # never changes mid-thread, even if the dropdown is flipped while it's
+    # open — enforced here, not just by frontend convention. `entity_id` from
+    # the request is a business slug (e.g. "afk") or the sentinel "all".
+    prior_messages = await run_in_threadpool(store.get, key)
+    if prior_messages:
+        locked = await run_in_threadpool(store.locked_business_slug, key)
+        active_business = locked or "all"
+    else:
+        active_business = (entity_id or "").strip() or "all"
+
     try:
-        result = await run_in_threadpool(run_turn, key, content, voice)
+        result = await run_in_threadpool(run_turn, key, content, voice, active_business)
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the client
         return JSONResponse({"error": f"Agent error: {exc}"}, status_code=500)
 
@@ -251,22 +287,29 @@ async def chat(request: Request):
         names = ", ".join(file_names) if file_names else f"{n_files} file(s)"
         note = f"📎 {names}"
         user_text = f"{message}\n{note}" if message else note
-    store.record_turn(key, entity_id, session_id, user_text, result)
+    store_entity = None if active_business == "all" else to_entity_slug(active_business)
+    store.record_turn(key, store_entity, session_id, user_text, result)
 
     result["session_id"] = session_id
-    result["entity_id"] = entity_id
+    result["entity_id"] = active_business  # authoritative, locked value — not just an echo
     return result
 
 
 @app.get("/api/conversations")
 def list_conversations(entity_id: str | None = None, q: str | None = None):
-    """List this entity's past conversations (newest first) for the history
-    sidebar. Each item has session_id, title, timestamps, and message_count.
+    """List this business's past conversations (newest first) for the history
+    sidebar. Each item has session_id, title, timestamps, message_count, and
+    `business` (the slug it's locked to, or None for an "All Businesses" chat).
+
+    `entity_id` here is a business slug (e.g. "afk") or the sentinel "all" —
+    "all" (or omitted) shows every conversation; a specific slug shows only
+    conversations locked to that business.
 
     Pass `q` to search chats by title or message content; matching items also
     carry a `snippet` of the first matching message."""
+    norm = None if not entity_id or entity_id == "all" else to_entity_slug(entity_id)
     return {
-        "conversations": store.conversations(entity_id, q),
+        "conversations": store.conversations(norm, q),
         "entity_id": entity_id,
         "q": q,
     }
@@ -275,11 +318,16 @@ def list_conversations(entity_id: str | None = None, q: str | None = None):
 @app.get("/api/conversations/{session_id}")
 def get_conversation(session_id: str, entity_id: str | None = None):
     """Replay one conversation: returns its display transcript (user/assistant
-    turns with thinking + tool traces) so the UI can re-render it."""
-    transcript = store.transcript(_session_key(entity_id, session_id))
+    turns with thinking + tool traces) so the UI can re-render it, plus the
+    business slug it's actually locked to (authoritative — for the frontend to
+    reseed its session lock on reopen, regardless of what `entity_id` was
+    passed in the query string)."""
+    key = _session_key(entity_id, session_id)
+    transcript = store.transcript(key)
     if not transcript:
         return JSONResponse({"error": "Conversation not found."}, status_code=404)
-    return {"session_id": session_id, "entity_id": entity_id, "transcript": transcript}
+    locked = store.locked_business_slug(key)
+    return {"session_id": session_id, "entity_id": locked, "transcript": transcript}
 
 
 @app.delete("/api/conversations/{session_id}")
@@ -502,6 +550,313 @@ def reset(body: ResetRequest):
     if body.session_id:
         store.reset(_session_key(body.entity_id, body.session_id))
     return {"status": "reset"}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Billing & Invoices API
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── Businesses ──────────────────────────────────────────────────────────────
+
+@app.get("/api/businesses")
+def api_list_businesses():
+    businesses = list_businesses()
+    for b in businesses:
+        b["connected"] = Config.maton_key_for_slug(b.get("slug")) is not None
+    return {"businesses": businesses}
+
+
+class BusinessBody(BaseModel):
+    name: str
+    slug: str
+    emoji: str = "🏢"
+    color: str = "#9aa3b2"
+    industry: str | None = None
+    business_id: str | None = None
+
+
+@app.post("/api/businesses")
+def api_upsert_business(body: BusinessBody):
+    try:
+        biz = upsert_business(
+            name=body.name, slug=body.slug, emoji=body.emoji,
+            color=body.color, industry=body.industry, business_id=body.business_id,
+        )
+        return {"business": biz}
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+# ── Bills ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/bills")
+def api_list_bills(
+    business_id: str | None = None,
+    status: str | None = None,
+    source: str | None = None,
+):
+    return {
+        "bills": list_bills(business_id=business_id, status=status, source=source),
+        "insights": compute_insights(),
+    }
+
+
+@app.post("/api/bills/upload")
+async def api_upload_bills(request: Request):
+    """Upload bill files → NuExtract → store in DB.
+
+    Multipart fields: `files` (one or more), optional `business_id`.
+    Returns a list of newly created bill records.
+    """
+    form = await request.form()
+    manual_biz_id = (form.get("business_id") or "").strip() or None
+    businesses = list_businesses()
+
+    uploads = [
+        u for u in form.getlist("files")
+        if isinstance(u, FormUploadFile) and u.filename
+    ]
+    if not uploads:
+        return JSONResponse({"error": "No files provided."}, status_code=400)
+
+    results = []
+    for upload in uploads:
+        raw = await upload.read()
+        filename = upload.filename or "upload"
+        mime = upload.content_type or "application/octet-stream"
+
+        try:
+            extracted = await run_in_threadpool(extract_bill, filename, raw, mime)
+        except Exception as exc:
+            results.append({"filename": filename, "error": str(exc)})
+            continue
+
+        if manual_biz_id:
+            biz_id, confidence = manual_biz_id, 1.0
+        else:
+            biz_id, confidence = guess_business(
+                extracted["vendor"], extracted.get("category"), businesses
+            )
+
+        # Store original file in S3 (no-op if S3 not configured)
+        _ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+        _s3_key = f"bills/{biz_id or 'unsorted'}/{uuid.uuid4()}.{_ext}"
+        _file_url = await run_in_threadpool(s3.put, _s3_key, raw, mime) or None
+
+        bill_id = await run_in_threadpool(
+            insert_bill,
+            extracted["vendor"],
+            extracted.get("amount"),
+            extracted.get("invoice_number"),
+            extracted.get("due_date"),
+            extracted.get("issue_date"),
+            extracted.get("currency", "USD"),
+            "pending",
+            extracted.get("category"),
+            biz_id,
+            confidence,
+            "upload",
+            None,
+            _file_url,
+            extracted.get("raw_extracted"),
+            extracted.get("line_items") or [],
+        )
+        results.append({
+            "bill_id": bill_id,
+            "filename": filename,
+            "vendor": extracted["vendor"],
+            "amount": extracted.get("amount"),
+            "due_date": extracted.get("due_date"),
+            "confidence": confidence,
+            "needs_confirmation": confidence < 0.75,
+        })
+
+    return {"created": results}
+
+
+class BillPatch(BaseModel):
+    business_id: str | None = None
+    status: str | None = None
+    vendor: str | None = None
+    amount: float | None = None
+    invoice_number: str | None = None
+    due_date: str | None = None
+    category: str | None = None
+    notes: str | None = None
+
+
+@app.patch("/api/bills/{bill_id}")
+def api_patch_bill(bill_id: str, body: BillPatch):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if body.business_id:
+        updates["confidence"] = 1.0   # user manually assigned = full confidence
+    if not update_bill(bill_id, **updates):
+        return JSONResponse({"error": "Bill not found."}, status_code=404)
+    return {"bill_id": bill_id, "updated": updates}
+
+
+@app.delete("/api/bills/{bill_id}")
+async def api_delete_bill(bill_id: str):
+    """Permanently delete a bill record and its line items.
+
+    Also removes the original file from S3 if one was stored.
+    Returns 404 if the bill doesn't exist.
+    """
+    try:
+        file_url = await run_in_threadpool(delete_bill, bill_id)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    if file_url is _BILL_NOT_FOUND:
+        return JSONResponse({"error": "Bill not found."}, status_code=404)
+
+    # Best-effort S3 cleanup — don't fail the response if it errors
+    if file_url and file_url.startswith("s3://"):
+        await run_in_threadpool(s3.delete, file_url)
+
+    return {"deleted": True, "bill_id": bill_id}
+
+
+@app.get("/api/bills/insights")
+def api_bill_insights():
+    return compute_insights()
+
+
+@app.get("/api/bills/{bill_id}/view")
+def api_bill_view(bill_id: str):
+    """Return a short-lived URL to view the original bill document.
+
+    For S3-stored files returns a presigned GET URL (15 min).
+    For Drive files returns the webViewLink directly (opens in browser).
+    """
+    bill = get_bill(bill_id)
+    if not bill:
+        return JSONResponse({"error": "Bill not found."}, status_code=404)
+
+    file_url = bill.get("file_url")
+
+    # Gmail bills with no attachment: return a deep link + signal to fetch email body
+    if not file_url:
+        if bill.get("source") == "gmail" and bill.get("source_ref"):
+            msg_id = bill["source_ref"]
+            gmail_url = f"https://mail.google.com/mail/u/0/#inbox/{msg_id}"
+            return {"url": gmail_url, "type": "gmail", "message_id": msg_id}
+        return JSONResponse(
+            {"error": "No document for this bill.", "source": bill.get("source")},
+            status_code=404,
+        )
+
+    if file_url.startswith("s3://"):
+        url = s3.presign(file_url, expires=900)
+        if not url:
+            return JSONResponse({"error": "Could not generate document URL."}, status_code=500)
+        return {"url": url, "type": "pdf", "expires_in": 900}
+
+    # Drive webViewLink or other web URL
+    return {"url": file_url, "type": "web"}
+
+
+@app.get("/api/bills/{bill_id}/email-body")
+async def api_bill_email_body(bill_id: str):
+    """Return the decoded HTML or plain-text body of a Gmail bill.
+
+    Fetches the original Gmail message on demand via Maton — nothing stored in DB.
+    Returns {"type": "html"|"text", "content": "..."} or 404/502 on failure.
+    """
+    bill = get_bill(bill_id)
+    if not bill:
+        return JSONResponse({"error": "Bill not found."}, status_code=404)
+    if bill.get("source") != "gmail":
+        return JSONResponse({"error": "Not a Gmail bill."}, status_code=400)
+    source_ref = bill.get("source_ref")
+    if not source_ref:
+        return JSONResponse({"error": "No message ID for this bill."}, status_code=404)
+
+    try:
+        body = await run_in_threadpool(fetch_gmail_body, source_ref)
+    except Exception as exc:
+        log.warning("email-body fetch error for bill %s: %s", bill_id, exc)
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+    if not body:
+        return JSONResponse({"error": "Could not retrieve email body."}, status_code=404)
+    return body
+
+
+# ── Connected-app scan ───────────────────────────────────────────────────────
+
+class ScanRequest(BaseModel):
+    business: str | None = None   # business slug, e.g. "afk"; None = legacy default ("per")
+    sources: list[str] | None = None
+    days: int = 45
+
+
+@app.post("/api/bills/scan")
+async def api_scan_bills(body: ScanRequest):
+    """Scan ONE business's own Gmail and/or Google Drive for new bills.
+
+    Body (JSON): {"business": "afk", "sources": ["gmail", "google-drive"], "days": 45}
+    days=45 for initial backfill, days=7 for recurring auto-scans.
+
+    Scans exactly one business per call — for "All Businesses", the frontend
+    calls this once per connected business itself, since fanning out across
+    every business's Gmail + Drive (with attachment downloads) inside a single
+    request risks the platform's function timeout.
+    """
+    sources = body.sources or ["gmail", "google-drive"]
+    days = max(1, min(body.days, 365))
+    slug = (body.business or "per").strip()
+
+    businesses = await run_in_threadpool(list_businesses)
+    business = next((b for b in businesses if b.get("slug") == slug), None)
+    if not business:
+        return JSONResponse({"error": f"Unknown business '{slug}'."}, status_code=400)
+    if not Config.maton_key_for_slug(slug):
+        return JSONResponse(
+            {"error": f"'{slug}' has no Maton connection configured yet.", "connected": False},
+            status_code=400,
+        )
+
+    created_gmail, created_drive = [], []
+
+    if "gmail" in sources:
+        try:
+            created_gmail = await run_in_threadpool(scan_gmail, business, businesses, days)
+        except Exception as exc:
+            log.warning("Gmail scan error (%s): %s", slug, exc)
+
+    if "google-drive" in sources:
+        try:
+            created_drive = await run_in_threadpool(scan_drive, business, businesses, days)
+        except Exception as exc:
+            log.warning("Drive scan error (%s): %s", slug, exc)
+
+    total = created_gmail + created_drive
+    return {
+        "business": slug,
+        "scanned": len(total),
+        "gmail": len(created_gmail),
+        "google_drive": len(created_drive),
+        "bills": total,
+    }
+
+
+# ── Auto-pay detection ───────────────────────────────────────────────────────
+
+@app.post("/api/bills/check-payments")
+async def api_check_payments():
+    """Search Gmail for payment confirmation emails and auto-mark matching bills paid.
+
+    Returns list of bill_ids that were updated to paid status.
+    """
+    bills = await run_in_threadpool(list_bills)
+    businesses = await run_in_threadpool(list_businesses)
+    try:
+        paid_ids = await run_in_threadpool(check_paid_bills, bills, businesses)
+    except Exception as exc:
+        log.warning("check_paid_bills error: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return {"marked_paid": paid_ids, "count": len(paid_ids)}
 
 
 if __name__ == "__main__":

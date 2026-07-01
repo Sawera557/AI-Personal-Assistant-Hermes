@@ -42,6 +42,17 @@ localStorage.setItem("hermes_session", sessionId);
 
 let pendingFiles = [];
 
+// ---- Business scope for chat --------------------------------------------
+// A conversation's business is locked at its first message and never changes
+// mid-thread, even if the global dropdown is flipped while it's open. The
+// server enforces this too (authoritative) — this is the client mirror so
+// /api/chat sends the right value immediately, and the sidebar can show which
+// business each past chat belongs to. "all" is stored (never a bare null) to
+// mean "no restriction", so a thread that started open stays open forever.
+function entityIdForSend() {
+  return HermesBiz.lockFor(sessionId) || HermesBiz.current;
+}
+
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
@@ -182,10 +193,9 @@ function highlightTerm(escapedText, query) {
 async function loadConversations() {
   let convos = [];
   try {
-    const url = convoQuery
-      ? `/api/conversations?q=${encodeURIComponent(convoQuery)}`
-      : "/api/conversations";
-    const res = await fetch(url);
+    const params = new URLSearchParams({ entity_id: HermesBiz.current });
+    if (convoQuery) params.set("q", convoQuery);
+    const res = await fetch(`/api/conversations?${params.toString()}`);
     const data = await res.json();
     convos = data.conversations || [];
   } catch (_) { /* offline / first run — just show an empty list */ }
@@ -254,12 +264,15 @@ async function openConversation(id) {
   if (!id) return;
   sessionId = id;
   localStorage.setItem("hermes_session", sessionId);
-  closeDrawer();
+  closeMobileNav();
   try {
-    const res = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
+    const res = await fetch(`/api/conversations/${encodeURIComponent(id)}?entity_id=${encodeURIComponent(HermesBiz.current)}`);
     if (res.ok) {
       const data = await res.json();
       renderTranscript(data.transcript);
+      // Reseed the lock from the server's authoritative value (never a bare
+      // null — "all" means "no restriction", so it stays open forever).
+      HermesBiz.setLock(sessionId, data.entity_id || "all");
     } else {
       showGreeting();
     }
@@ -273,7 +286,7 @@ function startNewConversation() {
   sessionId = crypto.randomUUID();
   localStorage.setItem("hermes_session", sessionId);
   showGreeting();
-  closeDrawer();
+  closeMobileNav();
   loadConversations();
 }
 
@@ -321,6 +334,7 @@ form.addEventListener("submit", async (e) => {
 
   const body = new FormData();
   body.append("session_id", sessionId);
+  body.append("entity_id", entityIdForSend());
   body.append("message", text);
   pendingFiles.forEach((f) => body.append("files", f));
 
@@ -346,6 +360,9 @@ form.addEventListener("submit", async (e) => {
       bubble.innerHTML =
         renderMarkdown(data.reply) + renderThinking(data.thinking) + renderToolTrace(data.tool_calls);
       highlightCode(bubble);
+      // Lock (or reaffirm) this session's business from the server's
+      // authoritative resolved value — never a bare null ("all" = open).
+      HermesBiz.setLock(sessionId, data.entity_id || "all");
       // A new turn was recorded — refresh the history list (title / new entry).
       loadConversations();
     }
@@ -396,20 +413,54 @@ document.addEventListener("pointerdown", (e) => {
   }
 });
 
-// ---- Mobile drawer ----
-const appEl = document.getElementById("app");
-const menuBtn = document.getElementById("menu-btn");
+// ---- Navigation --------------------------------------------------------
+const appEl   = document.getElementById("app");
 const overlay = document.getElementById("overlay");
-const drawerClose = document.getElementById("drawer-close");
 const resetTop = document.getElementById("reset-top");
 
-const openDrawer = () => appEl.classList.add("drawer-open");
-const closeDrawer = () => appEl.classList.remove("drawer-open");
+// Mobile: open/close the leftnav drawer
+const openMobileNav  = () => appEl.classList.add("mobile-open");
+const closeMobileNav = () => appEl.classList.remove("mobile-open");
 
-menuBtn?.addEventListener("click", openDrawer);
-overlay?.addEventListener("click", closeDrawer);
-drawerClose?.addEventListener("click", closeDrawer);
+// Wire up every hamburger button (chat topbar + bills topbar)
+["menu-btn", "menu-btn-bills"].forEach((id) => {
+  document.getElementById(id)?.addEventListener("click", openMobileNav);
+});
+
+// Overlay closes the mobile drawer
+overlay?.addEventListener("click", closeMobileNav);
+
 resetTop?.addEventListener("click", startNewConversation);
+
+// ---- Section tabs (icon strip) ----
+const stripTabs = document.querySelectorAll(".strip-tab");
+
+function setView(view) {
+  appEl.setAttribute("data-view", view);
+
+  // Update active tab in icon strip
+  stripTabs.forEach((t) => t.classList.toggle("active", t.dataset.view === view));
+
+  // Show the matching panel-section, hide the rest
+  document.querySelectorAll(".panel-section").forEach((s) => {
+    s.classList.toggle("visible", s.id === `panel-${view}`);
+  });
+
+  // Close mobile drawer after switching
+  closeMobileNav();
+
+  // Lazy-init billing page on first open
+  if (view === "bills" && typeof window._billsInit === "function") {
+    window._billsInit();
+  }
+}
+
+stripTabs.forEach((t) => t.addEventListener("click", () => setView(t.dataset.view)));
+
+// ---- Content panel collapse (desktop only) ----
+document.getElementById("strip-toggle")?.addEventListener("click", () => {
+  appEl.classList.toggle("panel-collapsed");
+});
 
 connectBtn.addEventListener("click", async () => {
   const app = connectApp.value.trim();
@@ -439,5 +490,12 @@ connectBtn.addEventListener("click", async () => {
 // Past chats are reachable from the History sidebar.
 (async function init() {
   showGreeting();
+  await HermesBiz.load(); // populate the business list once, up front
+  HermesBiz.bind(
+    document.getElementById("hermes-biz-select-agent"),
+    document.getElementById("hermes-biz-badge-agent")
+  );
+  // Switching the global business re-filters which past chats are shown.
+  HermesBiz.onChange(() => loadConversations());
   await loadConversations();
 })();
