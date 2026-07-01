@@ -34,7 +34,7 @@ _VOICE_STYLE = (
 )
 
 
-def _system_prompt(voice: bool = False) -> str:
+def _system_prompt(voice: bool = False, active_business: str | None = None) -> str:
     today = datetime.date.today().isoformat()
     base = (
         "You are Hermes, a capable AI executive assistant. You help the user get "
@@ -52,10 +52,25 @@ def _system_prompt(voice: bool = False) -> str:
         "events, modifying QuickBooks data, deleting Drive files, etc.), first clearly "
         "summarize exactly what you will do, then STOP and ask the user to confirm. Only "
         "perform the write after they explicitly approve.\n"
+        "- Never substitute one business's data or connected account for another's. If a "
+        "business isn't connected yet, tell the user plainly instead of guessing or using "
+        "a different business's account.\n"
         "- When you use web search, cite the sources.\n"
         "- Lead with the answer; be concise and practical.\n"
         f"Today's date is {today}."
     )
+    if active_business == "all":
+        base += (
+            "\n\nBusiness scope: the user has 'All Businesses' selected. Every Maton "
+            "tool call must include a `business` argument naming which connected "
+            "business's account to use — pick the one relevant to what's being asked, "
+            "or ask the user to clarify if it's ambiguous."
+        )
+    elif active_business:
+        base += (
+            f"\n\nBusiness scope: this conversation is locked to business '{active_business}'. "
+            "All Maton tool calls automatically use that business's connected account."
+        )
     return base + _VOICE_STYLE if voice else base
 
 
@@ -84,14 +99,20 @@ def run_turn(
     session_id: str,
     user_content: str | list[dict[str, Any]],
     voice: bool = False,
+    active_business: str | None = None,
 ) -> dict[str, Any]:
     """Run one user turn through the agent loop and return a structured result.
 
     `voice=True` adds spoken-call style guidance so replies are short and natural
     when read aloud; the agent's tools and abilities are otherwise identical.
+
+    `active_business` scopes which Maton key(s) tool calls use this turn: a real
+    business slug locks every call to that business's key; "all" lets Claude pick
+    per call via the tools' extra `business` argument; None preserves legacy
+    behavior (the plain default key, no business awareness).
     """
     client = _anthropic()
-    tools = build_tools()
+    tools = build_tools(active_business)
 
     if isinstance(user_content, str):
         user_content = [{"type": "text", "text": user_content}]
@@ -108,7 +129,7 @@ def run_turn(
         resp = client.messages.create(
             model=Config.MODEL,
             max_tokens=Config.MAX_TOKENS,
-            system=_system_prompt(voice),
+            system=_system_prompt(voice, active_business),
             tools=tools,
             thinking={"type": "adaptive", "display": "summarized"},
             output_config={"effort": Config.EFFORT},
@@ -128,7 +149,7 @@ def run_turn(
                     continue
                 name = block["name"]
                 tool_input = block.get("input", {}) or {}
-                content_str, is_error = dispatch(name, tool_input)
+                content_str, is_error = dispatch(name, tool_input, active_business)
                 tool_trace.append(
                     {
                         "tool": name,

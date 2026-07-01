@@ -15,11 +15,14 @@ The credential is never stored — only used to open the socket. Matches the spe
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 from contextlib import contextmanager
 
 import psycopg
+
+log = logging.getLogger("hermes.db.connection")
 
 # Cache the generated IAM token (valid ~15 min) so we don't call boto3 on every
 # connection. Refreshed comfortably before expiry.
@@ -68,14 +71,24 @@ def _password(cfg: dict[str, str]) -> str:
 def connect() -> psycopg.Connection:
     """Open a new Postgres connection (caller owns its lifecycle).
 
-    Retries transient failures (DNS hiccups, connection resets) so a cold start
-    doesn't surface as an empty result. Tune with DB_CONNECT_RETRIES.
+    Retries transient failures (DNS hiccups, connection resets) with
+    exponential backoff so a brief network blip doesn't surface as a dropped
+    write or an empty result. Tune with DB_CONNECT_RETRIES / DB_CONNECT_BACKOFF
+    (base seconds) / DB_CONNECT_BACKOFF_MAX (per-attempt cap).
+
+    Deliberately does NOT retry anything past the connection itself — retrying
+    a whole read-modify-write operation (e.g. re-running an INSERT after a
+    mid-transaction drop) risks duplicate writes. `cursor()` closes the
+    connection and rolls back on any error instead; the caller decides whether
+    to retry the operation from scratch.
     """
     cfg = _cfg()
     if not cfg["host"]:
         raise RuntimeError("DBRDS_HOST is not set — cannot connect to Postgres.")
 
-    attempts = max(1, int(os.getenv("DB_CONNECT_RETRIES", "3")))
+    attempts = max(1, int(os.getenv("DB_CONNECT_RETRIES", "5")))
+    backoff_base = float(os.getenv("DB_CONNECT_BACKOFF", "0.5"))
+    backoff_max = float(os.getenv("DB_CONNECT_BACKOFF_MAX", "3.0"))
     last_exc: Exception | None = None
     for i in range(attempts):
         kwargs: dict[str, object] = {
@@ -90,12 +103,22 @@ def connect() -> psycopg.Connection:
         if cfg["sslrootcert"]:
             kwargs["sslrootcert"] = cfg["sslrootcert"]
         try:
-            return psycopg.connect(**kwargs)
+            conn = psycopg.connect(**kwargs)
+            if i > 0:
+                log.info("DB connect succeeded on attempt %d/%d", i + 1, attempts)
+            return conn
         except (psycopg.OperationalError, OSError) as exc:
             # OSError covers socket.gaierror (DNS "getaddrinfo failed").
             last_exc = exc
             if i < attempts - 1:
-                time.sleep(0.4 * (i + 1))
+                delay = min(backoff_base * (2 ** i), backoff_max)
+                log.warning(
+                    "DB connect attempt %d/%d failed (%s); retrying in %.1fs",
+                    i + 1, attempts, exc, delay,
+                )
+                time.sleep(delay)
+            else:
+                log.error("DB connect failed after %d attempts: %s", attempts, exc)
     raise last_exc  # type: ignore[misc]
 
 

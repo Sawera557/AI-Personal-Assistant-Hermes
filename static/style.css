@@ -519,6 +519,12 @@ body {
 .voice-select:focus { outline: none; border-color: var(--accent); }
 .voice-select option { background: var(--bg-2); color: var(--text); }
 
+/* Global business scope selector (top of both sidebar panels) */
+.biz-scope-panel { margin-bottom: 18px; }
+.biz-not-connected {
+  margin: 8px 0 0; font-size: 11px; font-weight: 600; color: var(--accent);
+}
+
 .voice-btn {
   width: 46px; height: 46px; flex-shrink: 0;
   background: var(--surface); border: 1px solid var(--border); color: var(--muted);
@@ -557,29 +563,6 @@ body {
 }
 .bills-upload-btn:hover { opacity: .92; }
 .bills-upload-btn:active { transform: scale(.96); }
-
-/* Business filter tabs */
-.biz-tabs-row {
-  display: flex; gap: 7px; flex-shrink: 0; margin-bottom: 16px;
-  overflow-x: auto; padding-bottom: 2px;
-}
-.biz-tabs-row::-webkit-scrollbar { display: none; }
-.biz-tab {
-  display: flex; align-items: center; gap: 7px; white-space: nowrap; flex-shrink: 0;
-  padding: 7px 13px; border-radius: 20px; cursor: pointer; font-family: inherit;
-  font-size: 12px; font-weight: 600; border: 1px solid var(--border);
-  background: var(--surface); color: var(--muted);
-  transition: background .15s, border-color .15s, color .15s;
-}
-.biz-tab:hover { background: var(--surface-2); color: var(--text); }
-.biz-tab.active { color: var(--text); border-color: transparent; }
-.biz-tab-dot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-}
-.biz-tab-count {
-  background: rgba(255,255,255,.1); border-radius: 10px;
-  padding: 1px 7px; font-size: 10.5px; font-weight: 700;
-}
 
 /* Stats row */
 .bills-stats-row {

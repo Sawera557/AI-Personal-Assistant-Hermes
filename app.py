@@ -50,6 +50,7 @@ from starlette.datastructures import UploadFile as FormUploadFile
 from hermes.agent import run_turn
 from hermes.attachments import store as attachment_store
 from hermes.bills import check_paid_bills, extract_bill, fetch_gmail_body, guess_business, scan_drive, scan_gmail
+from hermes.businesses import to_business_slug, to_entity_slug
 from hermes.config import Config
 from hermes import storage as s3
 from hermes.db.bills import (
@@ -261,8 +262,20 @@ async def chat(request: Request):
         content.append({"type": "text", "text": message})
 
     key = _session_key(entity_id, session_id)
+
+    # Business scoping: a conversation's business is locked at creation and
+    # never changes mid-thread, even if the dropdown is flipped while it's
+    # open — enforced here, not just by frontend convention. `entity_id` from
+    # the request is a business slug (e.g. "afk") or the sentinel "all".
+    prior_messages = await run_in_threadpool(store.get, key)
+    if prior_messages:
+        locked = await run_in_threadpool(store.locked_business_slug, key)
+        active_business = locked or "all"
+    else:
+        active_business = (entity_id or "").strip() or "all"
+
     try:
-        result = await run_in_threadpool(run_turn, key, content, voice)
+        result = await run_in_threadpool(run_turn, key, content, voice, active_business)
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the client
         return JSONResponse({"error": f"Agent error: {exc}"}, status_code=500)
 
@@ -274,22 +287,29 @@ async def chat(request: Request):
         names = ", ".join(file_names) if file_names else f"{n_files} file(s)"
         note = f"📎 {names}"
         user_text = f"{message}\n{note}" if message else note
-    store.record_turn(key, entity_id, session_id, user_text, result)
+    store_entity = None if active_business == "all" else to_entity_slug(active_business)
+    store.record_turn(key, store_entity, session_id, user_text, result)
 
     result["session_id"] = session_id
-    result["entity_id"] = entity_id
+    result["entity_id"] = active_business  # authoritative, locked value — not just an echo
     return result
 
 
 @app.get("/api/conversations")
 def list_conversations(entity_id: str | None = None, q: str | None = None):
-    """List this entity's past conversations (newest first) for the history
-    sidebar. Each item has session_id, title, timestamps, and message_count.
+    """List this business's past conversations (newest first) for the history
+    sidebar. Each item has session_id, title, timestamps, message_count, and
+    `business` (the slug it's locked to, or None for an "All Businesses" chat).
+
+    `entity_id` here is a business slug (e.g. "afk") or the sentinel "all" —
+    "all" (or omitted) shows every conversation; a specific slug shows only
+    conversations locked to that business.
 
     Pass `q` to search chats by title or message content; matching items also
     carry a `snippet` of the first matching message."""
+    norm = None if not entity_id or entity_id == "all" else to_entity_slug(entity_id)
     return {
-        "conversations": store.conversations(entity_id, q),
+        "conversations": store.conversations(norm, q),
         "entity_id": entity_id,
         "q": q,
     }
@@ -298,11 +318,16 @@ def list_conversations(entity_id: str | None = None, q: str | None = None):
 @app.get("/api/conversations/{session_id}")
 def get_conversation(session_id: str, entity_id: str | None = None):
     """Replay one conversation: returns its display transcript (user/assistant
-    turns with thinking + tool traces) so the UI can re-render it."""
-    transcript = store.transcript(_session_key(entity_id, session_id))
+    turns with thinking + tool traces) so the UI can re-render it, plus the
+    business slug it's actually locked to (authoritative — for the frontend to
+    reseed its session lock on reopen, regardless of what `entity_id` was
+    passed in the query string)."""
+    key = _session_key(entity_id, session_id)
+    transcript = store.transcript(key)
     if not transcript:
         return JSONResponse({"error": "Conversation not found."}, status_code=404)
-    return {"session_id": session_id, "entity_id": entity_id, "transcript": transcript}
+    locked = store.locked_business_slug(key)
+    return {"session_id": session_id, "entity_id": locked, "transcript": transcript}
 
 
 @app.delete("/api/conversations/{session_id}")
@@ -535,7 +560,10 @@ def reset(body: ResetRequest):
 
 @app.get("/api/businesses")
 def api_list_businesses():
-    return {"businesses": list_businesses()}
+    businesses = list_businesses()
+    for b in businesses:
+        b["connected"] = Config.maton_key_for_slug(b.get("slug")) is not None
+    return {"businesses": businesses}
 
 
 class BusinessBody(BaseModel):
@@ -758,37 +786,54 @@ async def api_bill_email_body(bill_id: str):
 # ── Connected-app scan ───────────────────────────────────────────────────────
 
 class ScanRequest(BaseModel):
+    business: str | None = None   # business slug, e.g. "afk"; None = legacy default ("per")
     sources: list[str] | None = None
     days: int = 45
 
 
 @app.post("/api/bills/scan")
 async def api_scan_bills(body: ScanRequest):
-    """Scan Gmail and/or Google Drive for new bills.
+    """Scan ONE business's own Gmail and/or Google Drive for new bills.
 
-    Body (JSON): {"sources": ["gmail", "google-drive"], "days": 45}
+    Body (JSON): {"business": "afk", "sources": ["gmail", "google-drive"], "days": 45}
     days=45 for initial backfill, days=7 for recurring auto-scans.
+
+    Scans exactly one business per call — for "All Businesses", the frontend
+    calls this once per connected business itself, since fanning out across
+    every business's Gmail + Drive (with attachment downloads) inside a single
+    request risks the platform's function timeout.
     """
     sources = body.sources or ["gmail", "google-drive"]
     days = max(1, min(body.days, 365))
+    slug = (body.business or "per").strip()
 
     businesses = await run_in_threadpool(list_businesses)
+    business = next((b for b in businesses if b.get("slug") == slug), None)
+    if not business:
+        return JSONResponse({"error": f"Unknown business '{slug}'."}, status_code=400)
+    if not Config.maton_key_for_slug(slug):
+        return JSONResponse(
+            {"error": f"'{slug}' has no Maton connection configured yet.", "connected": False},
+            status_code=400,
+        )
+
     created_gmail, created_drive = [], []
 
     if "gmail" in sources:
         try:
-            created_gmail = await run_in_threadpool(scan_gmail, businesses, days)
+            created_gmail = await run_in_threadpool(scan_gmail, business, businesses, days)
         except Exception as exc:
-            log.warning("Gmail scan error: %s", exc)
+            log.warning("Gmail scan error (%s): %s", slug, exc)
 
     if "google-drive" in sources:
         try:
-            created_drive = await run_in_threadpool(scan_drive, businesses, days)
+            created_drive = await run_in_threadpool(scan_drive, business, businesses, days)
         except Exception as exc:
-            log.warning("Drive scan error: %s", exc)
+            log.warning("Drive scan error (%s): %s", slug, exc)
 
     total = created_gmail + created_drive
     return {
+        "business": slug,
         "scanned": len(total),
         "gmail": len(created_gmail),
         "google_drive": len(created_drive),
@@ -805,8 +850,9 @@ async def api_check_payments():
     Returns list of bill_ids that were updated to paid status.
     """
     bills = await run_in_threadpool(list_bills)
+    businesses = await run_in_threadpool(list_businesses)
     try:
-        paid_ids = await run_in_threadpool(check_paid_bills, bills)
+        paid_ids = await run_in_threadpool(check_paid_bills, bills, businesses)
     except Exception as exc:
         log.warning("check_paid_bills error: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=502)

@@ -375,11 +375,32 @@ def _download_gmail_attachment(
 _ATTACHMENT_MIMES = {"application/pdf", "image/jpeg", "image/jpg", "image/png", "image/heic"}
 
 
-def scan_gmail(businesses: list[dict], days: int = 45) -> list[dict]:
-    """Fetch invoice emails from Gmail, download PDF attachments, upload to S3."""
+def _client_for_business(business: dict) -> MatonClient:
+    """Resolve the MatonClient for one business's own connected account.
+
+    Raises ValueError (caller should surface this as a clear "not connected"
+    message — never silently fall back to a different business's key).
+    """
+    slug = business.get("slug")
+    key = Config.maton_key_for_slug(slug)
+    if not key:
+        raise ValueError(f"'{slug}' has no Maton connection configured yet.")
+    return MatonClient(api_key=key)
+
+
+def scan_gmail(business: dict, all_businesses: list[dict], days: int = 45) -> list[dict]:
+    """Fetch invoice emails from ONE business's own Gmail, download PDF
+    attachments, upload to S3.
+
+    Every bill found is tagged directly with `business`'s own business_id —
+    we already know whose mailbox we scanned, so no guessing is needed. The
+    one exception is the shared "Personal & Family" account ("per"), which
+    mixes personal and business content, so `guess_business()` still runs
+    against `all_businesses` there to route bills to their real business.
+    """
     from . import storage  # lazy — avoids circular at module load
 
-    maton = MatonClient()
+    maton = _client_for_business(business)
     created: list[dict] = []
 
     query = (
@@ -434,7 +455,10 @@ def scan_gmail(businesses: list[dict], days: int = 45) -> list[dict]:
         inv_match = re.search(r"#?(INV|INV-|Invoice\s*#?\s*)([A-Z0-9\-]+)", subject, re.I)
         invoice_number = inv_match.group().strip() if inv_match else None
 
-        biz_id, confidence = guess_business(vendor, None, businesses)
+        if business.get("slug") == "per":
+            biz_id, confidence = guess_business(vendor, None, all_businesses)
+        else:
+            biz_id, confidence = business.get("business_id"), 1.0
 
         # Find and download the first PDF/image attachment → S3
         file_url = None
@@ -473,13 +497,14 @@ def scan_gmail(businesses: list[dict], days: int = 45) -> list[dict]:
 
 # ── Google Drive scanner ──────────────────────────────────────────────────────
 
-def scan_drive(businesses: list[dict], days: int = 45) -> list[dict]:
-    """List invoice PDFs from Google Drive and record bill stubs.
+def scan_drive(business: dict, all_businesses: list[dict], days: int = 45) -> list[dict]:
+    """List invoice PDFs from ONE business's own Google Drive, record bill stubs.
 
     Drive binary download is not possible through the Maton JSON gateway,
     so we store the Drive webViewLink as file_url for in-browser viewing.
+    Business assignment follows the same direct-tag rule as scan_gmail().
     """
-    maton = MatonClient()
+    maton = _client_for_business(business)
     created: list[dict] = []
 
     cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -526,7 +551,10 @@ def scan_drive(businesses: list[dict], days: int = 45) -> list[dict]:
             continue
 
         vendor = _vendor_from_filename(filename)
-        biz_id, confidence = guess_business(vendor, None, businesses)
+        if business.get("slug") == "per":
+            biz_id, confidence = guess_business(vendor, None, all_businesses)
+        else:
+            biz_id, confidence = business.get("business_id"), 1.0
 
         bill_id = insert_bill(
             vendor=vendor,
@@ -556,13 +584,15 @@ def scan_drive(businesses: list[dict], days: int = 45) -> list[dict]:
 
 # ── Auto-pay detection ────────────────────────────────────────────────────────
 
-def check_paid_bills(bills: list[dict]) -> list[str]:
-    """Search Gmail for payment confirmation emails matching pending bills.
+def check_paid_bills(bills: list[dict], businesses: list[dict]) -> list[str]:
+    """Search each business's own Gmail for payment confirmation emails
+    matching its own pending bills.
 
     Returns list of bill_ids that were marked paid.
     Conservative: requires both vendor keyword AND payment-confirmation subject.
+    Bills with no business assigned fall back to the personal/default key
+    ("per"), matching the original behavior before per-business keys existed.
     """
-    maton = MatonClient()
     paid_ids: list[str] = []
 
     pending = [
@@ -572,39 +602,57 @@ def check_paid_bills(bills: list[dict]) -> list[str]:
     if not pending:
         return []
 
+    by_slug = {b["slug"]: b for b in businesses}
+    business_by_id = {str(b["business_id"]): b for b in businesses}
+
+    # Group pending bills by which business's Gmail account should be searched.
+    groups: dict[str, list[dict]] = {}
     for bill in pending:
-        vendor = (bill.get("vendor") or "").strip()
-        if not vendor or len(vendor) < 3:
-            continue
+        biz = business_by_id.get(str(bill.get("business_id") or ""))
+        slug = biz["slug"] if biz else "per"
+        groups.setdefault(slug, []).append(bill)
 
-        # Use first meaningful word from vendor name as search keyword
-        # Skip generic words like "The", "A", "An"
-        words = [w for w in vendor.split() if len(w) > 2 and w.lower() not in ("the", "and", "for")]
-        if not words:
-            continue
-        keyword = words[0]
-
-        query = (
-            f'{keyword} '
-            '(subject:receipt OR subject:"payment received" OR subject:"payment processed" '
-            'OR subject:"payment confirmed" OR subject:"thank you for your payment" '
-            'OR subject:"your payment" OR subject:"invoice paid") '
-            'newer_than:30d'
-        )
-
+    for slug, group_bills in groups.items():
+        business = by_slug.get(slug)
         try:
-            resp = maton.request(
-                "google-mail", "GET", "gmail/v1/users/me/messages",
-                query={"q": query, "maxResults": 3},
-            )
-        except MatonError:
+            maton = _client_for_business(business) if business else MatonClient()
+        except ValueError as exc:
+            log.info("check_paid_bills: skipping '%s' (%s)", slug, exc)
             continue
 
-        messages = (resp.get("data") or {}).get("messages") or []
-        if messages:
-            update_bill(bill["bill_id"], status="paid")
-            paid_ids.append(bill["bill_id"])
-            log.info("Auto-marked bill %s (%s) as paid via Gmail confirmation",
-                     bill["bill_id"], vendor)
+        for bill in group_bills:
+            vendor = (bill.get("vendor") or "").strip()
+            if not vendor or len(vendor) < 3:
+                continue
+
+            # Use first meaningful word from vendor name as search keyword.
+            # Skip generic words like "The", "A", "An"
+            words = [w for w in vendor.split() if len(w) > 2 and w.lower() not in ("the", "and", "for")]
+            if not words:
+                continue
+            keyword = words[0]
+
+            query = (
+                f'{keyword} '
+                '(subject:receipt OR subject:"payment received" OR subject:"payment processed" '
+                'OR subject:"payment confirmed" OR subject:"thank you for your payment" '
+                'OR subject:"your payment" OR subject:"invoice paid") '
+                'newer_than:30d'
+            )
+
+            try:
+                resp = maton.request(
+                    "google-mail", "GET", "gmail/v1/users/me/messages",
+                    query={"q": query, "maxResults": 3},
+                )
+            except MatonError:
+                continue
+
+            messages = (resp.get("data") or {}).get("messages") or []
+            if messages:
+                update_bill(bill["bill_id"], status="paid")
+                paid_ids.append(bill["bill_id"])
+                log.info("Auto-marked bill %s (%s) as paid via Gmail confirmation (%s)",
+                         bill["bill_id"], vendor, slug)
 
     return paid_ids

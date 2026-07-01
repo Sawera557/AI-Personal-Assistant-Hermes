@@ -135,6 +135,32 @@ class PostgresConversationStore:
         """
         return None
 
+    def locked_business_slug(self, key: str) -> str | None:
+        """The business slug this conversation is locked to, from its first
+        message — or None if it started as "All Businesses" / predates this
+        feature (both cases mean "no single business restriction"). `key` is
+        the composite `entity_id:session_id` store key, same as get()/reset()."""
+        session_id = _session_id_from_key(key)
+        if not _is_uuid(session_id):
+            return None
+        try:
+            with cursor(commit=False) as cur:
+                cur.execute(
+                    "SELECT entity_id FROM hermes_messages "
+                    "WHERE session_id = %s ORDER BY seq ASC LIMIT 1;",
+                    (session_id,),
+                )
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return None
+                cur.execute("SELECT slug FROM entities WHERE entity_id = %s;", (row[0],))
+                erow = cur.fetchone()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("locked_business_slug(%s) failed: %s", session_id, exc)
+            return None
+        from ..businesses import to_business_slug  # local import: avoid any cycle risk
+        return to_business_slug(erow[0] if erow else None)
+
     def reset(self, key: str) -> None:
         """Delete a conversation (cascades to its messages)."""
         session_id = _session_id_from_key(key)
@@ -258,7 +284,11 @@ class PostgresConversationStore:
                            s.title,
                            extract(epoch FROM s.created_at),
                            extract(epoch FROM s.updated_at),
-                           count(m.message_id){snippet_select}
+                           count(m.message_id),
+                           (SELECT mm.entity_id FROM hermes_messages mm
+                            WHERE mm.session_id = s.session_id
+                            ORDER BY mm.seq ASC LIMIT 1) AS locked_entity_id
+                           {snippet_select}
                     FROM hermes_sessions s
                     JOIN hermes_messages m ON m.session_id = s.session_id
                     WHERE {' AND '.join(where)}
@@ -268,16 +298,29 @@ class PostgresConversationStore:
                     select_params + where_params,
                 )
                 rows = cur.fetchall()
+
+                # Batch-resolve locked entity uuids -> business slugs (only 8
+                # entities total today, so fetching all is simpler than an
+                # ANY(%s) filter and just as cheap).
+                slug_by_entity_id: dict[str, str] = {}
+                try:
+                    cur.execute("SELECT entity_id, slug FROM entities;")
+                    slug_by_entity_id = {str(r[0]): r[1] for r in cur.fetchall()}
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("conversations() entity lookup failed: %s", exc)
         except Exception as exc:  # noqa: BLE001
             log.warning("conversations() failed: %s", exc)
             return []
 
+        from ..businesses import to_business_slug  # local import: avoid any cycle risk
+
         out: list[dict[str, Any]] = []
         for row in rows:
-            sid, title, created, updated, count = row[:5]
-            snippet = row[5] if q and len(row) > 5 else None
+            sid, title, created, updated, count, locked_entity_id = row[:6]
+            snippet = row[6] if q and len(row) > 6 else None
             if snippet:
                 snippet = " ".join(str(snippet).split())[:160]
+            entity_slug = slug_by_entity_id.get(str(locked_entity_id)) if locked_entity_id else None
             out.append({
                 "session_id": str(sid),
                 "title": title or "New conversation",
@@ -285,6 +328,7 @@ class PostgresConversationStore:
                 "updated_at": updated,
                 "message_count": int(count),
                 "snippet": snippet,
+                "business": to_business_slug(entity_slug),
             })
         return out
 

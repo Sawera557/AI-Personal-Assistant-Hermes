@@ -62,6 +62,12 @@
 
         <!-- AI Agent panel: conversation history + settings -->
         <div class="panel-section visible" id="panel-agent">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-agent" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-agent" hidden></p>
+          </div>
+
           <button id="reset-btn" class="ghost new-convo">＋ New conversation</button>
 
           <div class="panel history-panel">
@@ -117,6 +123,12 @@
 
         <!-- Billing panel: sidebar metadata for the Billing section -->
         <div class="panel-section" id="panel-bills">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-bills" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-bills" hidden></p>
+          </div>
+
           <div class="bills-panel-head">
             <div class="bills-panel-icon">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v18l2-1 2 1 2-1 2 1 2-1 2 1V3l-2 1-2-1-2 1-2-1-2 1-2-1z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg>
@@ -218,9 +230,6 @@
           <input type="file" id="bill-file-input" multiple accept=".pdf,.jpg,.jpeg,.png,.heic" hidden />
         </div>
 
-        <!-- Business filter tabs — rendered by bills.js -->
-        <div class="biz-tabs-row" id="biz-tabs-row"></div>
-
         <!-- Stats row — rendered by bills.js -->
         <div class="bills-stats-row" id="bills-stats-row"></div>
 
@@ -316,6 +325,7 @@
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="/static/business.js?v={{ v }}"></script>
   <script src="/static/app.js?v={{ v }}"></script>
   <script src="/static/bills.js?v={{ v }}"></script>
   {% if voice_enabled %}<script src="/static/voice.js?v={{ v }}"></script>{% endif %}

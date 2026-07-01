@@ -1,25 +1,48 @@
 /* ── Billing & Invoices — real API, no mock data ── */
 
 /* ── State ─────────────────────────────────────────────────────────────── */
-let businesses   = [];   // from GET /api/businesses
+// Business scope (which business's bills are shown, "all" or a slug) lives in
+// the shared HermesBiz module (static/business.js) — bills.js just reads
+// HermesBiz.current / HermesBiz.list and re-renders on HermesBiz.onChange.
 let bills        = [];   // from GET /api/bills
 let insights     = {};   // from response.insights
-let activeBizId  = "all";
 let filterStatus = "all";
 let searchQuery  = "";
 let scanning     = false;
 let billsInitialized = false;
+
+/* Real businesses only (excludes the synthetic "All Businesses" entry) —
+   used anywhere we need an actual business row (assign dialog, bill cards). */
+function realBusinesses() {
+  return HermesBiz.list.filter((b) => b.slug !== "all");
+}
+
+/* The business_id (uuid) the current HermesBiz selection maps to, or null
+   for "all" / an unmapped slug — used to filter the bills list client-side. */
+function currentBusinessId() {
+  if (HermesBiz.current === "all") return null;
+  return HermesBiz.find(HermesBiz.current)?.business_id || null;
+}
 
 /* ── Entry point ─────────────────────────────────────────────────────────── */
 async function initBilling() {
   if (billsInitialized) return;
   billsInitialized = true;
   renderSkeleton();
-  await Promise.all([loadBusinesses(), loadBills()]);
+  await loadBills();
   renderAll();
   bindDropzone();
   bindConfirmOverlay();
   bindBillViewer();
+  HermesBiz.bind(
+    document.getElementById("hermes-biz-select-bills"),
+    document.getElementById("hermes-biz-badge-bills")
+  );
+  HermesBiz.onChange(() => {
+    renderStats();
+    renderToolbar();
+    renderBillsList();
+  });
 
   // Auto-scan logic: 45-day backfill on first open, 7-day refresh after 6h
   const firstDone = localStorage.getItem("billsFirstScanDone");
@@ -33,16 +56,6 @@ async function initBilling() {
 }
 
 /* ── Data loading ────────────────────────────────────────────────────────── */
-async function loadBusinesses() {
-  try {
-    const r = await fetch("/api/businesses");
-    const j = await r.json();
-    businesses = j.businesses || [];
-  } catch (e) {
-    console.error("loadBusinesses:", e);
-  }
-}
-
 async function loadBills() {
   try {
     const r = await fetch("/api/bills");
@@ -57,14 +70,12 @@ async function loadBills() {
 async function reload() {
   await loadBills();
   renderStats();
-  renderBizTabs();
   renderBillsList();
   renderInsights();
 }
 
 /* ── Full render pass ────────────────────────────────────────────────────── */
 function renderAll() {
-  renderBizTabs();
   renderStats();
   renderDropzone();
   renderToolbar();
@@ -90,53 +101,12 @@ function renderSkeleton() {
       </div>`).join("")}`;
 }
 
-/* ── Business tabs ───────────────────────────────────────────────────────── */
-function renderBizTabs() {
-  const row = document.getElementById("biz-tabs-row");
-  if (!row) return;
-
-  const allCount = bills.filter(b => b.status !== "paid").length;
-  const allBiz = { business_id: "all", name: "All Businesses", emoji: "🏢", color: "#9aa3b2" };
-  const bizList = [allBiz, ...businesses];
-
-  row.innerHTML = bizList.map(biz => {
-    const isAll = biz.business_id === "all";
-    const count = isAll ? allCount
-      : bills.filter(b => b.business_id === biz.business_id && b.status !== "paid").length;
-    const isActive = activeBizId === biz.business_id;
-    const bg = isActive && !isAll
-      ? `background:${biz.color}22; border-color:${biz.color}55;`
-      : isActive ? "background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.15);" : "";
-    return `
-      <button class="biz-tab${isActive ? " active" : ""}" style="${bg}"
-              onclick="setBizFilter('${biz.business_id}')">
-        ${!isAll ? `<span class="biz-tab-dot" style="background:${biz.color}"></span>` : ""}
-        ${biz.emoji} ${biz.name}
-        ${count > 0 ? `<span class="biz-tab-count">${count}</span>` : ""}
-      </button>`;
-  }).join("");
-
-  // Append scan button
-  row.insertAdjacentHTML("beforeend", `
-    <button class="biz-tab" id="scan-btn" onclick="triggerScan()"
-            style="margin-left:auto;flex-shrink:0;color:var(--accent);border-color:rgba(245,166,35,.3)">
-      ${scanning ? `<span class="scan-dots"><span></span><span></span><span></span></span> Scanning…`
-                 : "⚡ Scan Connected Apps"}
-    </button>`);
-}
-
-function setBizFilter(bizId) {
-  activeBizId = bizId;
-  renderBizTabs();
-  renderStats();
-  renderBillsList();
-}
-
 /* ── Stats row ───────────────────────────────────────────────────────────── */
 function renderStats() {
   const row = document.getElementById("bills-stats-row");
   if (!row) return;
-  const filtered = activeBizId === "all" ? bills : bills.filter(b => b.business_id === activeBizId);
+  const bizId = currentBusinessId();
+  const filtered = HermesBiz.current === "all" ? bills : bills.filter(b => b.business_id === bizId);
   const overdue   = filtered.filter(b => b.status === "overdue").reduce((s,b) => s + (b.amount||0), 0);
   const dueSoon   = filtered.filter(b => b.status === "due-soon").reduce((s,b) => s + (b.amount||0), 0);
   const total     = filtered.reduce((s,b) => s + (b.amount||0), 0);
@@ -221,6 +191,13 @@ function renderToolbar() {
   const tb = document.getElementById("bills-toolbar");
   if (!tb) return;
   tb.removeAttribute("hidden");
+
+  const biz = HermesBiz.find(HermesBiz.current);
+  const notConnected = HermesBiz.current !== "all" && biz && !biz.connected;
+  const scanLabel = scanning
+    ? `<span class="scan-dots"><span></span><span></span><span></span></span> Scanning…`
+    : notConnected ? "⚠ Not connected yet" : "⚡ Scan Connected Apps";
+
   tb.innerHTML = `
     <div class="bills-search">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -236,6 +213,10 @@ function renderToolbar() {
       <option value="paid">Paid</option>
       <option value="processing">Processing</option>
     </select>
+    <button class="bv-action-btn" id="scan-btn" onclick="triggerScan()" ${notConnected ? "disabled" : ""}
+            style="flex-shrink:0;white-space:nowrap;color:var(--accent);border-color:rgba(245,166,35,.3)">
+      ${scanLabel}
+    </button>
     <button class="bv-action-btn" id="check-payments-btn" onclick="triggerCheckPayments()"
             style="flex-shrink:0;white-space:nowrap">
       🔍 Check Payments
@@ -257,7 +238,10 @@ function renderBillsList() {
   if (!list) return;
 
   let visible = bills.slice();
-  if (activeBizId !== "all") visible = visible.filter(b => b.business_id === activeBizId);
+  if (HermesBiz.current !== "all") {
+    const bizId = currentBusinessId();
+    visible = visible.filter(b => b.business_id === bizId);
+  }
   if (filterStatus !== "all") visible = visible.filter(b => b.status === filterStatus);
   if (searchQuery) visible = visible.filter(b =>
     (b.vendor||"").toLowerCase().includes(searchQuery) ||
@@ -288,7 +272,7 @@ function renderBillsList() {
 }
 
 function billCardHTML(bill) {
-  const biz = businesses.find(b => b.business_id === bill.business_id);
+  const biz = realBusinesses().find(b => b.business_id === bill.business_id);
   const bizColor  = bill.business_color  || biz?.color  || "#9aa3b2";
   const bizEmoji  = bill.business_emoji  || biz?.emoji  || "🏢";
   const bizName   = bill.business_name   || biz?.name   || "Unassigned";
@@ -383,9 +367,12 @@ async function handleFilesSelected(files) {
   const dz = document.getElementById("bills-dropzone");
   if (dz) dz.classList.add("dz-compact");
 
-  // Upload all files in one multipart POST
+  // Upload all files in one multipart POST — scope to the active business
+  // (if one is selected) so uploads don't need AI-guessing.
   const form = new FormData();
   files.forEach(f => form.append("files", f));
+  const bizId = currentBusinessId();
+  if (bizId) form.append("business_id", bizId);
 
   let created = [];
   try {
@@ -410,55 +397,85 @@ async function handleFilesSelected(files) {
 }
 
 /* ── Connected-app scan ──────────────────────────────────────────────────── */
+// Scans exactly one business per request (the backend rejects a "loop
+// everything" style call — attachment downloads across many businesses in one
+// request risk a platform timeout). For "All Businesses", we fan out here,
+// one request per connected business, sequentially.
+
+async function _scanOne(slug, days) {
+  const resp = await fetch("/api/bills/scan", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ business: slug, sources: ["gmail", "google-drive"], days }),
+  });
+  return resp.json();
+}
+
 async function triggerScan() {
   if (scanning) return;
-  scanning = true;
-  renderBizTabs();
 
   const firstDone = localStorage.getItem("billsFirstScanDone");
   const days = firstDone ? 7 : 45;
 
+  const targets = HermesBiz.current === "all"
+    ? realBusinesses().filter(b => b.connected)
+    : [HermesBiz.find(HermesBiz.current)].filter(Boolean);
+
+  if (!targets.length) {
+    const biz = HermesBiz.find(HermesBiz.current);
+    showToast(biz && !biz.connected
+      ? `⚠ '${biz.name}' has no Maton connection configured yet`
+      : "No connected businesses to scan");
+    return;
+  }
+
+  scanning = true;
+  renderToolbar();
+
+  let total = 0;
   try {
-    const resp = await fetch("/api/bills/scan", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ sources: ["gmail", "google-drive"], days }),
-    });
-    const json = await resp.json();
-    const n = json.scanned || 0;
+    for (const biz of targets) {
+      if (targets.length > 1) showToast(`⚡ Scanning ${biz.name}…`);
+      try {
+        const json = await _scanOne(biz.slug, days);
+        total += json.scanned || 0;
+      } catch (e) {
+        console.error(`Scan failed for ${biz.slug}:`, e);
+      }
+    }
     localStorage.setItem("billsFirstScanDone", "1");
     localStorage.setItem("lastBillScan", Date.now().toString());
-    if (n > 0) {
+    if (total > 0) {
       await reload();
-      showToast(`⚡ Found ${n} new bill${n !== 1 ? "s" : ""} from your connected apps`);
+      showToast(`⚡ Found ${total} new bill${total !== 1 ? "s" : ""} from your connected apps`);
     } else {
       showToast(`✓ Scan complete — no new bills (checked last ${days} days)`);
     }
-  } catch (e) {
-    console.error("Scan failed:", e);
-    showToast("Scan failed — check console");
   } finally {
     scanning = false;
-    renderBizTabs();
+    renderToolbar();
   }
 }
 
 async function _autoScan() {
-  // Silent background scan — no spinner, just reloads if new bills found
-  try {
-    const resp = await fetch("/api/bills/scan", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ sources: ["gmail", "google-drive"], days: 7 }),
-    });
-    const json = await resp.json();
-    localStorage.setItem("lastBillScan", Date.now().toString());
-    if ((json.scanned || 0) > 0) {
-      await reload();
-      showToast(`⚡ Auto-found ${json.scanned} new bill${json.scanned !== 1 ? "s" : ""}`);
+  // Silent background scan — no spinner, just reloads if new bills found.
+  const targets = HermesBiz.current === "all"
+    ? realBusinesses().filter(b => b.connected)
+    : [HermesBiz.find(HermesBiz.current)].filter(b => b && b.connected);
+
+  let total = 0;
+  for (const biz of targets) {
+    try {
+      const json = await _scanOne(biz.slug, 7);
+      total += json.scanned || 0;
+    } catch (e) {
+      console.debug(`Auto-scan error (${biz.slug}):`, e);
     }
-  } catch (e) {
-    console.debug("Auto-scan error:", e);
+  }
+  localStorage.setItem("lastBillScan", Date.now().toString());
+  if (total > 0) {
+    await reload();
+    showToast(`⚡ Auto-found ${total} new bill${total !== 1 ? "s" : ""}`);
   }
 }
 
@@ -576,8 +593,9 @@ function showConfirmOverlay(bill) {
       : "Which business does this bill belong to?";
   }
 
-  if (grid && businesses.length) {
-    grid.innerHTML = businesses.map(biz => `
+  const bizList = realBusinesses();
+  if (grid && bizList.length) {
+    grid.innerHTML = bizList.map(biz => `
       <button class="ai-biz-btn" onclick="assignBill('${biz.business_id}')"
               style="${bill.business_id === biz.business_id ? `border-color:${biz.color};box-shadow:0 0 0 1px ${biz.color}44` : ""}">
         <span class="ai-biz-icon">${biz.emoji}</span>
@@ -671,7 +689,7 @@ async function openBillViewer(billId) {
   if (!overlay) return;
 
   // Header
-  const biz = businesses.find(b => b.business_id === viewerBill.business_id);
+  const biz = realBusinesses().find(b => b.business_id === viewerBill.business_id);
   const bizName  = viewerBill.business_name  || biz?.name  || "Unassigned";
   const bizEmoji = viewerBill.business_emoji || biz?.emoji || "🏢";
   document.getElementById("bv-vendor").textContent =
