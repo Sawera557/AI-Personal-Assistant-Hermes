@@ -28,7 +28,8 @@ _META_COLS = (
     "s.session_id, s.title, s.status, e.slug, "
     "extract(epoch FROM s.created_at), extract(epoch FROM s.updated_at), "
     "extract(epoch FROM s.scheduled_at), s.calendar_event_id, "
-    "s.attendees, s.brief, s.agenda_summary, s.fathom_url"
+    "s.attendees, s.brief, s.agenda_summary, s.fathom_url, "
+    "s.ai_notes, extract(epoch FROM s.ai_notes_generated_at)"
 )
 
 
@@ -69,7 +70,8 @@ def _meta_row_to_dict(row: tuple) -> dict[str, Any]:
     from ..businesses import to_business_slug  # local import: avoid a cycle
 
     (sid, title, status, entity_slug, created, updated, scheduled_at,
-     calendar_event_id, attendees, brief, agenda_summary, fathom_url) = row
+     calendar_event_id, attendees, brief, agenda_summary, fathom_url,
+     ai_notes, ai_notes_generated_at) = row
     return {
         "session_id": str(sid),
         "title": title or "New meeting",
@@ -83,6 +85,8 @@ def _meta_row_to_dict(row: tuple) -> dict[str, Any]:
         "brief": brief or {},
         "agenda_summary": agenda_summary or {},
         "fathom_url": fathom_url,
+        "ai_notes": ai_notes,
+        "ai_notes_generated_at": ai_notes_generated_at,
     }
 
 
@@ -167,6 +171,26 @@ def save_brief(session_id: str, *, brief: dict[str, Any], sources: list[dict[str
             )
     except Exception as exc:  # noqa: BLE001
         log.warning("save_brief(%s) failed: %s", session_id, exc)
+
+
+def save_ai_notes(session_id: str, notes: str) -> None:
+    """Attach AI-generated notes from a live agent pull (Gmail/Drive/Calendar).
+    Regenerable — each call overwrites the previous notes with the fresh pull,
+    same as save_brief. Also moves 'scheduled' -> 'prepared', matching the
+    brief's rule (having notes counts as prepared even without a brief)."""
+    if not _is_uuid(session_id):
+        return
+    try:
+        with cursor() as cur:
+            cur.execute(
+                """UPDATE meeting_sessions SET
+                       ai_notes = %s, ai_notes_generated_at = now(), updated_at = now(),
+                       status = CASE WHEN status = 'scheduled' THEN 'prepared' ELSE status END
+                   WHERE session_id = %s;""",
+                (notes, session_id),
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("save_ai_notes(%s) failed: %s", session_id, exc)
 
 
 def add_turn(

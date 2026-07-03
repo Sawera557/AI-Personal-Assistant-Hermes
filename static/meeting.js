@@ -37,6 +37,7 @@
   const upcomingListEl = document.getElementById("meeting-upcoming-list");
   const upcomingEmptyEl = document.getElementById("meeting-upcoming-empty");
   const briefBoxEl = document.getElementById("meeting-brief-box");
+  const aiNotesBoxEl = document.getElementById("meeting-ai-notes-box");
   const summaryBoxEl = document.getElementById("meeting-summary-box");
   const endBtn = document.getElementById("meeting-end-btn");
 
@@ -98,6 +99,7 @@
     feedEl.innerHTML = '<p class="hint meeting-feed-empty" id="meeting-feed-empty">Guidance will appear here as the meeting happens — grounded in this business\'s own emails and files, with sources cited.</p>';
     if (statusEl) statusEl.textContent = listening ? "Listening…" : "Not listening";
     if (briefBoxEl) { briefBoxEl.hidden = true; briefBoxEl.innerHTML = ""; }
+    if (aiNotesBoxEl) { aiNotesBoxEl.hidden = true; aiNotesBoxEl.innerHTML = ""; }
     if (summaryBoxEl) { summaryBoxEl.hidden = true; summaryBoxEl.innerHTML = ""; }
     renderSessionsList(); // just re-highlight active (none) — list itself unchanged
   }
@@ -167,6 +169,92 @@
     const body = document.createElement("div");
     briefBoxEl.appendChild(body);
     renderBriefContent(body, brief);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // AI Meeting Notes — a deeper, on-demand pull through the full Hermes
+  // agent (real Gmail/Drive search, not just what's already indexed).
+  // Regenerable: the button always says "Build" the first time, "Rebuild"
+  // once notes exist, and can be clicked again any time for fresh results.
+  // ══════════════════════════════════════════════════════════════════════
+  function createAiNotesButton(sessionId, businessSlug, meetingTitle, onResult) {
+    const btn = document.createElement("button");
+    btn.className = "meeting-ai-notes-btn";
+    btn.type = "button";
+    btn.textContent = "Build AI Meeting Notes";
+    btn.onclick = async (ev) => {
+      ev.stopPropagation();
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Reading Gmail & Drive… (~30–60s)";
+      try {
+        const res = await fetch(`/api/meetings/sessions/${encodeURIComponent(sessionId)}/ai-notes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ business: businessSlug, meeting_title: meetingTitle }),
+        });
+        const data = await res.json();
+        if (data.error) {
+          alert(data.error);
+          btn.textContent = original;
+        } else {
+          onResult(data.ai_notes || (data.notes || ""), data.ai_notes_generated_at);
+          btn.textContent = "Rebuild AI Meeting Notes";
+        }
+      } catch (err) {
+        alert("Couldn't build AI meeting notes: " + (err && err.message ? err.message : err));
+        btn.textContent = original;
+      }
+      btn.disabled = false;
+    };
+    return btn;
+  }
+
+  function renderAiNotesContent(container, notes, generatedAt) {
+    container.innerHTML = "";
+    if (!notes) {
+      container.innerHTML = '<p class="hint" style="margin:0">No AI meeting notes yet — click Build to pull relevant info from Gmail &amp; Drive.</p>';
+      return;
+    }
+    if (generatedAt) {
+      const stamp = document.createElement("div");
+      stamp.className = "meeting-ai-notes-stamp";
+      stamp.textContent = "Built " + new Date(generatedAt * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      container.appendChild(stamp);
+    }
+    const body = document.createElement("div");
+    body.className = "meeting-ai-notes-body";
+    body.innerHTML = renderMarkdown(notes);
+    container.appendChild(body);
+  }
+
+  // Persistent box in the Live view — always shows the build/rebuild button,
+  // whether or not notes exist yet (unlike brief/summary boxes, which hide
+  // entirely when empty).
+  function renderAiNotesBox(session) {
+    if (!aiNotesBoxEl || !session || !session.session_id) { if (aiNotesBoxEl) aiNotesBoxEl.hidden = true; return; }
+    const biz = session.business || HermesBiz.current;
+    aiNotesBoxEl.hidden = false;
+    aiNotesBoxEl.innerHTML = "";
+
+    const head = document.createElement("div");
+    head.className = "meeting-ai-notes-head";
+    const title = document.createElement("div");
+    title.className = "meeting-box-title";
+    title.textContent = "AI Meeting Notes";
+    head.appendChild(title);
+    const btn = createAiNotesButton(session.session_id, biz, session.title, (notes, generatedAt) => {
+      session.ai_notes = notes;
+      session.ai_notes_generated_at = generatedAt;
+      renderAiNotesContent(body, notes, generatedAt);
+    });
+    if (session.ai_notes) btn.textContent = "Rebuild AI Meeting Notes";
+    head.appendChild(btn);
+    aiNotesBoxEl.appendChild(head);
+
+    const body = document.createElement("div");
+    aiNotesBoxEl.appendChild(body);
+    renderAiNotesContent(body, session.ai_notes, session.ai_notes_generated_at);
   }
 
   function renderSummaryBox(session) {
@@ -291,7 +379,11 @@
     briefWrap.className = "meeting-brief-inline";
     briefWrap.hidden = true;
 
-    function setActions(status, sessionId, brief) {
+    const aiNotesWrap = document.createElement("div");
+    aiNotesWrap.className = "meeting-brief-inline";
+    aiNotesWrap.hidden = true;
+
+    function setActions(status, sessionId, brief, aiNotes, aiNotesGeneratedAt) {
       actions.innerHTML = "";
       if (status === "prepared" || status === "active" || status === "ended") {
         const viewBtn = document.createElement("button");
@@ -301,6 +393,13 @@
         viewBtn.onclick = () => { briefWrap.hidden = !briefWrap.hidden; };
         actions.appendChild(viewBtn);
 
+        const notesToggle = document.createElement("button");
+        notesToggle.className = "ghost";
+        notesToggle.type = "button";
+        notesToggle.textContent = "AI notes";
+        notesToggle.onclick = () => { aiNotesWrap.hidden = !aiNotesWrap.hidden; };
+        actions.appendChild(notesToggle);
+
         const openBtn = document.createElement("button");
         openBtn.className = "meeting-quick-send";
         openBtn.type = "button";
@@ -309,6 +408,16 @@
         actions.appendChild(openBtn);
 
         if (brief) renderBriefContent(briefWrap, brief);
+
+        aiNotesWrap.innerHTML = "";
+        const notesBody = document.createElement("div");
+        const notesBtn = createAiNotesButton(sessionId, HermesBiz.current, e.title, (notes, generatedAt) => {
+          renderAiNotesContent(notesBody, notes, generatedAt);
+        });
+        if (aiNotes) notesBtn.textContent = "Rebuild AI Meeting Notes";
+        aiNotesWrap.appendChild(notesBtn);
+        aiNotesWrap.appendChild(notesBody);
+        renderAiNotesContent(notesBody, aiNotes, aiNotesGeneratedAt);
       } else {
         const prepBtn = document.createElement("button");
         prepBtn.className = "meeting-quick-send";
@@ -340,10 +449,11 @@
       }
     }
 
-    setActions(e.session_status, e.session_id, null);
+    setActions(e.session_status, e.session_id, e.brief, e.ai_notes, e.ai_notes_generated_at);
     head.appendChild(actions);
     card.appendChild(head);
     card.appendChild(briefWrap);
+    card.appendChild(aiNotesWrap);
     return card;
   }
 
@@ -457,6 +567,7 @@
         feedEl.innerHTML = '<p class="hint meeting-feed-empty" id="meeting-feed-empty">No guidance recorded in this meeting.</p>';
       }
       renderBriefBox(data.brief);
+      renderAiNotesBox(data);
       renderSummaryBox(data);
       renderSessionsList();
       closeMobileNav();
@@ -495,6 +606,7 @@
       if (!data.error) {
         currentSession = data;
         renderBriefBox(data.brief);
+        renderAiNotesBox(data);
         renderSummaryBox(data);
         loadSessions();
       }

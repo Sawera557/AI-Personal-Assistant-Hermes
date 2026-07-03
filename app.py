@@ -70,7 +70,7 @@ from hermes.db.bills import (
 from hermes.db import meetings as meetings_db
 from hermes.ingest import ingest_document
 from hermes.maton import MatonClient, MatonError
-from hermes.meeting_copilot import get_guidance, prepare_brief, summarize_meeting
+from hermes.meeting_copilot import generate_ai_notes, get_guidance, prepare_brief, summarize_meeting
 from hermes.memory import store
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
@@ -645,7 +645,11 @@ async def list_upcoming_meetings(business: str, days: int = 14):
         matched = by_event_id.get(e["event_id"])
         e["session_id"] = matched["session_id"] if matched else None
         e["session_status"] = matched["status"] if matched else None
-        e["has_brief"] = bool(matched and matched.get("brief", {}).get("background"))
+        # Actual content, not just flags — the frontend renders these directly
+        # on page load so "View brief" / "AI notes" work without a re-fetch.
+        e["brief"] = matched.get("brief") if matched else None
+        e["ai_notes"] = matched.get("ai_notes") if matched else None
+        e["ai_notes_generated_at"] = matched.get("ai_notes_generated_at") if matched else None
 
     return {"business": business, "events": events}
 
@@ -701,6 +705,44 @@ async def prepare_meeting(body: MeetingPrepareRequest):
     await run_in_threadpool(
         meetings_db.save_brief, session_id, brief=result["brief"], sources=result["sources"],
     )
+    full = await run_in_threadpool(meetings_db.transcript, session_id)
+    return full or {"session_id": session_id, **result}
+
+
+class MeetingAiNotesRequest(BaseModel):
+    business: str
+    meeting_title: str
+
+
+@app.post("/api/meetings/sessions/{session_id}/ai-notes")
+async def generate_meeting_ai_notes(session_id: str, body: MeetingAiNotesRequest):
+    """Build (or rebuild) detailed pre-meeting notes via the full Hermes agent:
+    live Gmail search, Drive file search, read the contents, write clean
+    bullet-point notes ending with links to the relevant Drive files.
+
+    Slower than /prepare's brief (real tool calls against Gmail/Drive, not
+    just a Pinecone lookup) — call this on explicit request, and it's safe to
+    call again any time to regenerate with fresh results.
+    """
+    business = (body.business or "").strip()
+    if not business or business == "all":
+        return JSONResponse({"error": "A specific business is required."}, status_code=400)
+
+    businesses = await run_in_threadpool(list_businesses)
+    biz = next((b for b in businesses if b.get("slug") == business), None)
+    business_name = (biz or {}).get("name") or business
+
+    try:
+        result = await run_in_threadpool(
+            generate_ai_notes,
+            business_slug=business,
+            business_name=business_name,
+            meeting_title=body.meeting_title,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"AI notes generation failed: {exc}"}, status_code=500)
+
+    await run_in_threadpool(meetings_db.save_ai_notes, session_id, result["notes"])
     full = await run_in_threadpool(meetings_db.transcript, session_id)
     return full or {"session_id": session_id, **result}
 

@@ -1,13 +1,15 @@
-"""Meeting copilot — private, real-time guidance grounded in what's already
-been read into the knowledge base (Pinecone + Postgres), never guessed.
+"""Meeting copilot — private guidance and prep, grounded in real records, never guessed.
 
-This is deliberately NOT the tool-use agent (hermes.agent.run_turn). It never
-calls Maton, never sends anything, never speaks in the meeting — it only reads
-what's already been indexed by the ingestion pipeline and writes short
-bullet-point guidance to a private screen only the owner sees. Fast on
-purpose: one semantic search + one plain Claude call, no tool loop, no
-extended thinking — the retrieval already happened ahead of time (autopilot
-ingestion), so the live moment only has to check what's already on the shelf.
+get_guidance() and prepare_brief() deliberately avoid the tool-use agent
+(hermes.agent.run_turn): they never call Maton, never send anything, never
+speak in the meeting — they only read what's already been indexed by the
+ingestion pipeline. Fast on purpose: one semantic search + one plain Claude
+call, no tool loop, no extended thinking.
+
+generate_ai_notes() (bottom of this file) is the one deliberate exception —
+it DOES call the full tool-use agent, reaching live into Gmail/Drive on the
+owner's explicit request, for when the fast path isn't thorough enough. See
+its own docstring for why that's a conscious, separate decision.
 """
 from __future__ import annotations
 
@@ -284,3 +286,42 @@ def summarize_meeting(*, business_name: str, turns: list[dict]) -> dict:
     summary.setdefault("open_questions", [])
     summary.setdefault("follow_up_email_draft", "")
     return summary
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# AI meeting notes — the ONE deliberate exception to this module's "never
+# calls Maton" rule. prepare_brief() above only reads what's already been
+# indexed (fast, cheap, always available). This instead runs the full Hermes
+# agent (hermes.agent.run_turn) with real tool use, so it can find things the
+# autopilot ingestion hasn't picked up yet — reaching live into Gmail and
+# Drive on the owner's explicit request. Slower (multiple tool round trips),
+# used on demand only, and re-runnable any time the owner wants fresh notes.
+# ─────────────────────────────────────────────────────────────────────────
+
+def generate_ai_notes(*, business_slug: str, business_name: str, meeting_title: str) -> dict:
+    """Build detailed pre-meeting notes via the full agent: live Gmail search,
+    Drive file search, read the contents, write clean bullet-point notes, and
+    end with links to the relevant Drive files.
+
+    Runs in a fresh, throwaway conversation — nothing is added to the regular
+    chat history sidebar; the caller decides whether/where to persist the
+    result (see hermes.db.meetings.save_ai_notes).
+    """
+    import uuid as _uuid
+
+    from .agent import run_turn  # local import: keep this module's normal
+    # (non-tool-use) path free of the agent's heavier import chain
+
+    prompt = (
+        f'Fetch all relevant information regarding "{meeting_title}" from my Gmail, '
+        f"and any files relevant to {business_name} from Google Drive. Read through "
+        f"everything you find and prepare detailed pre-meeting notes in clean language "
+        f"and bullet points for this meeting. At the end, include links to all relevant "
+        f"files from Drive."
+    )
+    throwaway_session = str(_uuid.uuid4())
+    result = run_turn(throwaway_session, prompt, voice=False, active_business=business_slug)
+    return {
+        "notes": result.get("reply") or "",
+        "tool_calls": result.get("tool_calls") or [],
+    }
