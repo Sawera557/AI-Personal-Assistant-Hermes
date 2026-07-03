@@ -156,18 +156,127 @@
     }
   }
 
-  function renderBriefBox(brief) {
+  // ══════════════════════════════════════════════════════════════════════
+  // Collapsible info box — shared shell for brief / AI notes / summary.
+  // Collapsed by default so Notes & Transcript / Guidance keep the screen;
+  // click the header to expand. `expanded: true` shows it open right away
+  // (used right after generating something, so you see the fresh result).
+  // ══════════════════════════════════════════════════════════════════════
+  function buildCollapsibleBox(boxEl, title, { expanded = false } = {}) {
+    boxEl.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "meeting-box-head";
+    const titleEl = document.createElement("div");
+    titleEl.className = "meeting-box-title";
+    titleEl.textContent = title;
+    const rightRow = document.createElement("div");
+    rightRow.className = "meeting-box-head-actions";
+    const chevron = document.createElement("span");
+    chevron.className = "meeting-box-chevron";
+    chevron.textContent = "▾";
+    head.appendChild(titleEl);
+    head.appendChild(rightRow);
+    head.appendChild(chevron);
+
+    const body = document.createElement("div");
+    body.className = "meeting-box-body";
+    body.hidden = !expanded;
+    chevron.classList.toggle("is-collapsed", !expanded);
+
+    head.addEventListener("click", (ev) => {
+      if (rightRow.contains(ev.target)) return; // let PDF/build buttons handle their own clicks
+      body.hidden = !body.hidden;
+      chevron.classList.toggle("is-collapsed", body.hidden);
+    });
+
+    boxEl.appendChild(head);
+    boxEl.appendChild(body);
+    return { rightRow, body };
+  }
+
+  function createPdfButton(onClick) {
+    const btn = document.createElement("button");
+    btn.className = "meeting-pdf-btn";
+    btn.type = "button";
+    btn.title = "Download as PDF";
+    btn.textContent = "⬇ PDF";
+    btn.onclick = (ev) => { ev.stopPropagation(); onClick(); };
+    return btn;
+  }
+
+  function pdfFilename(title, kind) {
+    const safe = (title || "meeting").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 50) || "meeting";
+    return `${safe}_${kind.replace(/\s+/g, "_")}.pdf`;
+  }
+
+  // Simple, reliable text-based PDF export (no html2canvas dependency —
+  // just paginated wrapped text via jsPDF's core API). "## " prefix on a
+  // line renders it as a bold section heading.
+  function downloadPdf(filename, title, lines) {
+    if (!window.jspdf || !window.jspdf.jsPDF) { alert("PDF export isn't available right now — try reloading the page."); return; }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const marginX = 44, maxWidth = 507, pageBottom = 780;
+    let y = 56;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.splitTextToSize(title, maxWidth).forEach((l) => { doc.text(l, marginX, y); y += 19; });
+    y += 10;
+    lines.forEach((rawLine) => {
+      const isHeading = rawLine.startsWith("## ");
+      const text = isHeading ? rawLine.slice(3) : rawLine;
+      doc.setFont("helvetica", isHeading ? "bold" : "normal");
+      doc.setFontSize(isHeading ? 12 : 10.5);
+      doc.splitTextToSize(text || " ", maxWidth).forEach((wLine) => {
+        if (y > pageBottom) { doc.addPage(); y = 56; }
+        doc.text(wLine, marginX, y);
+        y += isHeading ? 17 : 14;
+      });
+      if (isHeading) y += 2;
+    });
+    doc.save(filename);
+  }
+
+  function briefToPdfLines(brief) {
+    const lines = [];
+    if (brief.background) lines.push("## Background", brief.background, "");
+    [["Must-Ask Questions", brief.must_ask_questions], ["Risks", brief.risks], ["Key Facts", brief.key_facts]]
+      .forEach(([label, items]) => {
+        if (!items || !items.length) return;
+        lines.push(`## ${label}`);
+        items.forEach((i) => lines.push("• " + i));
+        lines.push("");
+      });
+    const sources = brief.sources || [];
+    if (sources.length) {
+      lines.push("## Sources");
+      sources.forEach((s) => lines.push(`• [${s.source_system || "record"}] ${s.title || "untitled"}`));
+    }
+    return lines;
+  }
+
+  function markdownToPdfLines(md) {
+    return (md || "")
+      .replace(/\*\*(.*?)\*\*/g, "$1")
+      .replace(/\[(.*?)\]\((.*?)\)/g, "$1 ($2)")
+      .split("\n")
+      .map((line) => {
+        const heading = line.match(/^#{1,6}\s*(.*)/);
+        if (heading) return "## " + heading[1];
+        return line.replace(/^[-*]\s+/, "• ");
+      });
+  }
+
+  function renderBriefBox(session) {
     if (!briefBoxEl) return;
+    const brief = session && session.brief;
     const hasContent = brief && (brief.background || (brief.sources || []).length);
     if (!hasContent) { briefBoxEl.hidden = true; briefBoxEl.innerHTML = ""; return; }
     briefBoxEl.hidden = false;
-    const title = document.createElement("div");
-    title.className = "meeting-box-title";
-    title.textContent = "Pre-meeting brief";
-    briefBoxEl.innerHTML = "";
-    briefBoxEl.appendChild(title);
-    const body = document.createElement("div");
-    briefBoxEl.appendChild(body);
+    const { rightRow, body } = buildCollapsibleBox(briefBoxEl, "Pre-meeting brief");
+    rightRow.appendChild(createPdfButton(() => downloadPdf(
+      pdfFilename(session.title, "Brief"), "Pre-Meeting Brief — " + (session.title || ""), briefToPdfLines(brief),
+    )));
     renderBriefContent(body, brief);
   }
 
@@ -186,7 +295,7 @@
       ev.stopPropagation();
       const original = btn.textContent;
       btn.disabled = true;
-      btn.textContent = "Reading Gmail & Drive… (~30–60s)";
+      btn.textContent = "Reading Gmail & Drive… (1–3 min)";
       try {
         const res = await fetch(`/api/meetings/sessions/${encodeURIComponent(sessionId)}/ai-notes`, {
           method: "POST",
@@ -197,15 +306,15 @@
         if (data.error) {
           alert(data.error);
           btn.textContent = original;
+          btn.disabled = false;
         } else {
           onResult(data.ai_notes || (data.notes || ""), data.ai_notes_generated_at);
-          btn.textContent = "Rebuild AI Meeting Notes";
         }
       } catch (err) {
         alert("Couldn't build AI meeting notes: " + (err && err.message ? err.message : err));
         btn.textContent = original;
+        btn.disabled = false;
       }
-      btn.disabled = false;
     };
     return btn;
   }
@@ -230,30 +339,27 @@
 
   // Persistent box in the Live view — always shows the build/rebuild button,
   // whether or not notes exist yet (unlike brief/summary boxes, which hide
-  // entirely when empty).
-  function renderAiNotesBox(session) {
+  // entirely when empty). `opts.expanded` opens it right after a fresh build
+  // so the result is immediately visible instead of collapsed.
+  function renderAiNotesBox(session, opts = {}) {
     if (!aiNotesBoxEl || !session || !session.session_id) { if (aiNotesBoxEl) aiNotesBoxEl.hidden = true; return; }
     const biz = session.business || HermesBiz.current;
     aiNotesBoxEl.hidden = false;
-    aiNotesBoxEl.innerHTML = "";
+    const { rightRow, body } = buildCollapsibleBox(aiNotesBoxEl, "AI Meeting Notes", { expanded: !!opts.expanded });
 
-    const head = document.createElement("div");
-    head.className = "meeting-ai-notes-head";
-    const title = document.createElement("div");
-    title.className = "meeting-box-title";
-    title.textContent = "AI Meeting Notes";
-    head.appendChild(title);
-    const btn = createAiNotesButton(session.session_id, biz, session.title, (notes, generatedAt) => {
+    if (session.ai_notes) {
+      rightRow.appendChild(createPdfButton(() => downloadPdf(
+        pdfFilename(session.title, "AI Notes"), "AI Meeting Notes — " + (session.title || ""), markdownToPdfLines(session.ai_notes),
+      )));
+    }
+    const buildBtn = createAiNotesButton(session.session_id, biz, session.title, (notes, generatedAt) => {
       session.ai_notes = notes;
       session.ai_notes_generated_at = generatedAt;
-      renderAiNotesContent(body, notes, generatedAt);
+      renderAiNotesBox(session, { expanded: true }); // re-render open so the fresh result is visible
     });
-    if (session.ai_notes) btn.textContent = "Rebuild AI Meeting Notes";
-    head.appendChild(btn);
-    aiNotesBoxEl.appendChild(head);
+    if (session.ai_notes) buildBtn.textContent = "Rebuild AI Meeting Notes";
+    rightRow.appendChild(buildBtn);
 
-    const body = document.createElement("div");
-    aiNotesBoxEl.appendChild(body);
     renderAiNotesContent(body, session.ai_notes, session.ai_notes_generated_at);
   }
 
@@ -267,18 +373,28 @@
       return;
     }
     summaryBoxEl.hidden = false;
-    summaryBoxEl.innerHTML = "";
-
-    const title = document.createElement("div");
-    title.className = "meeting-box-title";
-    title.textContent = "Meeting summary";
-    summaryBoxEl.appendChild(title);
+    const { rightRow, body } = buildCollapsibleBox(summaryBoxEl, "Meeting summary");
+    if (hasSummary) {
+      rightRow.appendChild(createPdfButton(() => {
+        const lines = [];
+        if (summary.summary) lines.push("## Summary", summary.summary, "");
+        [["Decisions", summary.decisions], ["Action Items", summary.action_items], ["Open Questions", summary.open_questions]]
+          .forEach(([label, items]) => {
+            if (!items || !items.length) return;
+            lines.push(`## ${label}`);
+            items.forEach((i) => lines.push("• " + i));
+            lines.push("");
+          });
+        if (summary.follow_up_email_draft) lines.push("## Follow-Up Email Draft (not sent)", summary.follow_up_email_draft);
+        downloadPdf(pdfFilename(session.title, "Summary"), "Meeting Summary — " + (session.title || ""), lines);
+      }));
+    }
 
     if (summary.summary) {
       const p = document.createElement("p");
       p.className = "meeting-brief-bg";
       p.textContent = summary.summary;
-      summaryBoxEl.appendChild(p);
+      body.appendChild(p);
     }
     [
       ["Decisions", summary.decisions],
@@ -289,21 +405,21 @@
       const lbl = document.createElement("div");
       lbl.className = "meeting-brief-label";
       lbl.textContent = label;
-      summaryBoxEl.appendChild(lbl);
+      body.appendChild(lbl);
       const ul = document.createElement("ul");
       ul.className = "meeting-bullets";
       items.forEach((i) => { const li = document.createElement("li"); li.textContent = i; ul.appendChild(li); });
-      summaryBoxEl.appendChild(ul);
+      body.appendChild(ul);
     });
     if (summary.follow_up_email_draft) {
       const lbl = document.createElement("div");
       lbl.className = "meeting-brief-label";
       lbl.textContent = "Follow-up email draft (not sent — draft only)";
-      summaryBoxEl.appendChild(lbl);
+      body.appendChild(lbl);
       const draft = document.createElement("div");
       draft.className = "meeting-email-draft";
       draft.textContent = summary.follow_up_email_draft;
-      summaryBoxEl.appendChild(draft);
+      body.appendChild(draft);
     }
 
     // Fathom link: show it if present, else a manual-paste fallback — the
@@ -341,7 +457,7 @@
       fathomRow.appendChild(input);
       fathomRow.appendChild(btn);
     }
-    summaryBoxEl.appendChild(fathomRow);
+    body.appendChild(fathomRow);
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -354,6 +470,9 @@
     return d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   }
 
+  // Upcoming cards are deliberately minimal — no inline brief/notes preview.
+  // "Open in Live" is the only way to view them, so this list stays scannable
+  // even once you've prepared a dozen meetings.
   function renderUpcomingCard(e) {
     const card = document.createElement("div");
     card.className = "meeting-upcoming-card";
@@ -375,30 +494,13 @@
     const actions = document.createElement("div");
     actions.className = "meeting-upcoming-actions";
 
-    const briefWrap = document.createElement("div");
-    briefWrap.className = "meeting-brief-inline";
-    briefWrap.hidden = true;
-
-    const aiNotesWrap = document.createElement("div");
-    aiNotesWrap.className = "meeting-brief-inline";
-    aiNotesWrap.hidden = true;
-
-    function setActions(status, sessionId, brief, aiNotes, aiNotesGeneratedAt) {
+    function setActions(status, sessionId) {
       actions.innerHTML = "";
       if (status === "prepared" || status === "active" || status === "ended") {
-        const viewBtn = document.createElement("button");
-        viewBtn.className = "ghost";
-        viewBtn.type = "button";
-        viewBtn.textContent = "View brief";
-        viewBtn.onclick = () => { briefWrap.hidden = !briefWrap.hidden; };
-        actions.appendChild(viewBtn);
-
-        const notesToggle = document.createElement("button");
-        notesToggle.className = "ghost";
-        notesToggle.type = "button";
-        notesToggle.textContent = "AI notes";
-        notesToggle.onclick = () => { aiNotesWrap.hidden = !aiNotesWrap.hidden; };
-        actions.appendChild(notesToggle);
+        const label = document.createElement("span");
+        label.className = "meeting-upcoming-status";
+        label.textContent = status === "ended" ? "Ended" : status === "active" ? "Live" : "Prepared";
+        actions.appendChild(label);
 
         const openBtn = document.createElement("button");
         openBtn.className = "meeting-quick-send";
@@ -406,18 +508,6 @@
         openBtn.textContent = "Open in Live";
         openBtn.onclick = () => { switchSubtab("live"); openSession(sessionId); };
         actions.appendChild(openBtn);
-
-        if (brief) renderBriefContent(briefWrap, brief);
-
-        aiNotesWrap.innerHTML = "";
-        const notesBody = document.createElement("div");
-        const notesBtn = createAiNotesButton(sessionId, HermesBiz.current, e.title, (notes, generatedAt) => {
-          renderAiNotesContent(notesBody, notes, generatedAt);
-        });
-        if (aiNotes) notesBtn.textContent = "Rebuild AI Meeting Notes";
-        aiNotesWrap.appendChild(notesBtn);
-        aiNotesWrap.appendChild(notesBody);
-        renderAiNotesContent(notesBody, aiNotes, aiNotesGeneratedAt);
       } else {
         const prepBtn = document.createElement("button");
         prepBtn.className = "meeting-quick-send";
@@ -437,8 +527,7 @@
             });
             const data = await res.json();
             if (data.error) { alert(data.error); prepBtn.disabled = false; prepBtn.textContent = "Prepare"; return; }
-            briefWrap.hidden = false;
-            setActions("prepared", data.session_id, data.brief);
+            setActions("prepared", data.session_id);
           } catch (err) {
             alert("Couldn't prepare this meeting.");
             prepBtn.disabled = false;
@@ -449,11 +538,9 @@
       }
     }
 
-    setActions(e.session_status, e.session_id, e.brief, e.ai_notes, e.ai_notes_generated_at);
+    setActions(e.session_status, e.session_id);
     head.appendChild(actions);
     card.appendChild(head);
-    card.appendChild(briefWrap);
-    card.appendChild(aiNotesWrap);
     return card;
   }
 
@@ -566,7 +653,7 @@
       if (!feedEl.children.length) {
         feedEl.innerHTML = '<p class="hint meeting-feed-empty" id="meeting-feed-empty">No guidance recorded in this meeting.</p>';
       }
-      renderBriefBox(data.brief);
+      renderBriefBox(data);
       renderAiNotesBox(data);
       renderSummaryBox(data);
       renderSessionsList();
@@ -605,7 +692,7 @@
       const data = await res.json();
       if (!data.error) {
         currentSession = data;
-        renderBriefBox(data.brief);
+        renderBriefBox(data);
         renderAiNotesBox(data);
         renderSummaryBox(data);
         loadSessions();

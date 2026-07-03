@@ -645,11 +645,11 @@ async def list_upcoming_meetings(business: str, days: int = 14):
         matched = by_event_id.get(e["event_id"])
         e["session_id"] = matched["session_id"] if matched else None
         e["session_status"] = matched["status"] if matched else None
-        # Actual content, not just flags — the frontend renders these directly
-        # on page load so "View brief" / "AI notes" work without a re-fetch.
-        e["brief"] = matched.get("brief") if matched else None
-        e["ai_notes"] = matched.get("ai_notes") if matched else None
-        e["ai_notes_generated_at"] = matched.get("ai_notes_generated_at") if matched else None
+        # Content itself (brief/ai_notes) is intentionally NOT sent here — the
+        # Upcoming list only needs status to pick Prepare vs. Open in Live.
+        # Full content loads once, when a specific meeting opens in Live view
+        # (GET /api/meetings/sessions/{id}) — avoids shipping every event's
+        # (potentially large) AI notes on every list load.
 
     return {"business": business, "events": events}
 
