@@ -423,7 +423,7 @@ const openMobileNav  = () => appEl.classList.add("mobile-open");
 const closeMobileNav = () => appEl.classList.remove("mobile-open");
 
 // Wire up every hamburger button (chat topbar + bills topbar)
-["menu-btn", "menu-btn-bills"].forEach((id) => {
+["menu-btn", "menu-btn-bills", "menu-btn-meeting"].forEach((id) => {
   document.getElementById(id)?.addEventListener("click", openMobileNav);
 });
 
@@ -452,6 +452,10 @@ function setView(view) {
   // Lazy-init billing page on first open
   if (view === "bills" && typeof window._billsInit === "function") {
     window._billsInit();
+  }
+  // Lazy-init meeting copilot on first open
+  if (view === "meeting" && typeof window._meetingInit === "function") {
+    window._meetingInit();
   }
 }
 

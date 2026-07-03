@@ -65,8 +65,10 @@ from hermes.db.bills import (
     update_bill,
     upsert_business,
 )
+from hermes.db import meetings as meetings_db
 from hermes.ingest import ingest_document
 from hermes.maton import MatonClient, MatonError
+from hermes.meeting_copilot import get_guidance
 from hermes.memory import store
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
@@ -129,6 +131,16 @@ def _truthy(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _is_uuid(value: str) -> bool:
+    import uuid as _uuid_mod
+
+    try:
+        _uuid_mod.UUID(str(value))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 def _session_key(entity_id: str | None, session_id: str) -> str:
     """Namespace a session by entity so tenants never share conversation memory."""
     eid = (entity_id or "").strip()
@@ -181,7 +193,7 @@ def _asset_version() -> int:
     """A version stamp that changes whenever a static asset changes, so browsers
     fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
     latest = 0.0
-    for name in ("app.js", "style.css", "voice.js"):
+    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js"):
         try:
             latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
         except OSError:
@@ -210,6 +222,55 @@ def index(request: Request):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "problems": Config.validate()}
+
+
+@app.post("/api/admin/migrate")
+async def admin_migrate():
+    """Apply pending SQL migrations (hermes/db/migrations/*.sql).
+
+    Exists because on some deployments (e.g. serverless platforms like
+    Vercel) the database is only reachable from inside the platform's own
+    network — the same place this endpoint runs — so this is the working
+    path to apply a new migration, not a local `scripts/init_db.py` run from
+    somewhere that may have no route to the DB at all. Idempotent: every
+    migration uses CREATE TABLE IF NOT EXISTS / DO $$ ... EXCEPTION
+    duplicate_object, and applied filenames are tracked in
+    schema_migrations so pending work is computed correctly on every call.
+    """
+    from pathlib import Path
+
+    from hermes.db import cursor
+
+    def _run() -> dict:
+        migrations_dir = Path(__file__).resolve().parent / "hermes" / "db" / "migrations"
+        files = sorted(migrations_dir.glob("*.sql"))
+        if not files:
+            return {"error": f"No .sql files found under {migrations_dir}"}
+        with cursor() as cur:
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations "
+                "(filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());"
+            )
+            cur.execute("SELECT filename FROM schema_migrations;")
+            done = {row[0] for row in cur.fetchall()}
+            applied = []
+            for f in files:
+                if f.name in done:
+                    continue
+                cur.execute(f.read_text(encoding="utf-8"))
+                cur.execute(
+                    "INSERT INTO schema_migrations (filename) VALUES (%s);", (f.name,)
+                )
+                applied.append(f.name)
+        return {"applied": applied, "already_done": sorted(done)}
+
+    try:
+        result = await run_in_threadpool(_run)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    if "error" in result:
+        return JSONResponse(result, status_code=500)
+    return result
 
 
 @app.post("/api/chat")
@@ -459,6 +520,115 @@ async def search(
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": f"Search failed: {exc}"}, status_code=502)
     return {"entity_id": entity_id, "query": q, "results": results}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Meeting Copilot — private, real-time guidance during a live meeting
+# ════════════════════════════════════════════════════════════════════════════
+# Grounded ONLY in what the ingestion pipeline already read ahead of time
+# (Pinecone + Postgres) — never scans Gmail/Drive live, never speaks in the
+# meeting, never sends anything. One semantic search + one Claude call, so it
+# stays fast enough to use while actively talking.
+
+class MeetingCopilotRequest(BaseModel):
+    business: str                    # business slug, e.g. "nh" — required, always scoped
+    latest_text: str = ""            # what was just said (typed or transcribed)
+    notes_so_far: str = ""           # running transcript/notes for extra context
+    top_k: int = 6
+    session_id: str | None = None    # continue an existing meeting; omit to start one
+
+
+@app.post("/api/meetings/copilot")
+async def meeting_copilot(body: MeetingCopilotRequest):
+    """Return short, private, bullet-point guidance for the live meeting, and
+    persist the turn (heard text + bullets + sources) to history — same
+    pattern as chat's conversation history, so past meetings are retrievable.
+
+    JSON body: business (required, a specific business — "all" isn't allowed
+    here), latest_text (what was just said), notes_so_far (running transcript),
+    top_k (retrieval depth), session_id (optional — omit to auto-create one on
+    the first turn; the response echoes the authoritative id either way).
+    Response: {business, session_id, bullets: [...], sources: [...]}.
+    """
+    business = (body.business or "").strip()
+    if not business or business == "all":
+        return JSONResponse(
+            {"error": "A specific business is required — the copilot can't run in 'All Businesses' mode."},
+            status_code=400,
+        )
+    entity_slug = to_entity_slug(business)
+    if not entity_slug:
+        return JSONResponse({"error": f"Unknown or unmapped business '{business}'."}, status_code=400)
+    if not (body.latest_text or body.notes_so_far):
+        return JSONResponse({"error": "Provide latest_text or notes_so_far."}, status_code=400)
+
+    businesses = await run_in_threadpool(list_businesses)
+    biz = next((b for b in businesses if b.get("slug") == business), None)
+    business_name = (biz or {}).get("name") or business
+
+    try:
+        result = await run_in_threadpool(
+            get_guidance,
+            entity_id=entity_slug,
+            business_name=business_name,
+            latest_text=body.latest_text,
+            notes_so_far=body.notes_so_far,
+            top_k=body.top_k,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Copilot error: {exc}"}, status_code=500)
+
+    # Persist to history. A DB hiccup here must never fail the live turn —
+    # the guidance above already succeeded and is what the user is waiting on.
+    session_id = body.session_id
+    if not session_id or not _is_uuid(session_id):
+        session_id = await run_in_threadpool(
+            meetings_db.create_session, entity_slug, (body.latest_text or "").strip()[:60] or None,
+        )
+    if session_id:
+        await run_in_threadpool(
+            meetings_db.add_turn,
+            session_id,
+            heard_text=body.latest_text or None,
+            bullets=result.get("bullets") or [],
+            sources=result.get("sources") or [],
+        )
+
+    return {"business": business, "session_id": session_id, **result}
+
+
+# ── Meeting history (list / reopen / end / delete past meetings) ───────────
+
+@app.get("/api/meetings/sessions")
+async def list_meeting_sessions(business: str | None = None):
+    """List past meeting sessions (newest first) for the history sidebar.
+    Pass `business` to scope to one business; omit for every business."""
+    entity_slug = to_entity_slug(business) if business else None
+    result = await run_in_threadpool(meetings_db.sessions, entity_slug)
+    return {"sessions": result, "business": business}
+
+
+@app.get("/api/meetings/sessions/{session_id}")
+async def get_meeting_session(session_id: str):
+    """Full replay of one meeting: its metadata + every turn, in order."""
+    result = await run_in_threadpool(meetings_db.transcript, session_id)
+    if result is None:
+        return JSONResponse({"error": "Meeting not found."}, status_code=404)
+    return result
+
+
+@app.post("/api/meetings/sessions/{session_id}/end")
+async def end_meeting_session(session_id: str):
+    await run_in_threadpool(meetings_db.end_session, session_id)
+    return {"session_id": session_id, "status": "ended"}
+
+
+@app.delete("/api/meetings/sessions/{session_id}")
+async def delete_meeting_session(session_id: str):
+    ok = await run_in_threadpool(meetings_db.delete_session, session_id)
+    if not ok:
+        return JSONResponse({"error": "Meeting not found."}, status_code=404)
+    return {"session_id": session_id, "status": "deleted"}
 
 
 class ConnectionRequest(BaseModel):

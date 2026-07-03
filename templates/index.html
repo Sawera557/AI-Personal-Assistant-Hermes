@@ -47,6 +47,15 @@
             </svg>
             <span>Billing</span>
           </button>
+          <button class="strip-tab" type="button" data-view="meeting" title="Meeting Copilot">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            <span>Meeting</span>
+          </button>
         </div>
 
         <button class="strip-toggle" id="strip-toggle" type="button" title="Toggle sidebar">
@@ -158,6 +167,31 @@
             <div class="status-chip">
               <span class="status-dot"></span>Coming soon
             </div>
+          </div>
+        </div>
+
+        <!-- Meeting Copilot panel: sidebar metadata for the Meeting section -->
+        <div class="panel-section" id="panel-meeting">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-meeting" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-meeting" hidden></p>
+          </div>
+
+          <button id="meeting-new-btn" class="ghost new-convo">＋ New meeting</button>
+
+          <div class="panel history-panel">
+            <h2>Past Meetings</h2>
+            <div class="convo-search">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input id="meeting-search-input" type="search" placeholder="Search meetings…" autocomplete="off" aria-label="Search meetings" />
+            </div>
+            <ul class="convos" id="meeting-sessions"></ul>
+            <p class="hint" id="meeting-sessions-empty">No meetings yet for this business.</p>
+          </div>
+
+          <div class="panel push-bottom">
+            <p class="hint">Guidance is grounded only in what's already been indexed for the selected business — nothing invented, every claim sourced.</p>
           </div>
         </div>
 
@@ -301,6 +335,73 @@
 
     </main>
 
+    <!-- ── Main area: Meeting Copilot ──────────────────────────────── -->
+    <main class="meeting-view" id="meeting-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-meeting" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(59,130,246,.18);font-size:15px;">🎙</span> Meeting Copilot</div>
+        <button class="icon-btn meeting-listen-btn-m" id="meeting-listen-btn-m" aria-label="Start listening" title="Start listening" style="margin-left:auto">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+      </header>
+
+      <div class="meeting-page" id="meeting-page">
+
+        <!-- Not-connected notice: meeting copilot always needs ONE specific business -->
+        <div class="meeting-need-biz" id="meeting-need-biz" hidden>
+          <div class="meeting-need-biz-card">
+            <div style="font-size:26px">🏢</div>
+            <h3>Pick a business to start</h3>
+            <p class="hint">The meeting copilot is always scoped to one business — select it from the sidebar (or the dropdown above on mobile) so guidance stays grounded in the right records.</p>
+          </div>
+        </div>
+
+        <div class="meeting-main" id="meeting-main">
+          <!-- Page header -->
+          <div class="bills-pg-header">
+            <div>
+              <h2 class="bills-pg-title">Meeting Copilot</h2>
+              <p class="bills-pg-sub" id="meeting-biz-sub">Private guidance grounded in your indexed records</p>
+            </div>
+            <button class="bills-upload-btn meeting-listen-btn" id="meeting-listen-btn" type="button">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              <span id="meeting-listen-label">Start Listening</span>
+            </button>
+          </div>
+
+          <!-- Two-column layout: notes/transcript (left) + guidance feed (right) -->
+          <div class="meeting-grid">
+
+            <div class="meeting-col meeting-notes-col">
+              <div class="meeting-col-head">
+                <span>Notes &amp; Transcript</span>
+                <span class="meeting-status" id="meeting-status">Not listening</span>
+              </div>
+              <textarea id="meeting-notes" class="meeting-notes" placeholder="Type notes here, or press Start Listening to transcribe the meeting as it happens…"></textarea>
+              <div class="meeting-notes-row">
+                <input id="meeting-quick-input" class="meeting-quick-input" placeholder="Or type one line and press Enter to ask the copilot right now…" autocomplete="off" />
+                <button id="meeting-quick-send" class="meeting-quick-send" type="button" title="Ask copilot">Ask</button>
+              </div>
+            </div>
+
+            <div class="meeting-col meeting-guidance-col">
+              <div class="meeting-col-head">
+                <span>Guidance</span>
+                <span class="hint" style="margin:0">Private — only you see this</span>
+              </div>
+              <div class="meeting-feed" id="meeting-feed">
+                <p class="hint meeting-feed-empty" id="meeting-feed-empty">Guidance will appear here as the meeting happens — grounded in this business's own emails and files, with sources cited.</p>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </main>
+
   </div><!-- /app -->
 
   {% if voice_enabled %}
@@ -328,6 +429,7 @@
   <script src="/static/business.js?v={{ v }}"></script>
   <script src="/static/app.js?v={{ v }}"></script>
   <script src="/static/bills.js?v={{ v }}"></script>
+  <script src="/static/meeting.js?v={{ v }}"></script>
   {% if voice_enabled %}<script src="/static/voice.js?v={{ v }}"></script>{% endif %}
 </body>
 </html>
