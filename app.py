@@ -51,7 +51,9 @@ from hermes.agent import run_turn
 from hermes.attachments import store as attachment_store
 from hermes.bills import check_paid_bills, extract_bill, fetch_gmail_body, guess_business, scan_drive, scan_gmail
 from hermes.businesses import to_business_slug, to_entity_slug
+from hermes import calendar as hermes_calendar
 from hermes.config import Config
+from hermes.fathom import find_recording_link as find_fathom_link
 from hermes import storage as s3
 from hermes.db.bills import (
     _BILL_NOT_FOUND,
@@ -68,7 +70,7 @@ from hermes.db.bills import (
 from hermes.db import meetings as meetings_db
 from hermes.ingest import ingest_document
 from hermes.maton import MatonClient, MatonError
-from hermes.meeting_copilot import get_guidance
+from hermes.meeting_copilot import get_guidance, prepare_brief, summarize_meeting
 from hermes.memory import store
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
@@ -597,20 +599,116 @@ async def meeting_copilot(body: MeetingCopilotRequest):
     return {"business": business, "session_id": session_id, **result}
 
 
-# ── Meeting history (list / reopen / end / delete past meetings) ───────────
+# ── Meeting history (list / reopen / delete meetings) ──────────────────────
 
 @app.get("/api/meetings/sessions")
-async def list_meeting_sessions(business: str | None = None):
-    """List past meeting sessions (newest first) for the history sidebar.
-    Pass `business` to scope to one business; omit for every business."""
+async def list_meeting_sessions(business: str | None = None, statuses: str | None = None):
+    """List meeting sessions (newest-first) for the history sidebar.
+
+    Pass `business` to scope to one business; omit for every business.
+    Pass `statuses` as a comma-separated list (e.g. "scheduled,prepared") to
+    scope to a lifecycle stage — the Upcoming view uses this; the plain
+    history sidebar omits it and gets everything except deleted.
+    """
     entity_slug = to_entity_slug(business) if business else None
-    result = await run_in_threadpool(meetings_db.sessions, entity_slug)
+    status_list = [s.strip() for s in statuses.split(",")] if statuses else None
+    result = await run_in_threadpool(
+        meetings_db.sessions, entity_slug, statuses=status_list,
+    )
     return {"sessions": result, "business": business}
+
+
+@app.get("/api/meetings/upcoming")
+async def list_upcoming_meetings(business: str, days: int = 14):
+    """Upcoming events on `business`'s calendar, each annotated with its
+    meeting-copilot status (none / scheduled / prepared / ...) if one exists,
+    so the UI can show "Prepare" vs "Prepared — view brief" per event."""
+    business = (business or "").strip()
+    if not business or business == "all":
+        return JSONResponse(
+            {"error": "A specific business is required."}, status_code=400,
+        )
+    try:
+        events = await run_in_threadpool(hermes_calendar.list_upcoming, business, days)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+    entity_slug = to_entity_slug(business)
+    existing = await run_in_threadpool(
+        meetings_db.sessions, entity_slug,
+        statuses=["scheduled", "prepared", "active", "ended"], newest_first=False,
+    )
+    by_event_id = {s.get("calendar_event_id"): s for s in existing if s.get("calendar_event_id")}
+    for e in events:
+        matched = by_event_id.get(e["event_id"])
+        e["session_id"] = matched["session_id"] if matched else None
+        e["session_status"] = matched["status"] if matched else None
+        e["has_brief"] = bool(matched and matched.get("brief", {}).get("background"))
+
+    return {"business": business, "events": events}
+
+
+class MeetingPrepareRequest(BaseModel):
+    business: str
+    event_id: str
+    title: str
+    start: str | None = None    # ISO timestamp from the calendar event
+    description: str | None = None
+    attendees: list[dict] = []
+
+
+@app.post("/api/meetings/prepare")
+async def prepare_meeting(body: MeetingPrepareRequest):
+    """Generate an AI pre-meeting brief for a calendar event: background,
+    must-ask questions, risks, and links to relevant already-indexed files.
+    Creates (or reuses) the session for this event, idempotently."""
+    business = (body.business or "").strip()
+    if not business or business == "all":
+        return JSONResponse({"error": "A specific business is required."}, status_code=400)
+    entity_slug = to_entity_slug(business)
+    if not entity_slug:
+        return JSONResponse({"error": f"Unknown or unmapped business '{business}'."}, status_code=400)
+
+    session_id = await run_in_threadpool(
+        meetings_db.upsert_scheduled,
+        entity_slug,
+        calendar_event_id=body.event_id,
+        title=body.title,
+        scheduled_at=body.start,
+        attendees=body.attendees,
+    )
+    if not session_id:
+        return JSONResponse({"error": "Could not create a session for this meeting."}, status_code=500)
+
+    businesses = await run_in_threadpool(list_businesses)
+    biz = next((b for b in businesses if b.get("slug") == business), None)
+    business_name = (biz or {}).get("name") or business
+
+    try:
+        result = await run_in_threadpool(
+            prepare_brief,
+            entity_id=entity_slug,
+            business_name=business_name,
+            meeting_title=body.title,
+            attendees=body.attendees,
+            description=body.description,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Brief generation failed: {exc}"}, status_code=500)
+
+    await run_in_threadpool(
+        meetings_db.save_brief, session_id, brief=result["brief"], sources=result["sources"],
+    )
+    full = await run_in_threadpool(meetings_db.transcript, session_id)
+    return full or {"session_id": session_id, **result}
 
 
 @app.get("/api/meetings/sessions/{session_id}")
 async def get_meeting_session(session_id: str):
-    """Full replay of one meeting: its metadata + every turn, in order."""
+    """Full replay of one meeting: its metadata (brief/summary/fathom link/
+    attendees) + every turn, in order."""
     result = await run_in_threadpool(meetings_db.transcript, session_id)
     if result is None:
         return JSONResponse({"error": "Meeting not found."}, status_code=404)
@@ -619,8 +717,58 @@ async def get_meeting_session(session_id: str):
 
 @app.post("/api/meetings/sessions/{session_id}/end")
 async def end_meeting_session(session_id: str):
-    await run_in_threadpool(meetings_db.end_session, session_id)
-    return {"session_id": session_id, "status": "ended"}
+    """End a meeting: generate the AI post-meeting summary from its captured
+    turns, and best-effort attach a Fathom recording link if one can be found.
+    Both degrade gracefully — ending always succeeds even if either fails."""
+    existing = await run_in_threadpool(meetings_db.transcript, session_id)
+    if existing is None:
+        return JSONResponse({"error": "Meeting not found."}, status_code=404)
+
+    business_slug = existing.get("business")
+    business_name = existing.get("title") or "this business"
+    if business_slug:
+        businesses = await run_in_threadpool(list_businesses)
+        biz = next((b for b in businesses if b.get("slug") == business_slug), None)
+        if biz and biz.get("name"):
+            business_name = biz["name"]
+
+    try:
+        summary = await run_in_threadpool(
+            summarize_meeting, business_name=business_name, turns=existing.get("turns") or [],
+        )
+        await run_in_threadpool(meetings_db.save_summary, session_id, summary)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("end_meeting_session: summarize failed for %s: %s", session_id, exc)
+        await run_in_threadpool(meetings_db.end_session, session_id)  # still mark ended
+        summary = None
+
+    fathom_url = existing.get("fathom_url")
+    if not fathom_url and business_slug:
+        try:
+            fathom_url = await run_in_threadpool(
+                find_fathom_link, business_slug, title_hint=existing.get("title"),
+            )
+            if fathom_url:
+                await run_in_threadpool(meetings_db.save_fathom_url, session_id, fathom_url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("end_meeting_session: fathom lookup failed for %s: %s", session_id, exc)
+
+    full = await run_in_threadpool(meetings_db.transcript, session_id)
+    return full or {"session_id": session_id, "status": "ended", "summary": summary, "fathom_url": fathom_url}
+
+
+class FathomLinkRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/meetings/sessions/{session_id}/fathom")
+async def set_meeting_fathom_link(session_id: str, body: FathomLinkRequest):
+    """Manually attach a Fathom recording link — the fallback when auto-fetch
+    (attempted in the /end endpoint) doesn't find one, or to correct it."""
+    ok = await run_in_threadpool(meetings_db.save_fathom_url, session_id, body.url)
+    if not ok:
+        return JSONResponse({"error": "Meeting not found or URL was empty."}, status_code=404)
+    return {"session_id": session_id, "fathom_url": body.url.strip()}
 
 
 @app.delete("/api/meetings/sessions/{session_id}")

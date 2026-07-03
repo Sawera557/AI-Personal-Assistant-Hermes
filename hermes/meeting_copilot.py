@@ -11,6 +11,9 @@ ingestion), so the live moment only has to check what's already on the shelf.
 """
 from __future__ import annotations
 
+import json
+import re
+
 import anthropic
 
 from .config import Config
@@ -129,13 +132,155 @@ def get_guidance(
 
     return {
         "bullets": bullets or ([text.strip()] if text.strip() else []),
-        "sources": [
-            {
-                "title": h.get("title"),
-                "source_system": h.get("source_system"),
-                "score": h.get("score"),
-                "download_url": h.get("download_url"),
-            }
-            for h in hits
-        ],
+        "sources": _sources_of(hits),
     }
+
+
+def _sources_of(hits: list[dict]) -> list[dict]:
+    return [
+        {
+            "title": h.get("title"),
+            "source_system": h.get("source_system"),
+            "score": h.get("score"),
+            "download_url": h.get("download_url"),
+        }
+        for h in hits
+    ]
+
+
+def _call_claude_json(*, system: str, user_message: str, max_tokens: int, fallback_key: str) -> dict:
+    """Call Claude expecting a JSON object back. Tolerates a stray ```json
+    fence around the object (models do this despite instructions not to).
+    On any parse failure, degrades to {fallback_key: <raw text>} rather than
+    raising — a malformed brief/summary is still better than a crashed turn."""
+    client = _anthropic()
+    resp = client.messages.create(
+        model=Config.MODEL,
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": user_message}],
+    )
+    text = "".join(
+        getattr(block, "text", "") for block in resp.content
+        if getattr(block, "type", None) == "text"
+    ).strip()
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+    return {fallback_key: text}
+
+
+_BRIEF_SYSTEM_TEMPLATE = """You are Gandi's private meeting-preparation assistant for \
+{business_name}. You are producing a brief he'll read privately before the meeting starts.
+
+Given the meeting details and the retrieved records below (real emails, files, and notes \
+from {business_name}'s own history), write a short prep brief.
+
+Respond with ONLY a single JSON object, no other text, in exactly this shape:
+{{
+  "background": "2-4 sentence background on this meeting, the attendees, and relevant \
+business context, grounded only in the retrieved records below",
+  "must_ask_questions": ["short specific question", "..."],
+  "risks": ["short risk or thing to watch for", "..."],
+  "key_facts": ["short factual point worth having in mind, with its source in parentheses", "..."]
+}}
+
+Rules:
+- Ground every claim in the retrieved records. If they don't cover something relevant \
+(e.g. pricing, scope, prior commitments), say so plainly in that field rather than guessing.
+- Keep every list short (2-5 items) and every item under 30 words.
+- If the retrieved records are empty or unrelated, say so in "background" and leave the \
+other lists mostly empty rather than inventing generic meeting advice.
+
+RETRIEVED RECORDS (from {business_name}'s own indexed emails/files):
+{context}
+"""
+
+
+def prepare_brief(
+    *,
+    entity_id: str,
+    business_name: str,
+    meeting_title: str,
+    attendees: list[dict] | None = None,
+    description: str | None = None,
+    top_k: int = 8,
+    max_sensitivity: str = "confidential",
+) -> dict:
+    """Generate a pre-meeting brief: background, must-ask questions, risks,
+    key facts — plus the sources it drew on. Read-only, same grounding rule
+    as get_guidance: only what's already indexed, nothing invented."""
+    attendee_names = ", ".join(
+        a.get("name") or a.get("email") or "" for a in (attendees or []) if a.get("name") or a.get("email")
+    )
+    query = " ".join(p for p in (meeting_title, attendee_names, description or "") if p).strip()
+    hits: list[dict] = []
+    if query:
+        try:
+            hits = semantic_search(entity_id, query, max_sensitivity=max_sensitivity, top_k=top_k)
+        except Exception:
+            hits = []
+
+    system = _BRIEF_SYSTEM_TEMPLATE.format(business_name=business_name, context=_format_context(hits))
+    user_message = f"Meeting: {meeting_title}\nAttendees: {attendee_names or 'unknown'}"
+    if description:
+        user_message += f"\nDescription: {description}"
+
+    brief = _call_claude_json(
+        system=system, user_message=user_message, max_tokens=900, fallback_key="background",
+    )
+    brief.setdefault("background", "")
+    brief.setdefault("must_ask_questions", [])
+    brief.setdefault("risks", [])
+    brief.setdefault("key_facts", [])
+    return {"brief": brief, "sources": _sources_of(hits)}
+
+
+_SUMMARY_SYSTEM_TEMPLATE = """You are summarizing a meeting that just happened for \
+{business_name}, from Gandi's own live notes/transcript taken during it.
+
+Respond with ONLY a single JSON object, no other text, in exactly this shape:
+{{
+  "summary": "2-4 sentence summary of what the meeting covered",
+  "decisions": ["decision made", "..."],
+  "action_items": ["action item, with owner if known", "..."],
+  "open_questions": ["question left unresolved", "..."],
+  "follow_up_email_draft": "a short, plain draft follow-up email — DRAFT ONLY, never sent automatically"
+}}
+
+Rules:
+- Base this ONLY on the notes/transcript given below. Do not invent decisions, commitments, \
+or facts that aren't in the notes.
+- If the notes are too thin to identify decisions/action items/open questions, leave those \
+lists empty rather than padding with generic content.
+- Keep the summary and email draft concise — this is a working note, not a formal report.
+"""
+
+
+def summarize_meeting(*, business_name: str, turns: list[dict]) -> dict:
+    """Post-meeting summary from the turns already captured live. Read-only —
+    the follow-up email is always a draft; nothing here sends anything."""
+    lines = [t.get("heard_text") for t in (turns or []) if t.get("heard_text")]
+    transcript = "\n".join(f"- {line}" for line in lines)
+    if not transcript.strip():
+        return {
+            "summary": "No notes were captured during this meeting.",
+            "decisions": [], "action_items": [], "open_questions": [],
+            "follow_up_email_draft": "",
+        }
+
+    system = _SUMMARY_SYSTEM_TEMPLATE.format(business_name=business_name)
+    user_message = f"Meeting notes/transcript (in order):\n{transcript}"
+
+    summary = _call_claude_json(
+        system=system, user_message=user_message, max_tokens=900, fallback_key="summary",
+    )
+    summary.setdefault("summary", "")
+    summary.setdefault("decisions", [])
+    summary.setdefault("action_items", [])
+    summary.setdefault("open_questions", [])
+    summary.setdefault("follow_up_email_draft", "")
+    return summary

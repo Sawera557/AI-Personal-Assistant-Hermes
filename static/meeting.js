@@ -1,9 +1,14 @@
-// Meeting Copilot — private, real-time guidance during a live meeting.
+// Meeting Copilot — private, real-time guidance during a live meeting, plus
+// AI-prepared briefs for upcoming meetings and AI summaries for past ones.
 //
-// Flow while "listening":
-//   mic --(VAD detects a pause)--> /api/voice/transcribe --> append to notes
+// Three moments this file covers:
+//   Upcoming: calendar events -> "Prepare" -> AI brief (background, must-ask
+//     questions, risks, links to relevant already-indexed files).
+//   Live: mic --(VAD pause)--> /api/voice/transcribe --> append to notes
 //     --> /api/meetings/copilot (grounded in this business's own indexed
 //         emails/files) --> render bullet-point guidance --> keep listening.
+//   Ended: "End meeting" -> AI summary (decisions, action items, follow-up
+//     draft) + best-effort Fathom recording link (manual fallback if not found).
 //
 // Never speaks, never sends anything, never joins/records the actual meeting
 // platform — this only listens to what's ALREADY audible in the room (or
@@ -26,13 +31,31 @@
   const sessionsEl = document.getElementById("meeting-sessions");
   const sessionsEmptyEl = document.getElementById("meeting-sessions-empty");
   const searchInput = document.getElementById("meeting-search-input");
+  const subtabBtns = document.querySelectorAll(".meeting-subtab");
+  const subUpcomingEl = document.getElementById("meeting-sub-upcoming");
+  const subLiveEl = document.getElementById("meeting-sub-live");
+  const upcomingListEl = document.getElementById("meeting-upcoming-list");
+  const upcomingEmptyEl = document.getElementById("meeting-upcoming-empty");
+  const briefBoxEl = document.getElementById("meeting-brief-box");
+  const summaryBoxEl = document.getElementById("meeting-summary-box");
+  const endBtn = document.getElementById("meeting-end-btn");
 
   if (!listenBtn || !notesEl || !feedEl) return; // page not present
 
   let initialized = false;
   let listening = false;
   let currentSessionId = null;
+  let currentSession = null; // full session dict (brief/summary/fathom/status)
   let sessionQuery = "";
+
+  // ---- Sub-tabs: Upcoming (calendar + briefs) / Live (one meeting) --------
+  function switchSubtab(name) {
+    subtabBtns.forEach((b) => b.classList.toggle("active", b.dataset.sub === name));
+    if (subUpcomingEl) subUpcomingEl.hidden = name !== "upcoming";
+    if (subLiveEl) subLiveEl.hidden = name !== "live";
+    if (name === "upcoming") loadUpcoming();
+  }
+  subtabBtns.forEach((b) => b.addEventListener("click", () => switchSubtab(b.dataset.sub)));
 
   // ---- Business gating: this feature always needs ONE specific business ----
   // A meeting is always locked to one business (server enforces this too), so
@@ -54,6 +77,7 @@
       lastBiz = biz;
       resetMeetingState();
       loadSessions();
+      if (isSpecific) loadUpcoming();
     }
   }
 
@@ -69,15 +93,286 @@
   // ---- New meeting / reset ----
   function resetMeetingState() {
     currentSessionId = null;
+    currentSession = null;
     notesEl.value = "";
     feedEl.innerHTML = '<p class="hint meeting-feed-empty" id="meeting-feed-empty">Guidance will appear here as the meeting happens — grounded in this business\'s own emails and files, with sources cited.</p>';
     if (statusEl) statusEl.textContent = listening ? "Listening…" : "Not listening";
+    if (briefBoxEl) { briefBoxEl.hidden = true; briefBoxEl.innerHTML = ""; }
+    if (summaryBoxEl) { summaryBoxEl.hidden = true; summaryBoxEl.innerHTML = ""; }
     renderSessionsList(); // just re-highlight active (none) — list itself unchanged
   }
   newBtn?.addEventListener("click", () => {
     if (listening) stopListening();
     resetMeetingState();
+    switchSubtab("live");
   });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Shared rendering: a brief's content (background / questions / risks /
+  // facts / sources) — used both inline on an Upcoming card and in the Live
+  // view's brief box, so the two never drift out of sync.
+  // ══════════════════════════════════════════════════════════════════════
+  function renderBriefContent(container, brief) {
+    container.innerHTML = "";
+    brief = brief || {};
+    if (brief.background) {
+      const p = document.createElement("p");
+      p.className = "meeting-brief-bg";
+      p.textContent = brief.background;
+      container.appendChild(p);
+    }
+    [
+      ["Must-ask questions", brief.must_ask_questions],
+      ["Risks", brief.risks],
+      ["Key facts", brief.key_facts],
+    ].forEach(([label, items]) => {
+      if (!items || !items.length) return;
+      const lbl = document.createElement("div");
+      lbl.className = "meeting-brief-label";
+      lbl.textContent = label;
+      container.appendChild(lbl);
+      const ul = document.createElement("ul");
+      ul.className = "meeting-bullets";
+      items.forEach((i) => { const li = document.createElement("li"); li.textContent = i; ul.appendChild(li); });
+      container.appendChild(ul);
+    });
+    const sources = brief.sources || [];
+    if (sources.length) {
+      const srcRow = document.createElement("div");
+      srcRow.className = "meeting-sources";
+      sources.slice(0, 6).forEach((s) => {
+        const chip = document.createElement(s.download_url ? "a" : "span");
+        chip.className = "meeting-source-chip";
+        chip.textContent = `${s.source_system || "record"}: ${(s.title || "untitled").slice(0, 34)}`;
+        if (s.download_url) { chip.href = s.download_url; chip.target = "_blank"; chip.rel = "noopener"; }
+        srcRow.appendChild(chip);
+      });
+      container.appendChild(srcRow);
+    }
+    if (!brief.background && !sources.length) {
+      container.innerHTML = '<p class="hint" style="margin:0">No brief yet.</p>';
+    }
+  }
+
+  function renderBriefBox(brief) {
+    if (!briefBoxEl) return;
+    const hasContent = brief && (brief.background || (brief.sources || []).length);
+    if (!hasContent) { briefBoxEl.hidden = true; briefBoxEl.innerHTML = ""; return; }
+    briefBoxEl.hidden = false;
+    const title = document.createElement("div");
+    title.className = "meeting-box-title";
+    title.textContent = "Pre-meeting brief";
+    briefBoxEl.innerHTML = "";
+    briefBoxEl.appendChild(title);
+    const body = document.createElement("div");
+    briefBoxEl.appendChild(body);
+    renderBriefContent(body, brief);
+  }
+
+  function renderSummaryBox(session) {
+    if (!summaryBoxEl) return;
+    const summary = session.agenda_summary || {};
+    const hasSummary = summary.summary || (summary.decisions || []).length || (summary.action_items || []).length;
+    if (session.status !== "ended" && !hasSummary && !session.fathom_url) {
+      summaryBoxEl.hidden = true;
+      summaryBoxEl.innerHTML = "";
+      return;
+    }
+    summaryBoxEl.hidden = false;
+    summaryBoxEl.innerHTML = "";
+
+    const title = document.createElement("div");
+    title.className = "meeting-box-title";
+    title.textContent = "Meeting summary";
+    summaryBoxEl.appendChild(title);
+
+    if (summary.summary) {
+      const p = document.createElement("p");
+      p.className = "meeting-brief-bg";
+      p.textContent = summary.summary;
+      summaryBoxEl.appendChild(p);
+    }
+    [
+      ["Decisions", summary.decisions],
+      ["Action items", summary.action_items],
+      ["Open questions", summary.open_questions],
+    ].forEach(([label, items]) => {
+      if (!items || !items.length) return;
+      const lbl = document.createElement("div");
+      lbl.className = "meeting-brief-label";
+      lbl.textContent = label;
+      summaryBoxEl.appendChild(lbl);
+      const ul = document.createElement("ul");
+      ul.className = "meeting-bullets";
+      items.forEach((i) => { const li = document.createElement("li"); li.textContent = i; ul.appendChild(li); });
+      summaryBoxEl.appendChild(ul);
+    });
+    if (summary.follow_up_email_draft) {
+      const lbl = document.createElement("div");
+      lbl.className = "meeting-brief-label";
+      lbl.textContent = "Follow-up email draft (not sent — draft only)";
+      summaryBoxEl.appendChild(lbl);
+      const draft = document.createElement("div");
+      draft.className = "meeting-email-draft";
+      draft.textContent = summary.follow_up_email_draft;
+      summaryBoxEl.appendChild(draft);
+    }
+
+    // Fathom link: show it if present, else a manual-paste fallback — the
+    // auto-fetch attempted server-side in /end may not have found one.
+    const fathomRow = document.createElement("div");
+    fathomRow.className = "meeting-fathom-row";
+    if (session.fathom_url) {
+      const link = document.createElement("a");
+      link.href = session.fathom_url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.className = "meeting-fathom-link";
+      link.textContent = "▶ Fathom recording";
+      fathomRow.appendChild(link);
+    } else {
+      const input = document.createElement("input");
+      input.className = "meeting-quick-input";
+      input.placeholder = "No Fathom link found — paste it here…";
+      const btn = document.createElement("button");
+      btn.className = "meeting-quick-send";
+      btn.textContent = "Save";
+      btn.onclick = async () => {
+        const url = (input.value || "").trim();
+        if (!url) return;
+        try {
+          const res = await fetch(`/api/meetings/sessions/${encodeURIComponent(session.session_id)}/fathom`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url }),
+          });
+          const data = await res.json();
+          if (!data.error) { session.fathom_url = data.fathom_url; renderSummaryBox(session); }
+        } catch (_) { /* ignore */ }
+      };
+      fathomRow.appendChild(input);
+      fathomRow.appendChild(btn);
+    }
+    summaryBoxEl.appendChild(fathomRow);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Upcoming: calendar events + "Prepare" -> AI brief
+  // ══════════════════════════════════════════════════════════════════════
+  function fmtEventTime(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function renderUpcomingCard(e) {
+    const card = document.createElement("div");
+    card.className = "meeting-upcoming-card";
+
+    const head = document.createElement("div");
+    head.className = "meeting-upcoming-head";
+    const info = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "meeting-upcoming-title";
+    title.textContent = e.title;
+    const meta = document.createElement("div");
+    meta.className = "meeting-upcoming-time";
+    const attendeeCount = (e.attendees || []).length;
+    meta.textContent = fmtEventTime(e.start) + (attendeeCount ? ` · ${attendeeCount} attendee${attendeeCount === 1 ? "" : "s"}` : "");
+    info.appendChild(title);
+    info.appendChild(meta);
+    head.appendChild(info);
+
+    const actions = document.createElement("div");
+    actions.className = "meeting-upcoming-actions";
+
+    const briefWrap = document.createElement("div");
+    briefWrap.className = "meeting-brief-inline";
+    briefWrap.hidden = true;
+
+    function setActions(status, sessionId, brief) {
+      actions.innerHTML = "";
+      if (status === "prepared" || status === "active" || status === "ended") {
+        const viewBtn = document.createElement("button");
+        viewBtn.className = "ghost";
+        viewBtn.type = "button";
+        viewBtn.textContent = "View brief";
+        viewBtn.onclick = () => { briefWrap.hidden = !briefWrap.hidden; };
+        actions.appendChild(viewBtn);
+
+        const openBtn = document.createElement("button");
+        openBtn.className = "meeting-quick-send";
+        openBtn.type = "button";
+        openBtn.textContent = "Open in Live";
+        openBtn.onclick = () => { switchSubtab("live"); openSession(sessionId); };
+        actions.appendChild(openBtn);
+
+        if (brief) renderBriefContent(briefWrap, brief);
+      } else {
+        const prepBtn = document.createElement("button");
+        prepBtn.className = "meeting-quick-send";
+        prepBtn.type = "button";
+        prepBtn.textContent = "Prepare";
+        prepBtn.onclick = async () => {
+          prepBtn.disabled = true;
+          prepBtn.textContent = "Preparing…";
+          try {
+            const res = await fetch("/api/meetings/prepare", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                business: HermesBiz.current, event_id: e.event_id, title: e.title,
+                start: e.start, description: e.description, attendees: e.attendees || [],
+              }),
+            });
+            const data = await res.json();
+            if (data.error) { alert(data.error); prepBtn.disabled = false; prepBtn.textContent = "Prepare"; return; }
+            briefWrap.hidden = false;
+            setActions("prepared", data.session_id, data.brief);
+          } catch (err) {
+            alert("Couldn't prepare this meeting.");
+            prepBtn.disabled = false;
+            prepBtn.textContent = "Prepare";
+          }
+        };
+        actions.appendChild(prepBtn);
+      }
+    }
+
+    setActions(e.session_status, e.session_id, null);
+    head.appendChild(actions);
+    card.appendChild(head);
+    card.appendChild(briefWrap);
+    return card;
+  }
+
+  async function loadUpcoming() {
+    if (!upcomingListEl) return;
+    const biz = HermesBiz.current;
+    upcomingListEl.innerHTML = "";
+    if (!biz || biz === "all") {
+      if (upcomingEmptyEl) { upcomingEmptyEl.style.display = "block"; upcomingEmptyEl.textContent = "Select a business to see upcoming meetings."; }
+      return;
+    }
+    if (upcomingEmptyEl) { upcomingEmptyEl.style.display = "block"; upcomingEmptyEl.textContent = "Loading upcoming meetings…"; }
+    try {
+      const res = await fetch(`/api/meetings/upcoming?business=${encodeURIComponent(biz)}`);
+      const data = await res.json();
+      if (data.error) {
+        if (upcomingEmptyEl) { upcomingEmptyEl.style.display = "block"; upcomingEmptyEl.textContent = data.error; }
+        return;
+      }
+      const events = data.events || [];
+      if (upcomingEmptyEl) {
+        upcomingEmptyEl.style.display = events.length ? "none" : "block";
+        upcomingEmptyEl.textContent = "No upcoming meetings in the next 14 days.";
+      }
+      events.forEach((e) => upcomingListEl.appendChild(renderUpcomingCard(e)));
+    } catch (err) {
+      if (upcomingEmptyEl) { upcomingEmptyEl.style.display = "block"; upcomingEmptyEl.textContent = "Couldn't load upcoming meetings."; }
+    }
+  }
 
   // ---- History: list, reopen, delete past meetings (mirrors chat history) ----
   let lastLoadedSessions = [];
@@ -102,7 +397,7 @@
         ? `<span class="convo-snippet">${s.turn_count} turn${s.turn_count === 1 ? "" : "s"}</span>`
         : "";
       openBtn.innerHTML = `<span class="convo-title">${escapeHtml(s.title)}</span>${snippetHtml}`;
-      openBtn.onclick = () => openSession(s.session_id);
+      openBtn.onclick = () => { switchSubtab("live"); openSession(s.session_id); };
 
       const delBtn = document.createElement("button");
       delBtn.className = "convo-del";
@@ -142,6 +437,7 @@
       if (!res.ok) return;
       const data = await res.json();
       currentSessionId = id;
+      currentSession = data;
       // Reopening a past meeting reseeds the business lock, same as chat history.
       if (data.business && data.business !== HermesBiz.current) {
         lastBiz = data.business; // prevent refreshBizGate's change-detector from resetting us
@@ -160,6 +456,8 @@
       if (!feedEl.children.length) {
         feedEl.innerHTML = '<p class="hint meeting-feed-empty" id="meeting-feed-empty">No guidance recorded in this meeting.</p>';
       }
+      renderBriefBox(data.brief);
+      renderSummaryBox(data);
       renderSessionsList();
       closeMobileNav();
     } catch (_) { /* ignore */ }
@@ -185,9 +483,29 @@
     if (e.key === "Escape") { searchInput.value = ""; sessionQuery = ""; loadSessions(); }
   });
 
+  // ---- End meeting: AI summary + best-effort Fathom link ----
+  endBtn?.addEventListener("click", async () => {
+    if (!currentSessionId) { alert("Start or open a meeting first."); return; }
+    if (listening) stopListening();
+    endBtn.disabled = true;
+    endBtn.textContent = "Ending…";
+    try {
+      const res = await fetch(`/api/meetings/sessions/${encodeURIComponent(currentSessionId)}/end`, { method: "POST" });
+      const data = await res.json();
+      if (!data.error) {
+        currentSession = data;
+        renderBriefBox(data.brief);
+        renderSummaryBox(data);
+        loadSessions();
+      }
+    } catch (_) { /* ignore */ }
+    endBtn.disabled = false;
+    endBtn.textContent = "End meeting";
+  });
+
   // ---- Guidance feed rendering ----
   function addFeedCard({ bullets, sources, error, sourceText }) {
-    // Query fresh each time (not the cached top-level const) — resetMeetingState()
+    // Query fresh each time (not a cached top-level const) — resetMeetingState()
     // replaces the feed's innerHTML, which creates a NEW placeholder node.
     document.getElementById("meeting-feed-empty")?.remove();
     const card = document.createElement("div");
@@ -328,6 +646,7 @@
     if (listening) return;
     const biz = HermesBiz.current;
     if (!biz || biz === "all") { alert("Select a specific business first."); return; }
+    switchSubtab("live"); // starting to listen means you're in a live meeting now
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
