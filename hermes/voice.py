@@ -51,14 +51,28 @@ def _ext_for(mimetype: str | None) -> str:
     return _EXT_BY_MIME.get(base, "webm")
 
 
-def _stt_prompt() -> str:
+def _stt_prompt(context: str = "chat") -> str:
     """A light context prompt so STT spells the user's real app/brand names right.
 
-    Kept to genuinely-relevant terms only: the assistant name plus the user's
-    actually-connected apps (and any VOICE_VOCAB they add). Over-stuffing this
-    with speculative names makes STT *insert* them where they weren't said, so we
-    describe context and tell it to transcribe verbatim rather than push words.
+    `context="meeting"` swaps in a different prompt for ambient meeting audio
+    (see below) instead of the default one-off voice-command framing. The
+    provider's transcribe model (gpt-4o-transcribe) is generative, not purely
+    acoustic — it leans on this prompt as a bias for *what kind of thing* is
+    being said, so a prompt describing "you're talking to an AI assistant
+    about your apps" makes it hallucinate plausible app/business chatter on
+    any stretch of unclear or noisy meeting audio, rather than transcribing
+    only what it can actually make out.
     """
+    if context == "meeting":
+        return (
+            "This is a live business meeting recording picked up by a room "
+            "microphone — multiple people may be speaking, with pauses, "
+            "silence, and background noise. Transcribe only what is actually "
+            "said, verbatim, word for word. Never invent, guess, or complete "
+            "a word or sentence to sound plausible; if a stretch of audio is "
+            "unclear, silent, or just noise, output nothing for it rather "
+            "than fabricating text."
+        )
     names = ["Hermes", "Maton"]
     names += [APP_LABELS.get(slug, slug) for slug in Config.apps()]
     if Config.VOICE_VOCAB:
@@ -71,12 +85,36 @@ def _stt_prompt() -> str:
     )
 
 
-def transcribe(audio: bytes, mimetype: str | None = None) -> str:
-    """Speech -> text. Returns the recognized transcript."""
+_NO_SPEECH_PROB_MAX = 0.6  # drop a segment the model itself flags as probably non-speech
+_AVG_LOGPROB_MIN = -1.0    # drop a segment it was very unsure about, even if not flagged as silence
+
+
+def transcribe(audio: bytes, mimetype: str | None = None, context: str = "chat") -> str:
+    """Speech -> text. Returns the recognized transcript.
+
+    `context` picks the priming prompt: "chat" (default, one-off voice
+    commands spoken directly to Hermes) or "meeting" (ambient room audio —
+    see `_stt_prompt`).
+
+    For "meeting", this also switches to a classic Whisper model (OpenAI's
+    "whisper-1", or whichever Whisper model Groq is configured with) instead
+    of the default gpt-4o-transcribe. gpt-4o-transcribe is generative — tested
+    against literal silence it still confidently invents a full plausible
+    sentence, even at temperature=0, since it's trained to always produce
+    fluent text rather than admit uncertainty. Classic Whisper models expose
+    per-segment `no_speech_prob`/`avg_logprob` via `verbose_json`, so segments
+    the model itself wasn't confident about can be dropped instead of shipped
+    as if they were real speech — essential for a mic that's on continuously
+    and picking up plenty of silence and room noise between utterances.
+    """
     if not Config.voice_api_key():
         raise VoiceError("Voice API key is not set — voice mode is unavailable.")
     if not audio:
         raise VoiceError("No audio was received.")
+
+    is_meeting = context == "meeting"
+    model = "whisper-1" if (is_meeting and not Config._use_groq()) else Config.voice_stt_model()
+    response_format = "verbose_json" if is_meeting else "json"
 
     ext = _ext_for(mimetype)
     url = f"{Config.voice_base_url()}/audio/transcriptions"
@@ -86,12 +124,16 @@ def transcribe(audio: bytes, mimetype: str | None = None) -> str:
             headers={"Authorization": f"Bearer {Config.voice_api_key()}"},
             files={"file": (f"speech.{ext}", audio, mimetype or "audio/webm")},
             data={
-                "model": Config.voice_stt_model(),
-                "response_format": "json",
+                "model": model,
+                "response_format": response_format,
                 # Lock recognition to one language so it can't drift to another.
                 "language": Config.VOICE_LANGUAGE,
-                # Bias toward known brand/product names (accents + jargon).
-                "prompt": _stt_prompt(),
+                # Bias toward known brand/product names (accents + jargon) —
+                # or, for meetings, toward literal transcription over invention.
+                "prompt": _stt_prompt(context),
+                # Deterministic decoding — the generative transcribe models
+                # get more prone to "creative" filler as temperature rises.
+                "temperature": 0,
             },
             timeout=_STT_TIMEOUT,
         )
@@ -102,9 +144,23 @@ def transcribe(audio: bytes, mimetype: str | None = None) -> str:
         raise VoiceError(_voice_error(resp, "transcription"))
 
     try:
-        return (resp.json().get("text") or "").strip()
+        data = resp.json()
     except ValueError as exc:
         raise VoiceError("Transcription returned an unreadable response.") from exc
+
+    if not is_meeting:
+        return (data.get("text") or "").strip()
+
+    segments = data.get("segments") or []
+    if not segments:
+        return (data.get("text") or "").strip()
+    kept = [
+        seg.get("text", "").strip()
+        for seg in segments
+        if seg.get("no_speech_prob", 0) <= _NO_SPEECH_PROB_MAX
+        and seg.get("avg_logprob", 0) >= _AVG_LOGPROB_MIN
+    ]
+    return " ".join(t for t in kept if t).strip()
 
 
 def resolve_voice(voice: str | None) -> str:

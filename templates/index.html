@@ -397,7 +397,10 @@
               <div class="meeting-col meeting-notes-col">
                 <div class="meeting-col-head">
                   <span>Notes &amp; Transcript</span>
-                  <span class="meeting-status" id="meeting-status">Not listening</span>
+                  <div class="meeting-col-head-actions">
+                    <span class="meeting-status" id="meeting-status">Not listening</span>
+                    <button class="meeting-clear-btn" id="meeting-notes-clear-btn" type="button" title="Clear notes & transcript for this meeting">Clear</button>
+                  </div>
                 </div>
                 <textarea id="meeting-notes" class="meeting-notes" placeholder="Type notes here, or press Start Listening to transcribe the meeting as it happens…"></textarea>
                 <div class="meeting-notes-row">
@@ -409,7 +412,10 @@
               <div class="meeting-col meeting-guidance-col">
                 <div class="meeting-col-head">
                   <span>Guidance</span>
-                  <button class="meeting-end-btn" id="meeting-end-btn" type="button" title="End meeting: generate summary + Fathom link">End meeting</button>
+                  <div class="meeting-col-head-actions">
+                    <button class="meeting-clear-btn" id="meeting-guidance-clear-btn" type="button" title="Clear guidance feed for this meeting">Clear</button>
+                    <button class="meeting-end-btn" id="meeting-end-btn" type="button" title="End meeting: generate summary + Fathom link">End meeting</button>
+                  </div>
                 </div>
                 <div class="meeting-feed" id="meeting-feed">
                   <p class="hint meeting-feed-empty" id="meeting-feed-empty">Guidance will appear here as the meeting happens — grounded in this business's own emails and files, with sources cited.</p>

@@ -575,6 +575,7 @@ async def meeting_copilot(body: MeetingCopilotRequest):
             business_name=business_name,
             latest_text=body.latest_text,
             notes_so_far=body.notes_so_far,
+            session_id=body.session_id,  # grounds guidance in THIS meeting's own brief/AI notes too
             top_k=body.top_k,
         )
     except Exception as exc:  # noqa: BLE001
@@ -813,6 +814,16 @@ async def set_meeting_fathom_link(session_id: str, body: FathomLinkRequest):
     return {"session_id": session_id, "fathom_url": body.url.strip()}
 
 
+@app.delete("/api/meetings/sessions/{session_id}/turns")
+async def clear_meeting_turns(session_id: str):
+    """Wipe notes/transcript + guidance for a meeting without deleting it —
+    for clearing out test content while iterating on a live session."""
+    ok = await run_in_threadpool(meetings_db.clear_turns, session_id)
+    if not ok:
+        return JSONResponse({"error": "Meeting not found."}, status_code=404)
+    return {"session_id": session_id, "turns": []}
+
+
 @app.delete("/api/meetings/sessions/{session_id}")
 async def delete_meeting_session(session_id: str):
     ok = await run_in_threadpool(meetings_db.delete_session, session_id)
@@ -847,18 +858,21 @@ def create_connection(body: ConnectionRequest):
 async def voice_transcribe(
     audio: UploadFile | None = File(default=None),
     entity_id: str | None = Form(default=None),
+    context: str | None = Form(default=None),
 ):
     """Speech -> text. The client posts a recorded audio clip; the configured
     provider (OpenAI/Groq Whisper) returns the transcript, which the client then
     sends through /api/chat so the voice agent runs the exact same Claude + Maton
     agent as the typed chat.
 
-    Multipart fields: `audio` (file, required), `entity_id` (optional)."""
+    Multipart fields: `audio` (file, required), `entity_id` (optional),
+    `context` (optional — "chat" default, or "meeting" for ambient room audio,
+    see hermes.voice._stt_prompt)."""
     if audio is None:
         return JSONResponse({"error": "No audio uploaded."}, status_code=400)
     raw = await audio.read()
     try:
-        text = await run_in_threadpool(transcribe, raw, audio.content_type)
+        text = await run_in_threadpool(transcribe, raw, audio.content_type, context or "chat")
     except VoiceError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
     return {"text": text, "entity_id": entity_id}

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import anthropic
 
@@ -32,29 +33,39 @@ def _anthropic() -> anthropic.Anthropic:
 
 
 _SYSTEM_TEMPLATE = """You are Gandi's private meeting copilot for {business_name}. \
-Nobody in the meeting can see or hear you — you are a silent sidebar only Gandi reads.
+Nobody in the meeting can see or hear you — you are a silent sidebar only Gandi reads \
+in real time while he's actively talking. Every extra word costs him reading time he \
+doesn't have, so brevity beats completeness.
 
-Your job: given what was just said in the meeting and the retrieved records below \
-(real emails, files, and notes from {business_name}'s own history), write SHORT, \
-SPECIFIC guidance for Gandi.
+Your job: given what was just said, the meeting so far, this meeting's own prep, and \
+the retrieved records below (real emails, files, and notes from {business_name}'s own \
+history), decide if there's anything worth telling Gandi RIGHT NOW.
 
 Rules — follow exactly:
 - Output ONLY bullet points, nothing else. No greeting, no "Here are some thoughts", \
 no summary line before or after.
-- Each bullet is one of: a question to ask, a fact to verify, a risk to flag, or a \
-relevant fact worth knowing right now.
-- Every factual claim must name its source in parentheses, e.g. \
-"(source: email from Fatima-Ezzahra, Jun 30)" or "(source: floor plan PDF)".
-- If nothing in the retrieved records supports a claim, say so — write \
-"no record of this — verify live" instead of guessing or inventing anything.
-- Keep every bullet under 25 words. Gandi is reading this while actively talking.
-- Give at most 4 bullets. Fewer, sharper bullets beat a long list.
-- If the retrieved records don't relate to what was just said, your only bullet \
-should say so plainly — do not pad with generic advice.
+- At most 3 bullets. Often the right answer is 1, sometimes 0 — only include a bullet \
+if it's genuinely new, not something already obvious from the conversation so far or \
+already raised in an earlier guidance bullet this meeting.
+- Each bullet is ONE of: a question to ask now, a fact to verify, a risk to flag, or an \
+unaddressed must-ask item from this meeting's own prep that still hasn't come up.
+- Keep every bullet under 14 words — cut every word that isn't load-bearing. Do not \
+cite sources inline; the records used are already listed separately below the guidance.
+- If nothing in the retrieved records or prep supports a claim, don't guess — write \
+"no record of this — verify live" in under 8 words, or omit the bullet entirely.
+- If there's genuinely nothing new to add, output nothing at all (an empty response) \
+rather than restating context, summarizing the meeting, or padding with generic advice.
 
-RETRIEVED RECORDS (from {business_name}'s own indexed emails/files — this is your \
-only source of ground truth; do not use outside knowledge about this business):
+THIS MEETING'S OWN PREP (the brief and AI notes already built for this specific \
+meeting — check this first, it's the most directly relevant source):
+{meeting_prep}
+
+RETRIEVED RECORDS (from {business_name}'s wider indexed emails/files — broader \
+context beyond this one meeting):
 {context}
+
+Ground every claim in one of the two sources above; do not use outside knowledge \
+about this business.
 """
 
 
@@ -68,6 +79,32 @@ def _format_context(hits: list[dict]) -> str:
         snippet = (h.get("snippet") or "").strip().replace("\n", " ")[:280]
         lines.append(f"- [{source}] {title}: {snippet}")
     return "\n".join(lines)
+
+
+# AI notes can run several KB (a real full-agent pull, multiple documents read
+# in full). Truncated here — live guidance needs the gist fast, not the whole
+# document verbatim; the full text is one click away in the AI Notes box.
+_AI_NOTES_EXCERPT_CHARS = 2500
+
+
+def _format_meeting_prep(session: dict | None) -> str:
+    if not session:
+        return "(no prep on file for this session)"
+    parts: list[str] = []
+    brief = session.get("brief") or {}
+    if brief.get("background"):
+        parts.append(f"Brief background: {brief['background']}")
+    if brief.get("must_ask_questions"):
+        parts.append("Brief must-ask questions: " + "; ".join(brief["must_ask_questions"]))
+    if brief.get("key_facts"):
+        parts.append("Brief key facts: " + "; ".join(brief["key_facts"]))
+    ai_notes = session.get("ai_notes")
+    if ai_notes:
+        excerpt = ai_notes[:_AI_NOTES_EXCERPT_CHARS]
+        if len(ai_notes) > _AI_NOTES_EXCERPT_CHARS:
+            excerpt += " …(truncated — see the AI Meeting Notes box for the full version)"
+        parts.append("AI meeting notes: " + excerpt)
+    return "\n\n".join(parts) if parts else "(no prep on file for this session)"
 
 
 def _parse_bullets(text: str) -> list[str]:
@@ -90,28 +127,61 @@ def get_guidance(
     business_name: str,
     latest_text: str,
     notes_so_far: str = "",
+    session_id: str | None = None,
     top_k: int = 6,
     max_sensitivity: str = "confidential",
 ) -> dict:
-    """Ground one live meeting moment in the business's own indexed knowledge
-    and return short bullet-point guidance. Read-only, fast, private.
+    """Ground one live meeting moment and return short bullet-point guidance.
+    Read-only, private — fast on purpose, so it stays usable mid-conversation.
+
+    Two sources feed the answer, fetched CONCURRENTLY (not one-after-the-
+    other) so the slower of the two — not the sum — sets the latency:
+      1. This meeting's own prep (session_id -> Postgres, brief + AI notes) —
+         a single indexed row lookup, effectively free next to a vector search.
+      2. The wider Pinecone semantic search over everything else indexed for
+         this business (the existing, slower path: an embedding call + a
+         vector query).
 
     `entity_id` is an entities.slug or uuid (NOT a businesses.slug) — same
     convention as hermes.search.semantic_search. Callers holding a business
     slug (e.g. "nh") must resolve it first via hermes.businesses.to_entity_slug.
     """
     query = (latest_text or notes_so_far[-500:] or "").strip()
-    hits: list[dict] = []
-    if query:
+
+    def _search() -> list[dict]:
+        if not query:
+            return []
         try:
-            hits = semantic_search(
-                entity_id, query, max_sensitivity=max_sensitivity, top_k=top_k,
-            )
+            return semantic_search(entity_id, query, max_sensitivity=max_sensitivity, top_k=top_k)
         except Exception:
-            hits = []  # degrade to "no records" rather than failing the turn
+            return []  # degrade to "no records" rather than failing the turn
+
+    def _prep() -> dict | None:
+        if not session_id:
+            return None
+        try:
+            from .db.meetings import session_context  # local import: avoid a cycle
+            return session_context(session_id)
+        except Exception:
+            return None
+
+    hits: list[dict] = []
+    session_data: dict | None = None
+    if query and session_id:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            search_future = pool.submit(_search)
+            prep_future = pool.submit(_prep)
+            hits = search_future.result()
+            session_data = prep_future.result()
+    elif query:
+        hits = _search()
+    elif session_id:
+        session_data = _prep()
 
     system = _SYSTEM_TEMPLATE.format(
-        business_name=business_name, context=_format_context(hits)
+        business_name=business_name,
+        meeting_prep=_format_meeting_prep(session_data),
+        context=_format_context(hits),
     )
     user_message = (
         f"What was just said: {latest_text}\n\n"

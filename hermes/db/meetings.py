@@ -248,6 +248,25 @@ def add_turn(
         log.warning("add_turn(%s) failed: %s", session_id, exc)
 
 
+def clear_turns(session_id: str) -> bool:
+    """Wipe every turn (notes/transcript + guidance) for a session, keeping
+    the session row itself (brief/ai_notes/title) intact. For clearing out
+    test content mid-build without deleting the whole meeting."""
+    if not _is_uuid(session_id):
+        return False
+    try:
+        with cursor() as cur:
+            cur.execute("DELETE FROM meeting_turns WHERE session_id = %s;", (session_id,))
+            cur.execute(
+                "UPDATE meeting_sessions SET updated_at = now() WHERE session_id = %s;",
+                (session_id,),
+            )
+            return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("clear_turns(%s) failed: %s", session_id, exc)
+        return False
+
+
 def save_summary(session_id: str, summary: dict[str, Any]) -> None:
     """Attach the post-meeting AI summary and mark the meeting ended."""
     if not _is_uuid(session_id):
@@ -356,6 +375,33 @@ def sessions(
         d["turn_count"] = int(row[-1])
         out.append(d)
     return out
+
+
+def session_context(session_id: str) -> dict[str, Any] | None:
+    """Just the metadata (brief, ai_notes, attendees, ...) — no turns.
+
+    For the live copilot's guidance call, which needs this meeting's own
+    prep to ground its answer but not its full turn history (that would
+    mean loading every prior utterance on every single guidance call, for
+    data the caller doesn't use). Same row, cheaper query than transcript().
+    """
+    if not _is_uuid(session_id):
+        return None
+    try:
+        with cursor(commit=False) as cur:
+            cur.execute(
+                f"""SELECT {_META_COLS} FROM meeting_sessions s
+                    JOIN entities e ON e.entity_id = s.entity_id
+                    WHERE s.session_id = %s;""",
+                (session_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+    except Exception as exc:  # noqa: BLE001
+        log.warning("session_context(%s) failed: %s", session_id, exc)
+        return None
+    return _meta_row_to_dict(row)
 
 
 def transcript(session_id: str) -> dict[str, Any] | None:

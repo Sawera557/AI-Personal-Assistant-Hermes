@@ -1071,6 +1071,13 @@ body {
   font-size: 11px; font-weight: 600; color: var(--muted);
   padding: 3px 9px; border-radius: 20px; background: var(--surface-2);
 }
+.meeting-col-head-actions { display: flex; align-items: center; gap: 8px; }
+.meeting-clear-btn {
+  font-size: 11px; font-weight: 600; color: var(--muted); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; cursor: pointer;
+  font-family: inherit;
+}
+.meeting-clear-btn:hover { color: var(--err); border-color: var(--err); }
 
 .meeting-notes {
   flex: 1; resize: none; border: none; background: transparent; color: var(--text);
@@ -1099,10 +1106,28 @@ body {
 
 .meeting-card {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 13px;
-  padding: 14px 16px; animation: rise 0.28s ease both;
+  overflow: hidden; animation: rise 0.28s ease both; transition: opacity .15s;
 }
 .meeting-card-error { border-color: rgba(248,113,113,.35); background: rgba(248,113,113,.07); }
-.meeting-card-time { font-size: 10.5px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+.meeting-card-collapsed { opacity: .7; }
+.meeting-card-collapsed:hover { opacity: 1; }
+
+/* Only the newest card is expanded by default (see collapseOlderFeedCards in
+   meeting.js) — older ones shrink to this one-line head, click to reopen. */
+.meeting-card-head {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: pointer; user-select: none;
+}
+.meeting-card-time { font-size: 10.5px; color: var(--muted); font-weight: 600; flex-shrink: 0; }
+.meeting-card-preview {
+  font-size: 12.5px; color: var(--muted); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: none;
+}
+.meeting-card-collapsed .meeting-card-preview { display: block; }
+.meeting-card-chevron { color: var(--muted); font-size: 11px; transition: transform .15s; flex-shrink: 0; }
+.meeting-card-collapsed .meeting-card-chevron { transform: rotate(-90deg); }
+.meeting-card-body { padding: 0 16px 14px; }
+.meeting-card-collapsed .meeting-card-body { display: none; }
+
 .meeting-card-heard {
   font-size: 12.5px; color: var(--muted); font-style: italic; margin-bottom: 9px;
   padding-bottom: 9px; border-bottom: 1px dashed var(--border);

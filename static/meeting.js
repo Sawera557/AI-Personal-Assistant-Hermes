@@ -4,9 +4,12 @@
 // Three moments this file covers:
 //   Upcoming: calendar events -> "Prepare" -> AI brief (background, must-ask
 //     questions, risks, links to relevant already-indexed files).
-//   Live: mic --(VAD pause)--> /api/voice/transcribe --> append to notes
-//     --> /api/meetings/copilot (grounded in this business's own indexed
-//         emails/files) --> render bullet-point guidance --> keep listening.
+//   Live: mic runs continuously — a VAD pause just closes one utterance and
+//     immediately starts recording the next, with zero gap. Each closed
+//     utterance is queued and drained by a background worker (transcribe -->
+//     append to notes --> /api/meetings/copilot, grounded in this business's
+//     own indexed emails/files --> render bullet-point guidance), FIFO, so
+//     nothing said during that round-trip is ever missed.
 //   Ended: "End meeting" -> AI summary (decisions, action items, follow-up
 //     draft) + best-effort Fathom recording link (manual fallback if not found).
 //
@@ -40,6 +43,8 @@
   const aiNotesBoxEl = document.getElementById("meeting-ai-notes-box");
   const summaryBoxEl = document.getElementById("meeting-summary-box");
   const endBtn = document.getElementById("meeting-end-btn");
+  const notesClearBtn = document.getElementById("meeting-notes-clear-btn");
+  const guidanceClearBtn = document.getElementById("meeting-guidance-clear-btn");
 
   if (!listenBtn || !notesEl || !feedEl) return; // page not present
 
@@ -702,32 +707,79 @@
     endBtn.textContent = "End meeting";
   });
 
+  // ---- Clear notes/transcript + guidance (e.g. wiping test content while
+  // iterating on a live session) — both buttons hit the same turns, since
+  // notes and guidance are just two views of the same saved turn rows. ----
+  async function clearTurns() {
+    if (currentSessionId) {
+      if (!confirm("Clear all notes, transcript & guidance for this meeting? This can't be undone.")) return;
+      try {
+        await fetch(`/api/meetings/sessions/${encodeURIComponent(currentSessionId)}/turns`, { method: "DELETE" });
+      } catch (_) { /* ignore */ }
+    }
+    notesEl.value = "";
+    feedEl.innerHTML = '<p class="hint meeting-feed-empty" id="meeting-feed-empty">Guidance will appear here as the meeting happens — grounded in this business\'s own emails and files, with sources cited.</p>';
+    if (currentSessionId) loadSessions();
+  }
+  notesClearBtn?.addEventListener("click", clearTurns);
+  guidanceClearBtn?.addEventListener("click", clearTurns);
+
   // ---- Guidance feed rendering ----
+  // Only the newest card stays fully open — every earlier one collapses to a
+  // one-line time + preview (click to re-expand), so the feed stays scannable
+  // instead of turning into a wall of bullets to read while actively talking.
+  function collapseOlderFeedCards() {
+    feedEl.querySelectorAll(".meeting-card").forEach((c) => c.classList.add("meeting-card-collapsed"));
+  }
+
   function addFeedCard({ bullets, sources, error, sourceText }) {
     // Query fresh each time (not a cached top-level const) — resetMeetingState()
     // replaces the feed's innerHTML, which creates a NEW placeholder node.
     document.getElementById("meeting-feed-empty")?.remove();
+
+    // Nothing new to say and nothing went wrong — the copilot is allowed to
+    // say nothing; skip the card entirely instead of cluttering the feed with
+    // an empty one every time nothing changed.
+    if (!error && (!bullets || !bullets.length)) return;
+
+    collapseOlderFeedCards();
+
     const card = document.createElement("div");
     card.className = "meeting-card" + (error ? " meeting-card-error" : "");
 
-    const time = document.createElement("div");
+    const head = document.createElement("div");
+    head.className = "meeting-card-head";
+    const time = document.createElement("span");
     time.className = "meeting-card-time";
     time.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    card.appendChild(time);
+    const rawPreview = error || bullets[0] || "";
+    const preview = document.createElement("span");
+    preview.className = "meeting-card-preview";
+    preview.textContent = rawPreview.length > 70 ? rawPreview.slice(0, 70) + "…" : rawPreview;
+    const chevron = document.createElement("span");
+    chevron.className = "meeting-card-chevron";
+    chevron.textContent = "▾";
+    head.appendChild(time);
+    head.appendChild(preview);
+    head.appendChild(chevron);
+    head.addEventListener("click", () => card.classList.toggle("meeting-card-collapsed"));
+
+    const body = document.createElement("div");
+    body.className = "meeting-card-body";
 
     if (sourceText) {
       const heard = document.createElement("div");
       heard.className = "meeting-card-heard";
       heard.textContent = `“${sourceText}”`;
-      card.appendChild(heard);
+      body.appendChild(heard);
     }
 
     if (error) {
       const err = document.createElement("div");
       err.className = "meeting-card-errtext";
       err.textContent = error;
-      card.appendChild(err);
-    } else if (bullets && bullets.length) {
+      body.appendChild(err);
+    } else {
       const ul = document.createElement("ul");
       ul.className = "meeting-bullets";
       bullets.forEach((b) => {
@@ -735,7 +787,7 @@
         li.textContent = b;
         ul.appendChild(li);
       });
-      card.appendChild(ul);
+      body.appendChild(ul);
 
       if (sources && sources.length) {
         const srcRow = document.createElement("div");
@@ -751,10 +803,12 @@
           }
           srcRow.appendChild(chip);
         });
-        card.appendChild(srcRow);
+        body.appendChild(srcRow);
       }
     }
 
+    card.appendChild(head);
+    card.appendChild(body);
     feedEl.appendChild(card);
     feedEl.scrollTop = feedEl.scrollHeight;
   }
@@ -825,12 +879,21 @@
   let stream = null, audioCtx = null, analyser = null, recorder = null, chunks = [];
   let rafTimer = null;
   let noiseFloor = 0.01, smoothRms = 0, speechStartedAt = 0, lastVoiceAt = 0, recStartedAt = 0;
+  let micPhase = "Not listening";
 
-  function setListenUI(isListening, label) {
+  function setListenUI(isListening) {
     listening = isListening;
     [listenBtn, listenBtnM].forEach((b) => b && b.classList.toggle("is-listening", isListening));
     if (listenLabel) listenLabel.textContent = isListening ? "Stop Listening" : "Start Listening";
-    if (statusEl) statusEl.textContent = label || (isListening ? "Listening…" : "Not listening");
+  }
+
+  // Status text combines two independent things: the mic's own phase
+  // (Listening/Hearing/Not listening) and how many closed utterances are
+  // still waiting on transcription+guidance — mic capture never waits on
+  // this queue, so both can be true at once ("Listening… · Processing 2").
+  function renderStatus() {
+    if (!statusEl) return;
+    statusEl.textContent = queueDepth > 0 ? `${micPhase} · Processing ${queueDepth}` : micPhase;
   }
 
   function pickMime() {
@@ -861,7 +924,7 @@
     analyser.fftSize = 1024;
     source.connect(analyser);
 
-    setListenUI(true, "Listening…");
+    setListenUI(true);
     beginUtterance();
   }
 
@@ -874,7 +937,9 @@
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
     if (audioCtx) { try { audioCtx.close(); } catch (_) {} audioCtx = null; }
     analyser = null;
-    setListenUI(false, "Not listening");
+    setListenUI(false);
+    micPhase = "Not listening";
+    renderStatus(); // note: any already-queued utterances keep draining in the background
   }
 
   function toggleListening() {
@@ -890,7 +955,9 @@
     try {
       recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
     } catch (err) {
-      setListenUI(false, "Recorder error");
+      setListenUI(false);
+      micPhase = "Recorder error";
+      renderStatus();
       return;
     }
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -898,6 +965,8 @@
     recorder.start(100);
 
     speechStartedAt = 0; lastVoiceAt = 0; recStartedAt = Date.now();
+    micPhase = "Listening…";
+    renderStatus();
     monitor();
   }
 
@@ -916,7 +985,7 @@
     const voiced = speechStartedAt ? smoothRms > keepThresh : smoothRms > startThresh;
 
     if (voiced) {
-      if (!speechStartedAt) { speechStartedAt = now; setListenUI(true, "Hearing…"); }
+      if (!speechStartedAt) { speechStartedAt = now; micPhase = "Hearing…"; renderStatus(); }
       lastVoiceAt = now;
     } else if (!speechStartedAt) {
       noiseFloor = noiseFloor * 0.95 + smoothRms * 0.05;
@@ -940,30 +1009,60 @@
     rafTimer = setTimeout(monitor, TICK_MS);
   }
 
-  async function onUtteranceComplete() {
+  function onUtteranceComplete() {
     if (!stream) return; // stopListening() already tore everything down
     const blob = new Blob(chunks, { type: recorder ? recorder.mimeType : "audio/webm" });
+    const hadSpeech = !!(blob.size && speechStartedAt);
     chunks = [];
-    if (!blob.size || !speechStartedAt) { beginUtterance(); return; }
+    // Resume capturing the NEXT segment immediately, before this one is even
+    // transcribed — the mic must never sit idle while the copilot round-trip
+    // (STT + Pinecone + Claude) for the previous segment is in flight, or
+    // whatever's said during that window is lost for good.
+    beginUtterance();
+    if (hadSpeech) enqueueUtterance(blob);
+  }
 
-    setListenUI(true, "Transcribing…");
-    try {
-      const text = await transcribeBlob(blob);
-      if (text) {
-        appendNote(text);
-        setListenUI(true, "Thinking…");
-        await askCopilot(text);
+  // ---- Utterance processing queue -----------------------------------------
+  // Decoupled from mic capture on purpose: beginUtterance() above has already
+  // restarted recording by the time anything here runs. Drained FIFO (not in
+  // parallel) so notes/guidance stay in the order they were actually spoken —
+  // each guidance call needs notes_so_far to reflect everything said before it.
+  const utteranceQueue = [];
+  let processingQueue = false;
+  let queueDepth = 0;
+
+  function enqueueUtterance(blob) {
+    utteranceQueue.push(blob);
+    processQueue();
+  }
+
+  async function processQueue() {
+    if (processingQueue) return;
+    processingQueue = true;
+    while (utteranceQueue.length) {
+      queueDepth = utteranceQueue.length;
+      renderStatus();
+      const blob = utteranceQueue.shift();
+      try {
+        const text = await transcribeBlob(blob);
+        if (text) {
+          appendNote(text);
+          await askCopilot(text);
+        }
+      } catch (err) {
+        addFeedCard({ error: "Transcription error: " + (err && err.message ? err.message : err) });
       }
-    } catch (err) {
-      addFeedCard({ error: "Transcription error: " + (err && err.message ? err.message : err) });
     }
-    if (stream) { setListenUI(true, "Listening…"); beginUtterance(); }
+    queueDepth = 0;
+    processingQueue = false;
+    renderStatus();
   }
 
   async function transcribeBlob(blob) {
     const body = new FormData();
     const ext = (blob.type.split(";")[0].split("/")[1] || "webm");
     body.append("audio", blob, "speech." + ext);
+    body.append("context", "meeting"); // ambient room audio — different STT prompt than one-off voice commands
     const res = await fetch("/api/voice/transcribe", { method: "POST", body });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
