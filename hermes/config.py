@@ -30,6 +30,7 @@ APP_LABELS: dict[str, str] = {
     "google-drive": "Google Drive",
     "google-calendar": "Google Calendar",
     "google-mail": "Gmail",
+    "zoom": "Zoom (video meetings)",
 }
 
 
@@ -63,10 +64,18 @@ class Config:
         """Business slugs that currently have a configured Maton key."""
         return [slug for slug, key in cls.MATON_BUSINESS_KEYS.items() if key]
 
-    MODEL: str = os.getenv("HERMES_MODEL", "claude-opus-4-8")
-    EFFORT: str = os.getenv("HERMES_EFFORT", "medium")
+    MODEL: str = os.getenv("HERMES_MODEL", "claude-sonnet-5")
+    EFFORT: str = os.getenv("HERMES_EFFORT", "low")
     MAX_TOKENS: int = int(os.getenv("HERMES_MAX_TOKENS", "8000"))
     MAX_TOOL_ITERATIONS: int = int(os.getenv("HERMES_MAX_TOOL_ITERATIONS", "12"))
+
+    # Dedicated fast model for the live meeting copilot's per-utterance guidance
+    # calls (hermes.meeting_copilot.get_guidance / get_guidance_comprehensive).
+    # Kept separate from MODEL above: that call is 0-4 short bullets, no tool
+    # use, in the middle of a live conversation — latency matters more than the
+    # extra reasoning depth a bigger model would add. Chat keeps MODEL so
+    # tool-use/agentic quality isn't affected by this.
+    GUIDANCE_MODEL: str = os.getenv("HERMES_GUIDANCE_MODEL", "claude-haiku-4-5-20251001")
 
     WEB_SEARCH: bool = _bool(os.getenv("HERMES_WEB_SEARCH"), True)
 

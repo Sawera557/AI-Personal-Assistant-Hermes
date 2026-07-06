@@ -404,6 +404,35 @@ def session_context(session_id: str) -> dict[str, Any] | None:
     return _meta_row_to_dict(row)
 
 
+def prior_bullets(session_id: str, *, max_turns: int = 8) -> list[str]:
+    """Flattened guidance bullets from the most recent turns, oldest first.
+
+    Live guidance is a stateless call per utterance — without this, the model
+    has no way to know what it already told Gandi and will keep re-deriving
+    the same obvious question turn after turn (seen for real: an actual
+    session asked "can Bleue guide start-to-finish?" 11 turns in a row). This
+    lets the prompt say "don't repeat these" with something to actually check
+    against, instead of an unenforceable instruction.
+    """
+    if not _is_uuid(session_id):
+        return []
+    try:
+        with cursor(commit=False) as cur:
+            cur.execute(
+                """SELECT bullets FROM meeting_turns WHERE session_id = %s
+                   ORDER BY seq DESC LIMIT %s;""",
+                (session_id, max_turns),
+            )
+            rows = cur.fetchall()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("prior_bullets(%s) failed: %s", session_id, exc)
+        return []
+    out: list[str] = []
+    for (bullets,) in reversed(rows):  # oldest first, matching how the meeting unfolded
+        out.extend(bullets or [])
+    return out
+
+
 def transcript(session_id: str) -> dict[str, Any] | None:
     """Full replay of one meeting session: its metadata + every turn."""
     if not _is_uuid(session_id):

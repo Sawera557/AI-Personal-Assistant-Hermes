@@ -725,13 +725,10 @@
   guidanceClearBtn?.addEventListener("click", clearTurns);
 
   // ---- Guidance feed rendering ----
-  // Only the newest card stays fully open — every earlier one collapses to a
-  // one-line time + preview (click to re-expand), so the feed stays scannable
-  // instead of turning into a wall of bullets to read while actively talking.
-  function collapseOlderFeedCards() {
-    feedEl.querySelectorAll(".meeting-card").forEach((c) => c.classList.add("meeting-card-collapsed"));
-  }
-
+  // Every card's full text always stays visible — nothing is ever hidden
+  // behind a click. The newest card just gets a highlight so it stands out;
+  // decluttering comes from the prompt giving fewer/shorter/non-repeating
+  // bullets and skipping empty turns, not from hiding real answers.
   function addFeedCard({ bullets, sources, error, sourceText }) {
     // Query fresh each time (not a cached top-level const) — resetMeetingState()
     // replaces the feed's innerHTML, which creates a NEW placeholder node.
@@ -742,43 +739,28 @@
     // an empty one every time nothing changed.
     if (!error && (!bullets || !bullets.length)) return;
 
-    collapseOlderFeedCards();
+    feedEl.querySelectorAll(".meeting-card-latest").forEach((c) => c.classList.remove("meeting-card-latest"));
 
     const card = document.createElement("div");
-    card.className = "meeting-card" + (error ? " meeting-card-error" : "");
+    card.className = "meeting-card meeting-card-latest" + (error ? " meeting-card-error" : "");
 
-    const head = document.createElement("div");
-    head.className = "meeting-card-head";
-    const time = document.createElement("span");
+    const time = document.createElement("div");
     time.className = "meeting-card-time";
     time.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    const rawPreview = error || bullets[0] || "";
-    const preview = document.createElement("span");
-    preview.className = "meeting-card-preview";
-    preview.textContent = rawPreview.length > 70 ? rawPreview.slice(0, 70) + "…" : rawPreview;
-    const chevron = document.createElement("span");
-    chevron.className = "meeting-card-chevron";
-    chevron.textContent = "▾";
-    head.appendChild(time);
-    head.appendChild(preview);
-    head.appendChild(chevron);
-    head.addEventListener("click", () => card.classList.toggle("meeting-card-collapsed"));
-
-    const body = document.createElement("div");
-    body.className = "meeting-card-body";
+    card.appendChild(time);
 
     if (sourceText) {
       const heard = document.createElement("div");
       heard.className = "meeting-card-heard";
       heard.textContent = `“${sourceText}”`;
-      body.appendChild(heard);
+      card.appendChild(heard);
     }
 
     if (error) {
       const err = document.createElement("div");
       err.className = "meeting-card-errtext";
       err.textContent = error;
-      body.appendChild(err);
+      card.appendChild(err);
     } else {
       const ul = document.createElement("ul");
       ul.className = "meeting-bullets";
@@ -787,7 +769,7 @@
         li.textContent = b;
         ul.appendChild(li);
       });
-      body.appendChild(ul);
+      card.appendChild(ul);
 
       if (sources && sources.length) {
         const srcRow = document.createElement("div");
@@ -803,12 +785,10 @@
           }
           srcRow.appendChild(chip);
         });
-        body.appendChild(srcRow);
+        card.appendChild(srcRow);
       }
     }
 
-    card.appendChild(head);
-    card.appendChild(body);
     feedEl.appendChild(card);
     feedEl.scrollTop = feedEl.scrollHeight;
   }

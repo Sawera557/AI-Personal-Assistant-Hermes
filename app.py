@@ -28,6 +28,7 @@ can serve many tenants/users with isolated conversation memory and history.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import threading
 import uuid
@@ -39,15 +40,16 @@ log = logging.getLogger("hermes.app")
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 # Starlette's form parser yields starlette.UploadFile, which is the BASE class of
 # fastapi.UploadFile — so isinstance checks on parsed form files must use this.
+from starlette.concurrency import iterate_in_threadpool
 from starlette.datastructures import UploadFile as FormUploadFile
 
-from hermes.agent import run_turn
+from hermes.agent import run_turn, stream_turn
 from hermes.attachments import store as attachment_store
 from hermes.bills import check_paid_bills, extract_bill, fetch_gmail_body, guess_business, scan_drive, scan_gmail
 from hermes.businesses import to_business_slug, to_entity_slug
@@ -70,7 +72,7 @@ from hermes.db.bills import (
 from hermes.db import meetings as meetings_db
 from hermes.ingest import ingest_document
 from hermes.maton import MatonClient, MatonError
-from hermes.meeting_copilot import generate_ai_notes, get_guidance, prepare_brief, summarize_meeting
+from hermes.meeting_copilot import generate_ai_notes, get_guidance, get_guidance_comprehensive, prepare_brief, summarize_meeting
 from hermes.memory import store
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
@@ -358,6 +360,113 @@ async def chat(request: Request):
     return result
 
 
+@app.post("/api/chat/stream")
+async def chat_stream(request: Request):
+    """Same agent turn as /api/chat, streamed as Server-Sent Events so the
+    typed chat UI can render the reply as it's generated instead of waiting
+    for the whole turn — including every tool round-trip — to finish first.
+
+    Voice mode keeps using plain /api/chat unchanged: it needs the complete
+    reply text before it can call text-to-speech, so streaming wouldn't help
+    it and this endpoint was kept additive rather than touching that path.
+
+    Same request shape as /api/chat (JSON or multipart). Response is
+    text/event-stream: one `data: <json>\\n\\n` line per event —
+    {"type": "text", "text": "<delta>"} as the reply is generated,
+    {"type": "tool_call", "tool": "...", "input": {...}} when a tool is invoked,
+    then a final {"type": "done", "session_id", "entity_id", "reply",
+    "thinking", "tool_calls", "stop_reason"} — the same fields /api/chat
+    returns as JSON, so the frontend's finishing logic (business lock,
+    history refresh) needs no new fields to handle.
+    """
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/"):
+        form = await request.form()
+        session_id = form.get("session_id") or str(uuid.uuid4())
+        entity_id = form.get("entity_id")
+        message = (form.get("message") or "").strip()
+        voice = _truthy(form.get("voice"))
+        attachment_ids = [a for a in form.getlist("attachment_ids") if isinstance(a, str)]
+        files: list[tuple[str, str, bytes]] = []
+        for upload in form.getlist("files"):
+            if isinstance(upload, FormUploadFile) and upload.filename:
+                files.append((upload.filename, upload.content_type or "", await upload.read()))
+        attachments = _build_attachments(files)
+    else:
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001 — tolerate empty/invalid bodies
+            data = {}
+        data = data or {}
+        session_id = data.get("session_id") or str(uuid.uuid4())
+        entity_id = data.get("entity_id")
+        message = (data.get("message") or "").strip()
+        voice = _truthy(data.get("voice"))
+        attachment_ids = data.get("attachment_ids") or []
+        attachments = []
+        files = []
+
+    if not message and not attachments and not attachment_ids:
+        return JSONResponse(
+            {"error": "Provide a message, a file, or an attachment_id."}, status_code=400
+        )
+
+    content: list[dict] = []
+    for aid in attachment_ids:
+        block = attachment_store.block(str(aid), entity_id)
+        if block is None:
+            return JSONResponse({"error": f"Unknown attachment_id: {aid}"}, status_code=400)
+        content.append(block)
+    content.extend(attachments)
+    if message:
+        content.append({"type": "text", "text": message})
+
+    key = _session_key(entity_id, session_id)
+
+    # Same business-locking rule as /api/chat.
+    prior_messages = await run_in_threadpool(store.get, key)
+    if prior_messages:
+        locked = await run_in_threadpool(store.locked_business_slug, key)
+        active_business = locked or "all"
+    else:
+        active_business = (entity_id or "").strip() or "all"
+
+    file_names = [name for name, _, _ in files]
+    n_files = len(file_names) + len(attachment_ids)
+    user_text = message
+    if n_files:
+        names = ", ".join(file_names) if file_names else f"{n_files} file(s)"
+        note = f"📎 {names}"
+        user_text = f"{message}\n{note}" if message else note
+    store_entity = None if active_business == "all" else to_entity_slug(active_business)
+
+    async def event_source():
+        result: dict = {}
+        try:
+            async for event in iterate_in_threadpool(
+                stream_turn(key, content, voice, active_business)
+            ):
+                if event["type"] == "done":
+                    result = event["result"]
+                    payload = {
+                        "type": "done",
+                        "session_id": session_id,
+                        "entity_id": active_business,
+                        **result,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                else:
+                    yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:  # noqa: BLE001 — surface a clean error to the client
+            yield f"data: {json.dumps({'type': 'error', 'error': f'Agent error: {exc}'})}\n\n"
+            return
+
+        # Same history recording as /api/chat, after the stream completes.
+        store.record_turn(key, store_entity, session_id, user_text, result)
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
+
+
 @app.get("/api/conversations")
 def list_conversations(entity_id: str | None = None, q: str | None = None):
     """List this business's past conversations (newest first) for the history
@@ -538,6 +647,9 @@ class MeetingCopilotRequest(BaseModel):
     notes_so_far: str = ""           # running transcript/notes for extra context
     top_k: int = 6
     session_id: str | None = None    # continue an existing meeting; omit to start one
+    comprehensive: bool = False      # if true, use enhanced guidance pulling from all business data
+    meeting_title: str = ""          # optional: meeting title for context
+    attendees: list[dict] | None = None  # optional: attendee info for context
 
 
 @app.post("/api/meetings/copilot")
@@ -568,16 +680,22 @@ async def meeting_copilot(body: MeetingCopilotRequest):
     biz = next((b for b in businesses if b.get("slug") == business), None)
     business_name = (biz or {}).get("name") or business
 
+    # Choose guidance mode: standard or comprehensive (with all business data)
+    guidance_fn = get_guidance_comprehensive if body.comprehensive else get_guidance
+    guidance_kwargs = {
+        "entity_id": entity_slug,
+        "business_name": business_name,
+        "latest_text": body.latest_text,
+        "notes_so_far": body.notes_so_far,
+        "session_id": body.session_id,
+        "top_k": body.top_k,
+    }
+    if body.comprehensive:
+        guidance_kwargs["meeting_title"] = body.meeting_title
+        guidance_kwargs["attendees"] = body.attendees
+
     try:
-        result = await run_in_threadpool(
-            get_guidance,
-            entity_id=entity_slug,
-            business_name=business_name,
-            latest_text=body.latest_text,
-            notes_so_far=body.notes_so_far,
-            session_id=body.session_id,  # grounds guidance in THIS meeting's own brief/AI notes too
-            top_k=body.top_k,
-        )
+        result = await run_in_threadpool(guidance_fn, **guidance_kwargs)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": f"Copilot error: {exc}"}, status_code=500)
 

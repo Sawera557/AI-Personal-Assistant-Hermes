@@ -287,6 +287,7 @@
     highlightCode(bubble);
     // Lock (or reaffirm) this session's business — same rule as the typed chat.
     HermesBiz.setLock(sessionId, data.entity_id || "all");
+    if (window.updateLockNote) window.updateLockNote();
     // The spoken turn was recorded server-side — refresh the history sidebar.
     if (window.hermesReloadConversations) window.hermesReloadConversations();
     return data.reply || "";

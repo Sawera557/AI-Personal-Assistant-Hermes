@@ -95,21 +95,28 @@ def _thinking_of(content: list[dict[str, Any]]) -> str:
     return "\n".join(p for p in parts if p).strip()
 
 
-def run_turn(
+def stream_turn(
     session_id: str,
     user_content: str | list[dict[str, Any]],
     voice: bool = False,
     active_business: str | None = None,
-) -> dict[str, Any]:
-    """Run one user turn through the agent loop and return a structured result.
+):
+    """Generator version of the agent loop — yields incremental events instead
+    of blocking until the whole turn (every tool round-trip included) is done.
 
-    `voice=True` adds spoken-call style guidance so replies are short and natural
-    when read aloud; the agent's tools and abilities are otherwise identical.
+    `run_turn()` below drains this exact generator and returns one final dict,
+    so it's a strict behavioral superset: nothing that already calls
+    `run_turn()` (voice mode, `meeting_copilot.generate_ai_notes`) needs to
+    change. Only the streaming /api/chat/stream endpoint consumes the
+    incremental events directly, so the typed chat UI can render text as it's
+    generated instead of waiting for the full response.
 
-    `active_business` scopes which Maton key(s) tool calls use this turn: a real
-    business slug locks every call to that business's key; "all" lets Claude pick
-    per call via the tools' extra `business` argument; None preserves legacy
-    behavior (the plain default key, no business awareness).
+    Yields:
+      {"type": "text", "text": "<delta>"}                      — assistant text, as generated
+      {"type": "tool_call", "tool": "<name>", "input": {...}}   — about to call a tool
+      {"type": "done", "result": {...}}                         — final result, same shape run_turn() returns
+
+    Same parameters and business-scoping rules as run_turn() (see below).
     """
     client = _anthropic()
     tools = build_tools(active_business)
@@ -126,7 +133,7 @@ def run_turn(
     stop_reason = None
 
     for _ in range(Config.MAX_TOOL_ITERATIONS):
-        resp = client.messages.create(
+        with client.messages.stream(
             model=Config.MODEL,
             max_tokens=Config.MAX_TOKENS,
             system=_system_prompt(voice, active_business),
@@ -134,7 +141,11 @@ def run_turn(
             thinking={"type": "adaptive", "display": "summarized"},
             output_config={"effort": Config.EFFORT},
             messages=messages,
-        )
+        ) as stream:
+            for delta in stream.text_stream:
+                yield {"type": "text", "text": delta}
+            resp = stream.get_final_message()
+
         stop_reason = resp.stop_reason
         assistant_content = _dump(resp.content)
         messages.append({"role": "assistant", "content": assistant_content})
@@ -149,6 +160,7 @@ def run_turn(
                     continue
                 name = block["name"]
                 tool_input = block.get("input", {}) or {}
+                yield {"type": "tool_call", "tool": name, "input": tool_input}
                 content_str, is_error = dispatch(name, tool_input, active_business)
                 tool_trace.append(
                     {
@@ -189,9 +201,38 @@ def run_turn(
 
     store.set(session_id, messages)
 
-    return {
-        "reply": reply or "(no response)",
-        "thinking": thinking_summary or None,
-        "tool_calls": tool_trace,
-        "stop_reason": stop_reason,
+    yield {
+        "type": "done",
+        "result": {
+            "reply": reply or "(no response)",
+            "thinking": thinking_summary or None,
+            "tool_calls": tool_trace,
+            "stop_reason": stop_reason,
+        },
     }
+
+
+def run_turn(
+    session_id: str,
+    user_content: str | list[dict[str, Any]],
+    voice: bool = False,
+    active_business: str | None = None,
+) -> dict[str, Any]:
+    """Run one user turn through the agent loop and return a structured result.
+
+    `voice=True` adds spoken-call style guidance so replies are short and natural
+    when read aloud; the agent's tools and abilities are otherwise identical.
+
+    `active_business` scopes which Maton key(s) tool calls use this turn: a real
+    business slug locks every call to that business's key; "all" lets Claude pick
+    per call via the tools' extra `business` argument; None preserves legacy
+    behavior (the plain default key, no business awareness).
+
+    Blocking/one-shot — internally just drains stream_turn() and returns its
+    final event. Use stream_turn() directly for incremental output.
+    """
+    result: dict[str, Any] = {}
+    for event in stream_turn(session_id, user_content, voice, active_business):
+        if event["type"] == "done":
+            result = event["result"]
+    return result
