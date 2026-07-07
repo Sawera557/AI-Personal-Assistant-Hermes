@@ -564,6 +564,21 @@ def delete_attachment(attachment_id: str, entity_id: str | None = None):
     return JSONResponse({"error": "Attachment not found."}, status_code=404)
 
 
+@app.get("/api/media/presign")
+def presign_media(uri: str):
+    """Return a short-lived HTTPS URL for an s3:// URI produced by a tool call
+    (e.g. wati_get_media), so the chat UI can render it inline — both live and
+    when a past conversation is reopened (presigned URLs expire, so the raw
+    s3:// URI is what's persisted in the transcript, and this is called fresh
+    on every render). Only presigns URIs inside our own configured bucket."""
+    if not uri.startswith(f"s3://{s3.bucket()}/"):
+        return JSONResponse({"error": "Unknown or disallowed URI."}, status_code=400)
+    url = s3.presign(uri)
+    if not url:
+        return JSONResponse({"error": "Could not generate a link."}, status_code=404)
+    return {"url": url}
+
+
 @app.post("/api/documents")
 async def upload_documents(request: Request):
     """Ingest files into the knowledge base so they're searchable by meaning.

@@ -136,16 +136,76 @@ function addMessage(role, html) {
   return wrap;
 }
 
+// Renders a media reference (image/file) a tool call produced — e.g. WATI
+// media saved to S3 by wati_get_media. The actual URL is resolved lazily by
+// hydrateMedia() since only the durable s3:// URI is persisted in history.
+function renderToolMedia(media) {
+  if (!media || !media.s3_uri) return "";
+  const label = escapeHtml(media.filename || "file");
+  const uri = escapeHtml(media.s3_uri);
+  if ((media.content_type || "").startsWith("image/")) {
+    return `<div class="tool-media"><img class="tool-media-img" data-s3-uri="${uri}" alt="${label}" title="${label}"></div>`;
+  }
+  return `<div class="tool-media"><a class="tool-media-file" data-s3-uri="${uri}" href="#" title="${label}">📎 ${label}</a></div>`;
+}
+
 function renderToolTrace(tools) {
   if (!tools || !tools.length) return "";
   const items = tools.map((t) => {
     const cls = t.ok ? "tool-ok" : "tool-err";
     const dot = t.ok ? "✓" : "✗";
     return `<details><summary><span class="${cls}">${dot}</span> ${escapeHtml(t.tool)}</summary>` +
-      `<pre>${escapeHtml(JSON.stringify(t.input, null, 2))}</pre></details>`;
+      `<pre>${escapeHtml(JSON.stringify(t.input, null, 2))}</pre></details>${renderToolMedia(t.media)}`;
   });
   return `<div class="tools">${items.join("")}</div>`;
 }
+
+// Resolves every [data-s3-uri] placeholder inside `container` to a fresh
+// presigned URL. Called after any innerHTML that may include renderToolMedia()
+// output — both the live streaming "done" handler and history replay.
+async function hydrateMedia(container) {
+  const nodes = container.querySelectorAll("[data-s3-uri]");
+  await Promise.all(Array.from(nodes).map(async (el) => {
+    const uri = el.getAttribute("data-s3-uri");
+    if (!uri) return;
+    try {
+      const res = await fetch(`/api/media/presign?uri=${encodeURIComponent(uri)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.url) return;
+      if (el.tagName === "IMG") el.src = data.url;
+      else el.href = data.url;
+    } catch (_) { /* leave placeholder as-is */ }
+  }));
+}
+
+// ---- Image lightbox — click a chat image (e.g. WATI media) to view it full-size ----
+const lightboxEl = document.createElement("div");
+lightboxEl.className = "lightbox-overlay";
+lightboxEl.innerHTML = `<img class="lightbox-img" alt="">`;
+document.body.appendChild(lightboxEl);
+const lightboxImg = lightboxEl.querySelector(".lightbox-img");
+
+function openLightbox(src, alt) {
+  lightboxImg.src = src;
+  lightboxImg.alt = alt || "";
+  lightboxEl.classList.add("open");
+}
+function closeLightbox() {
+  lightboxEl.classList.remove("open");
+  lightboxImg.src = "";
+}
+lightboxEl.addEventListener("click", closeLightbox);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeLightbox();
+});
+
+// Event delegation: images render asynchronously (streaming + history replay),
+// so listen on the whole message list instead of binding per-<img>.
+messagesEl.addEventListener("click", (e) => {
+  const img = e.target.closest(".tool-media-img");
+  if (img && img.src) openLightbox(img.src, img.alt);
+});
 
 function renderThinking(thinking) {
   if (!thinking) return "";
@@ -183,6 +243,7 @@ function renderAssistantTurn(turn) {
   bubble.innerHTML =
     renderMarkdown(turn.text) + renderThinking(turn.thinking) + renderToolTrace(turn.tool_calls);
   highlightCode(bubble);
+  hydrateMedia(bubble);
 }
 
 function renderTranscript(transcript) {
@@ -408,6 +469,7 @@ async function sendStreaming(body, bubble) {
     bubble.innerHTML =
       renderMarkdown(final.reply) + renderThinking(final.thinking) + renderToolTrace(final.tool_calls);
     highlightCode(bubble);
+    hydrateMedia(bubble);
     // Lock (or reaffirm) this session's business from the server's
     // authoritative resolved value — never a bare null ("all" = open).
     HermesBiz.setLock(sessionId, final.entity_id || "all");

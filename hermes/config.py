@@ -31,6 +31,7 @@ APP_LABELS: dict[str, str] = {
     "google-calendar": "Google Calendar",
     "google-mail": "Gmail",
     "zoom": "Zoom (video meetings)",
+    "wati": "WATI (WhatsApp Business messaging)",
 }
 
 
@@ -165,7 +166,7 @@ class Config:
         raw = os.getenv(
             "HERMES_APPS",
             "quickbooks,pdf-co,google-contacts,fathom,google-meet,google-forms,"
-            "google-sheets,google-docs,google-drive,google-calendar,google-mail",
+            "google-sheets,google-docs,google-drive,google-calendar,google-mail,wati",
         )
         return [a.strip() for a in raw.split(",") if a.strip()]
 

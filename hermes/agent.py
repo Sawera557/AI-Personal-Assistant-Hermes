@@ -48,10 +48,11 @@ def _system_prompt(voice: bool = False, active_business: str | None = None) -> s
         "If it isn't connected, call `maton_create_connection` and give the user the "
         "returned OAuth link to authorize it.\n"
         "- Always discover record IDs with read-only GET calls before performing a write.\n"
-        "- For any write or destructive action (sending email, creating/editing calendar "
-        "events, modifying QuickBooks data, deleting Drive files, etc.), first clearly "
-        "summarize exactly what you will do, then STOP and ask the user to confirm. Only "
-        "perform the write after they explicitly approve.\n"
+        "- For any write or destructive action (sending email, sending a WhatsApp/WATI "
+        "message or file, assigning a WATI operator, creating/editing calendar events, "
+        "modifying QuickBooks data, deleting Drive files, etc.), first clearly summarize "
+        "exactly what you will do, then STOP and ask the user to confirm. Only perform "
+        "the write after they explicitly approve.\n"
         "- Never substitute one business's data or connected account for another's. If a "
         "business isn't connected yet, tell the user plainly instead of guessing or using "
         "a different business's account.\n"
@@ -161,14 +162,15 @@ def stream_turn(
                 name = block["name"]
                 tool_input = block.get("input", {}) or {}
                 yield {"type": "tool_call", "tool": name, "input": tool_input}
-                content_str, is_error = dispatch(name, tool_input, active_business)
-                tool_trace.append(
-                    {
-                        "tool": name,
-                        "input": tool_input,
-                        "ok": not is_error,
-                    }
-                )
+                content_str, is_error, media = dispatch(name, tool_input, active_business)
+                trace_entry = {
+                    "tool": name,
+                    "input": tool_input,
+                    "ok": not is_error,
+                }
+                if media:
+                    trace_entry["media"] = media
+                tool_trace.append(trace_entry)
                 tool_results.append(
                     {
                         "type": "tool_result",
