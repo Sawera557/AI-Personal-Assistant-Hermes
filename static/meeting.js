@@ -582,11 +582,12 @@
   function renderSessionsList() {
     if (!sessionsEl) return;
     sessionsEl.innerHTML = "";
+    const all = HermesBiz.current === "all" || !HermesBiz.current;
     if (sessionsEmptyEl) {
       sessionsEmptyEl.style.display = lastLoadedSessions.length ? "none" : "block";
       sessionsEmptyEl.textContent = sessionQuery
         ? "No meetings match your search."
-        : "No meetings yet for this business.";
+        : (all ? "No meetings yet." : "No meetings yet for this business.");
     }
     lastLoadedSessions.forEach((s) => {
       const li = document.createElement("li");
@@ -595,8 +596,15 @@
       const openBtn = document.createElement("button");
       openBtn.className = "convo-open";
       openBtn.title = s.title;
-      const snippetHtml = s.turn_count
-        ? `<span class="convo-snippet">${s.turn_count} turn${s.turn_count === 1 ? "" : "s"}</span>`
+      // In "All Businesses" mode, label each meeting with the business it
+      // belongs to (the list mixes businesses, so the title alone is
+      // ambiguous); scoped to one business, the tag would be redundant.
+      const bizInfo = all && s.business ? HermesBiz.find(s.business) : null;
+      const meta = [];
+      if (bizInfo) meta.push(`${bizInfo.emoji || "🏢"} ${escapeHtml(bizInfo.name)}`);
+      if (s.turn_count) meta.push(`${s.turn_count} turn${s.turn_count === 1 ? "" : "s"}`);
+      const snippetHtml = meta.length
+        ? `<span class="convo-snippet">${meta.join(" · ")}</span>`
         : "";
       openBtn.innerHTML = `<span class="convo-title">${escapeHtml(s.title)}</span>${snippetHtml}`;
       openBtn.onclick = () => { switchSubtab("live"); openSession(s.session_id); };
@@ -616,9 +624,15 @@
 
   async function loadSessions() {
     const biz = HermesBiz.current;
-    if (!biz || biz === "all") { lastLoadedSessions = []; renderSessionsList(); return; }
+    // "All Businesses": omit the business filter so the backend returns every
+    // business's meetings (meetings_db.sessions(None)); a specific business
+    // scopes to just that one. Either way the list still populates.
+    const all = !biz || biz === "all";
     try {
-      const res = await fetch(`/api/meetings/sessions?business=${encodeURIComponent(biz)}`);
+      const url = all
+        ? `/api/meetings/sessions`
+        : `/api/meetings/sessions?business=${encodeURIComponent(biz)}`;
+      const res = await fetch(url);
       const data = await res.json();
       let list = data.sessions || [];
       if (sessionQuery) {
