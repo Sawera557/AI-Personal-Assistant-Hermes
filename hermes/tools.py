@@ -78,6 +78,15 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             "description": "Optional status filter.",
         },
     }
+    drive_props: dict[str, Any] = {
+        "file_id": {
+            "type": "string",
+            "description": (
+                "The Drive file's `id`, from a prior maton_request call to "
+                "app='google-drive', path='drive/v3/files'."
+            ),
+        },
+    }
 
     if fan_out:
         connected = Config.connected_business_slugs()
@@ -92,6 +101,7 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
         }
         request_props["business"] = business_param
         connections_props["business"] = business_param
+        drive_props["business"] = business_param
 
     tools: list[dict[str, Any]] = [
         {
@@ -105,6 +115,29 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
                 "app='google-sheets', path='/v4/spreadsheets/{id}/values/Sheet1!A1:C10'. "
                 "app='quickbooks', path='/quickbooks/v2/company/:realmId/query' "
                 "(`:realmId` is auto-substituted). "
+                "Notion (app='notion') — everything is JSON, no OCR/binary handling needed: "
+                "search the whole workspace with method='POST', path='/v1/search', "
+                "body={'query': '...', 'filter': {'value': 'page'|'database', 'property': 'object'}}. "
+                "List/filter a database's rows with method='POST', "
+                "path='/v1/databases/{database_id}/query', body={'filter': {...}, 'sorts': [...]} "
+                "(get the database_id and its property schema first via method='GET', "
+                "path='/v1/databases/{database_id}' so you use the right property names/types). "
+                "Read a single page's properties with method='GET', path='/v1/pages/{page_id}'; "
+                "read its body content with method='GET', path='/v1/blocks/{page_id}/children'. "
+                "Read comments with method='GET', path='/v1/comments?block_id={page_or_block_id}'. "
+                "Create a page/database row with method='POST', path='/v1/pages', "
+                "body={'parent': {'database_id': '...'} or {'page_id': '...'}, 'properties': {...}} "
+                "— each property value must match its type in the database schema, e.g. "
+                "{'Name': {'title': [{'text': {'content': '...'}}]}}, "
+                "{'Status': {'status': {'name': 'Done'}}}, {'Due': {'date': {'start': 'YYYY-MM-DD'}}}. "
+                "Add content blocks to an existing page with method='PATCH', "
+                "path='/v1/blocks/{page_id}/children', body={'children': [{'object': 'block', "
+                "'type': 'paragraph', 'paragraph': {'rich_text': [{'text': {'content': '...'}}]}}]}. "
+                "Post a comment with method='POST', path='/v1/comments', "
+                "body={'parent': {'page_id': '...'}, 'rich_text': [{'text': {'content': '...'}}]}. "
+                "Update properties (incl. status/assignee/due date) or archive/delete a page with "
+                "method='PATCH', path='/v1/pages/{page_id}', body={'properties': {...}} or "
+                "body={'archived': true}. "
                 "Always do read-only (GET) calls to discover IDs before any write. "
                 "Do NOT call this for POST/PUT/PATCH/DELETE until the user has explicitly "
                 "confirmed the change."
@@ -145,6 +178,23 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["app"],
+            },
+        },
+        {
+            "name": "drive_read_file",
+            "description": (
+                "Fetch a Google Drive file's actual bytes (PDF or image) and hand them to "
+                "you to read directly — you read PDFs and images natively, no OCR step "
+                "needed. Use this whenever you need to see what's INSIDE a Drive file, not "
+                "just its name/metadata (which maton_request's `drive/v3/files` list already "
+                "gives you, including the `id` this tool needs). Only PDF/JPEG/PNG content "
+                "can be shown inline; other file types, or files the gateway can't proxy as "
+                "binary, come back as metadata + a webViewLink instead."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": drive_props,
+                "required": ["file_id"],
             },
         },
     ]
@@ -348,8 +398,12 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
         )
 
     if Config.WEB_SEARCH:
-        tools.append({"type": "web_search_20260209", "name": "web_search"})
-        tools.append({"type": "web_fetch_20260209", "name": "web_fetch"})
+        # allowed_callers=["direct"] restricts these to normal tool_use calls
+        # (what the dispatch loop already handles) instead of also allowing
+        # the programmatic/code-execution caller, which not every model
+        # supports (e.g. Claude Haiku rejects the request outright without it).
+        tools.append({"type": "web_search_20260209", "name": "web_search", "allowed_callers": ["direct"]})
+        tools.append({"type": "web_fetch_20260209", "name": "web_fetch", "allowed_callers": ["direct"]})
 
     return tools
 
@@ -366,7 +420,22 @@ WATI_TOOLS = {
 }
 
 # Names that Hermes executes locally (everything else is server-side).
-LOCAL_TOOLS = {"maton_request", "maton_list_connections", "maton_create_connection", *WATI_TOOLS}
+LOCAL_TOOLS = {
+    "maton_request", "maton_list_connections", "maton_create_connection",
+    "drive_read_file", *WATI_TOOLS,
+}
+
+# Drive mime types we can hand to Claude as a native document/image block, and
+# the magic bytes that confirm Maton actually proxied real binary content and
+# not a JSON error body pretending to be a file (mirrors ingestion-service's
+# ingestion/connectors/drive.py, which proved this download path works).
+_DRIVE_READABLE_MIMES = {"application/pdf", "image/jpeg", "image/jpg", "image/png"}
+_DRIVE_MAGIC = {
+    "application/pdf": (b"%PDF",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/jpg": (b"\xff\xd8\xff",),
+    "image/png": (b"\x89PNG",),
+}
 
 
 def _resolve_client(tool_input: dict[str, Any], active_business: str | None) -> MatonClient:
@@ -456,6 +525,89 @@ def _wati_send_file_args(
     raise MatonError("Provide either `attachment_id` or `file_url`.")
 
 
+def _drive_read_file(
+    client: MatonClient, tool_input: dict[str, Any], active_business: str | None
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]] | None]:
+    """Download a Drive file's real bytes through Maton and hand them back as a
+    native document/image content block so Claude can read the file directly —
+    no OCR step needed. Falls back to metadata + webViewLink when the type
+    isn't PDF/JPEG/PNG, or the gateway can't proxy real binary content for it
+    (checked via magic bytes — the same check ingestion-service's Drive
+    connector uses, which proved this `alt=media` download path works)."""
+    file_id = tool_input["file_id"]
+
+    meta_resp = client.request(
+        "google-drive", "GET", f"drive/v3/files/{file_id}",
+        query={"fields": "id,name,mimeType,webViewLink"},
+    )
+    if not meta_resp.get("ok"):
+        return meta_resp, None, None
+
+    meta = meta_resp.get("data") or {}
+    name = meta.get("name", "untitled")
+    mime = (meta.get("mimeType") or "").lower()
+    web_link = meta.get("webViewLink")
+
+    def _locator(note: str) -> dict[str, Any]:
+        return {
+            "status": 200,
+            "ok": True,
+            "data": {
+                "readable": False, "name": name, "mimeType": mime,
+                "webViewLink": web_link, "note": note,
+            },
+        }
+
+    if mime not in _DRIVE_READABLE_MIMES:
+        return _locator("Not a PDF/JPEG/PNG — share the webViewLink with the user instead."), None, None
+
+    dl = client.download_binary(
+        "google-drive", "GET", f"drive/v3/files/{file_id}", query={"alt": "media"},
+    )
+    raw: bytes = dl.get("raw") or b""
+    magic_ok = any(raw[: len(m)] == m for m in _DRIVE_MAGIC.get(mime, ()))
+    if not dl.get("ok") or not magic_ok:
+        return _locator(
+            "Couldn't fetch readable binary content for this file — share the "
+            "webViewLink with the user instead."
+        ), None, None
+    if len(raw) > _MAX_FETCH_BYTES:
+        return _locator(
+            f"File exceeds the {_MAX_FETCH_BYTES // (1024 * 1024)}MB limit for inline "
+            "reading — share the webViewLink with the user instead."
+        ), None, None
+
+    b64 = base64.standard_b64encode(raw).decode("utf-8")
+    block_type = "document" if mime == "application/pdf" else "image"
+    block: dict[str, Any] = {
+        "type": block_type,
+        "source": {"type": "base64", "media_type": mime, "data": b64},
+    }
+    if block_type == "document":
+        block["title"] = name
+
+    media: dict[str, Any] | None = None
+    if storage.enabled():
+        scope = _attachment_scope(tool_input, active_business) or "unsorted"
+        ext = f".{name.rsplit('.', 1)[-1]}" if "." in name else ""
+        key = f"drive-files/{scope}/{uuid.uuid4().hex}{ext}"
+        s3_uri = storage.put(key, raw, mime)
+        media = {
+            "kind": "file", "s3_uri": s3_uri, "content_type": mime,
+            "filename": name, "size_bytes": len(raw),
+        }
+
+    result = {
+        "status": 200,
+        "ok": True,
+        "data": {
+            "readable": True, "name": name, "mimeType": mime,
+            "webViewLink": web_link, "size_bytes": len(raw),
+        },
+    }
+    return result, media, [block]
+
+
 def _wati_get_media(
     client: MatonClient, tool_input: dict[str, Any], active_business: str | None
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -531,15 +683,20 @@ def dispatch(
     name: str,
     tool_input: dict[str, Any],
     active_business: str | None = None,
-) -> tuple[str, bool, dict[str, Any] | None]:
-    """Execute a local tool. Returns (content_string, is_error, media).
+) -> tuple[str, bool, dict[str, Any] | None, list[dict[str, Any]] | None]:
+    """Execute a local tool. Returns (content_string, is_error, media, blocks).
 
     `media` is non-None only for tools that fetched a file worth persisting
-    and showing in the chat UI (currently just wati_get_media) — the caller
+    and showing in the chat UI (wati_get_media, drive_read_file) — the caller
     (hermes.agent) folds it into that tool call's trace entry so it survives
     into the conversation transcript.
+
+    `blocks` is non-None only for drive_read_file: real document/image content
+    blocks the caller appends to the conversation so Claude can read the file
+    directly on its next turn, instead of only seeing a text tool result.
     """
     media: dict[str, Any] | None = None
+    blocks: list[dict[str, Any]] | None = None
     try:
         if name == "maton_create_connection":
             # Connection provisioning is interactive/rare — keep it scoped to a
@@ -566,6 +723,8 @@ def dispatch(
                 result = client.list_connections(
                     app=tool_input.get("app"), status=tool_input.get("status")
                 )
+            elif name == "drive_read_file":
+                result, media, blocks = _drive_read_file(client, tool_input, active_business)
             elif name in WATI_TOOLS:
                 wati = WatiClient(client)
                 if name == "wati_list_contacts":
@@ -617,13 +776,13 @@ def dispatch(
                 else:  # wati_get_media
                     result, media = _wati_get_media(client, tool_input, active_business)
             else:
-                return (f"Unknown tool: {name}", True, None)
+                return (f"Unknown tool: {name}", True, None, None)
     except MatonError as exc:
-        return (json.dumps({"error": str(exc)}), True, None)
+        return (json.dumps({"error": str(exc)}), True, None, None)
     except KeyError as exc:
-        return (json.dumps({"error": f"Missing required argument: {exc}"}), True, None)
+        return (json.dumps({"error": f"Missing required argument: {exc}"}), True, None, None)
 
     # A non-2xx upstream status is surfaced to the model but not treated as a
     # hard tool error, so Claude can read the error body and adjust.
     is_error = not result.get("ok", False)
-    return (json.dumps(result, default=str), is_error, media)
+    return (json.dumps(result, default=str), is_error, media, blocks if not is_error else None)

@@ -92,7 +92,12 @@
 
           <div class="panel">
             <h2>Model</h2>
-            <code class="model">{{ model }}</code>
+            <select id="model-select" class="voice-select" aria-label="Agent model">
+              {% for m in model_options %}
+              <option value="{{ m.id }}" {% if m.id == active_model %}selected{% endif %}>{{ m.label }}</option>
+              {% endfor %}
+            </select>
+            <p class="hint" id="model-select-status" hidden></p>
           </div>
 
           {% if voice_enabled %}
@@ -456,6 +461,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="/static/business.js?v={{ v }}"></script>
+  <script src="/static/model.js?v={{ v }}"></script>
   <script src="/static/app.js?v={{ v }}"></script>
   <script src="/static/bills.js?v={{ v }}"></script>
   <script src="/static/meeting.js?v={{ v }}"></script>

@@ -1,23 +1,45 @@
-"""The Hermes agent: a Claude tool-use loop over the Maton tools."""
+"""The Hermes agent: a tool-use loop over the Maton tools, on Claude or OpenAI.
+
+Which model runs the loop is a global, switchable setting (see hermes.models)
+rather than hardcoded — but everything the agent can DO (Maton/WATI tools,
+business scoping, streaming, conversation memory) is identical either way.
+
+Conversation history is always stored in Anthropic's content-block shape
+(see `_dump`), regardless of which provider generated it. That keeps the rest
+of the app (storage, transcript replay, tool dispatch) provider-agnostic, and
+means switching models mid-conversation doesn't lose history — `_to_openai_messages`
+below just translates that shared format into OpenAI's wire format per call.
+"""
 from __future__ import annotations
 
 import datetime
+import json
 from typing import Any
 
 import anthropic
+import openai
 
+from . import models
 from .config import Config
 from .memory import store
 from .tools import LOCAL_TOOLS, build_tools, dispatch
 
-_client: anthropic.Anthropic | None = None
+_anthropic_client: anthropic.Anthropic | None = None
+_openai_client: openai.OpenAI | None = None
 
 
 def _anthropic() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
-    return _client
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+    return _anthropic_client
+
+
+def _openai() -> openai.OpenAI:
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = openai.OpenAI(api_key=Config.OPENAI_API_KEY, base_url=Config.OPENAI_BASE_URL)
+    return _openai_client
 
 
 # Extra guidance for voice mode — the reply is spoken aloud on a phone-style call.
@@ -96,6 +118,225 @@ def _thinking_of(content: list[dict[str, Any]]) -> str:
     return "\n".join(p for p in parts if p).strip()
 
 
+# ---- OpenAI translation --------------------------------------------------
+# Everything below exists so the stored conversation (Anthropic content-block
+# shape) and the tool definitions (Anthropic input_schema shape) can also
+# drive an OpenAI chat-completions call. Nothing else in the file needs to
+# know which provider is active.
+
+def _to_openai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Anthropic tool defs -> OpenAI function-calling defs.
+
+    Anthropic's server-side tools (web_search/web_fetch) have no input_schema
+    and no OpenAI equivalent here, so they're dropped — web browsing simply
+    isn't available while an OpenAI model is active.
+    """
+    out = []
+    for t in tools:
+        schema = t.get("input_schema")
+        if not schema:
+            continue
+        out.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": schema,
+                },
+            }
+        )
+    return out
+
+
+def _openai_user_block(block: dict[str, Any]) -> dict[str, Any] | None:
+    btype = block.get("type")
+    if btype == "text":
+        return {"type": "text", "text": block.get("text", "")}
+    if btype == "image":
+        source = block.get("source", {})
+        if source.get("type") == "base64":
+            url = f"data:{source.get('media_type', 'image/png')};base64,{source.get('data', '')}"
+            return {"type": "image_url", "image_url": {"url": url}}
+        return None
+    if btype == "document":
+        # OpenAI's chat-completions API has no direct PDF input; degrade to a
+        # text note rather than silently dropping the attachment.
+        title = block.get("title", "file")
+        return {
+            "type": "text",
+            "text": (
+                f"[Attached document '{title}' — this model can't read PDF content "
+                "directly. Ask the user to paste the relevant text, or switch to a "
+                "Claude model to read it.]"
+            ),
+        }
+    return None
+
+
+def _to_openai_messages(system: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Translate the stored Anthropic-block message history into OpenAI's
+    chat-completions message format for one API call."""
+    out: list[dict[str, Any]] = [{"role": "system", "content": system}]
+    for m in messages:
+        role = m["role"]
+        content = m["content"]
+        if isinstance(content, str):
+            out.append({"role": role, "content": content})
+            continue
+
+        if role == "user":
+            tool_results = [b for b in content if b.get("type") == "tool_result"]
+            if tool_results:
+                for tr in tool_results:
+                    c = tr.get("content")
+                    if isinstance(c, list):
+                        c = "\n".join(x.get("text", "") for x in c if isinstance(x, dict))
+                    out.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tr["tool_use_id"],
+                            "content": c if isinstance(c, str) else json.dumps(c),
+                        }
+                    )
+                # Real file content (e.g. drive_read_file's document/image block)
+                # rides alongside tool_result blocks in the same stored turn — the
+                # "tool" role can't carry it, so it's translated into a follow-up
+                # user message instead of being silently dropped.
+                extra = [b for b in content if b.get("type") != "tool_result"]
+                parts = [b for b in (_openai_user_block(b) for b in extra) if b]
+                if parts:
+                    out.append({"role": "user", "content": parts})
+                continue
+            parts = [b for b in (_openai_user_block(b) for b in content) if b]
+            out.append({"role": "user", "content": parts or ""})
+            continue
+
+        # assistant
+        text = _text_of(content)
+        tool_uses = [b for b in content if b.get("type") == "tool_use"]
+        msg: dict[str, Any] = {"role": "assistant", "content": text or None}
+        if tool_uses:
+            msg["tool_calls"] = [
+                {
+                    "id": tu["id"],
+                    "type": "function",
+                    "function": {"name": tu["name"], "arguments": json.dumps(tu.get("input") or {})},
+                }
+                for tu in tool_uses
+            ]
+        out.append(msg)
+    return out
+
+
+# Normalize OpenAI's finish_reason vocabulary onto Anthropic's stop_reason
+# vocabulary, so the shared tool-dispatch loop in stream_turn() only has to
+# handle one set of values.
+_OPENAI_STOP_MAP = {
+    "tool_calls": "tool_use",
+    "stop": "end_turn",
+    "length": "max_tokens",
+    "content_filter": "refusal",
+}
+
+
+def _anthropic_turn(
+    model_id: str,
+    tools: list[dict[str, Any]],
+    system: str,
+    messages: list[dict[str, Any]],
+):
+    """Stream one Claude API call. Yields text deltas, then a final
+    {"type": "_final", "content": [...], "stop_reason": "..."} event."""
+    # Haiku rejects adaptive thinking outright ("adaptive thinking is not
+    # supported on this model") — only the more capable tiers support it.
+    extra: dict[str, Any] = {}
+    if "haiku" not in model_id.lower():
+        extra["thinking"] = {"type": "adaptive", "display": "summarized"}
+        extra["output_config"] = {"effort": Config.EFFORT}
+
+    with _anthropic().messages.stream(
+        model=model_id,
+        max_tokens=Config.MAX_TOKENS,
+        system=system,
+        tools=tools,
+        messages=messages,
+        **extra,
+    ) as stream:
+        for delta in stream.text_stream:
+            yield {"type": "text", "text": delta}
+        resp = stream.get_final_message()
+    yield {"type": "_final", "content": _dump(resp.content), "stop_reason": resp.stop_reason}
+
+
+def _openai_turn(
+    model_id: str,
+    tools: list[dict[str, Any]],
+    system: str,
+    messages: list[dict[str, Any]],
+):
+    """Stream one OpenAI chat-completions call. Same event shape as
+    `_anthropic_turn`, with the assistant content normalized into Anthropic's
+    content-block shape and the finish_reason normalized via _OPENAI_STOP_MAP."""
+    openai_tools = _to_openai_tools(tools)
+    stream = _openai().chat.completions.create(
+        model=model_id,
+        max_completion_tokens=Config.MAX_TOKENS,
+        messages=_to_openai_messages(system, messages),
+        tools=openai_tools or openai.NOT_GIVEN,
+        stream=True,
+    )
+
+    text_parts: list[str] = []
+    calls: dict[int, dict[str, str | None]] = {}
+    finish_reason: str | None = None
+
+    for chunk in stream:
+        if not chunk.choices:
+            continue
+        choice = chunk.choices[0]
+        delta = choice.delta
+        if delta and delta.content:
+            text_parts.append(delta.content)
+            yield {"type": "text", "text": delta.content}
+        if delta and delta.tool_calls:
+            for tc in delta.tool_calls:
+                slot = calls.setdefault(tc.index, {"id": None, "name": "", "arguments": ""})
+                if tc.id:
+                    slot["id"] = tc.id
+                if tc.function and tc.function.name:
+                    slot["name"] = (slot["name"] or "") + tc.function.name
+                if tc.function and tc.function.arguments:
+                    slot["arguments"] = (slot["arguments"] or "") + tc.function.arguments
+        if choice.finish_reason:
+            finish_reason = choice.finish_reason
+
+    content: list[dict[str, Any]] = []
+    text = "".join(text_parts).strip()
+    if text:
+        content.append({"type": "text", "text": text})
+    for idx in sorted(calls):
+        call = calls[idx]
+        try:
+            tool_input = json.loads(call["arguments"] or "{}")
+        except ValueError:
+            tool_input = {}
+        content.append(
+            {
+                "type": "tool_use",
+                "id": call["id"] or f"call_{idx}",
+                "name": call["name"] or "",
+                "input": tool_input,
+            }
+        )
+
+    yield {
+        "type": "_final",
+        "content": content,
+        "stop_reason": _OPENAI_STOP_MAP.get(finish_reason, "end_turn"),
+    }
+
+
 def stream_turn(
     session_id: str,
     user_content: str | list[dict[str, Any]],
@@ -119,7 +360,8 @@ def stream_turn(
 
     Same parameters and business-scoping rules as run_turn() (see below).
     """
-    client = _anthropic()
+    model_id = models.active_model()
+    provider = models.provider_of(model_id)
     tools = build_tools(active_business)
 
     if isinstance(user_content, str):
@@ -134,21 +376,21 @@ def stream_turn(
     stop_reason = None
 
     for _ in range(Config.MAX_TOOL_ITERATIONS):
-        with client.messages.stream(
-            model=Config.MODEL,
-            max_tokens=Config.MAX_TOKENS,
-            system=_system_prompt(voice, active_business),
-            tools=tools,
-            thinking={"type": "adaptive", "display": "summarized"},
-            output_config={"effort": Config.EFFORT},
-            messages=messages,
-        ) as stream:
-            for delta in stream.text_stream:
-                yield {"type": "text", "text": delta}
-            resp = stream.get_final_message()
+        system_prompt = _system_prompt(voice, active_business)
+        turn = (
+            _anthropic_turn(model_id, tools, system_prompt, messages)
+            if provider == "anthropic"
+            else _openai_turn(model_id, tools, system_prompt, messages)
+        )
 
-        stop_reason = resp.stop_reason
-        assistant_content = _dump(resp.content)
+        assistant_content: list[dict[str, Any]] = []
+        for event in turn:
+            if event["type"] == "_final":
+                assistant_content = event["content"]
+                stop_reason = event["stop_reason"]
+            else:
+                yield event
+
         messages.append({"role": "assistant", "content": assistant_content})
 
         if t := _thinking_of(assistant_content):
@@ -156,13 +398,14 @@ def stream_turn(
 
         if stop_reason == "tool_use":
             tool_results = []
+            extra_blocks: list[dict[str, Any]] = []
             for block in assistant_content:
                 if block.get("type") != "tool_use" or block.get("name") not in LOCAL_TOOLS:
                     continue
                 name = block["name"]
                 tool_input = block.get("input", {}) or {}
                 yield {"type": "tool_call", "tool": name, "input": tool_input}
-                content_str, is_error, media = dispatch(name, tool_input, active_business)
+                content_str, is_error, media, blocks = dispatch(name, tool_input, active_business)
                 trace_entry = {
                     "tool": name,
                     "input": tool_input,
@@ -179,8 +422,13 @@ def stream_turn(
                         "is_error": is_error,
                     }
                 )
+                if blocks:
+                    extra_blocks.extend(blocks)
             if tool_results:
-                messages.append({"role": "user", "content": tool_results})
+                # Real file content (e.g. drive_read_file) rides alongside the tool
+                # results in the same user turn, so Claude can read it natively on
+                # the very next turn instead of only seeing a text tool result.
+                messages.append({"role": "user", "content": [*tool_results, *extra_blocks]})
                 continue
             # tool_use stop but only server-side tools — let the model finish.
             break

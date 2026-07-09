@@ -18,6 +18,7 @@ Endpoints:
     POST /api/voice/speak        — text -> speech (returns audio bytes)
     GET  /api/voice/voices       — list available TTS voices + current default
     GET/POST /api/connections    — list / create Maton app connections
+    GET/POST /api/settings/model — read/switch the agent's active model (Claude/OpenAI)
     POST /api/reset              — clear a conversation's history
 
 Interactive docs are auto-generated at /docs (Swagger) and /redoc.
@@ -74,6 +75,7 @@ from hermes.ingest import ingest_document
 from hermes.maton import MatonClient, MatonError
 from hermes.meeting_copilot import generate_ai_notes, get_guidance, get_guidance_comprehensive, prepare_brief, summarize_meeting
 from hermes.memory import store
+from hermes import models as hermes_models
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
@@ -213,7 +215,8 @@ def index(request: Request):
         name="index.html",
         context={
             "apps": Config.apps(),
-            "model": Config.MODEL,
+            "model_options": hermes_models.options(),
+            "active_model": hermes_models.active_model(),
             "web_search": Config.WEB_SEARCH,
             "voice_enabled": Config.voice_enabled(),
             "voices": Config.voice_voices(),
@@ -226,6 +229,27 @@ def index(request: Request):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "problems": Config.validate()}
+
+
+@app.get("/api/settings/model")
+def get_model_setting():
+    """Current agent model + the switchable options, for the UI's model picker."""
+    return {"active": hermes_models.active_model(), "options": hermes_models.options()}
+
+
+class ModelUpdate(BaseModel):
+    model: str
+
+
+@app.post("/api/settings/model")
+def set_model_setting(body: ModelUpdate):
+    """Switch the agent's active model platform-wide (Claude <-> OpenAI, cheap
+    <-> expensive tier). Takes effect on the next turn of every conversation."""
+    try:
+        hermes_models.set_active_model(body.model)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"active": hermes_models.active_model()}
 
 
 @app.post("/api/admin/migrate")
@@ -1377,6 +1401,6 @@ if __name__ == "__main__":
     voice = "on" if Config.voice_enabled() else "off (set OPENAI_API_KEY)"
     print(
         f"[Hermes] API backend starting on http://127.0.0.1:{Config.PORT}  "
-        f"(model: {Config.MODEL}, voice: {voice})"
+        f"(model: {hermes_models.active_model()}, voice: {voice})"
     )
     uvicorn.run("app:app", host="0.0.0.0", port=Config.PORT, reload=True)

@@ -32,6 +32,7 @@ APP_LABELS: dict[str, str] = {
     "google-mail": "Gmail",
     "zoom": "Zoom (video meetings)",
     "wati": "WATI (WhatsApp Business messaging)",
+    "notion": "Notion (pages, databases, comments)",
 }
 
 
@@ -166,7 +167,7 @@ class Config:
         raw = os.getenv(
             "HERMES_APPS",
             "quickbooks,pdf-co,google-contacts,fathom,google-meet,google-forms,"
-            "google-sheets,google-docs,google-drive,google-calendar,google-mail,wati",
+            "google-sheets,google-docs,google-drive,google-calendar,google-mail,wati,notion",
         )
         return [a.strip() for a in raw.split(",") if a.strip()]
 
@@ -190,6 +191,10 @@ class Config:
         problems = []
         if not cls.ANTHROPIC_API_KEY:
             problems.append("ANTHROPIC_API_KEY is not set")
+        if not cls.OPENAI_API_KEY:
+            problems.append(
+                "OPENAI_API_KEY is not set (needed only if the agent model is switched to an OpenAI option)"
+            )
         if not cls.MATON_API_KEY:
             problems.append("MATON_API_KEY is not set (app integrations will fail)")
         if not cls.NUEXTRACT_API_KEY:
