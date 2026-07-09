@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from email.message import EmailMessage
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -87,6 +88,40 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             ),
         },
     }
+    send_email_props: dict[str, Any] = {
+        "to": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Recipient email address(es).",
+        },
+        "cc": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Optional CC address(es).",
+        },
+        "subject": {"type": "string"},
+        "body": {"type": "string", "description": "Plain-text email body."},
+    }
+    zoom_invite_props: dict[str, Any] = {
+        "meeting_id": {
+            "type": "string",
+            "description": (
+                "The Zoom meeting's numeric id, from a prior maton_request call to "
+                "app='zoom', path='/v2/users/me/meetings' (or app='zoom-admin')."
+            ),
+        },
+        "to": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Recipient email address(es) to invite.",
+        },
+        "note": {
+            "type": "string",
+            "description": "Optional extra note/context to include in the invite email.",
+        },
+        "zoom_app": {
+            "type": "string",
+            "enum": ["zoom", "zoom-admin"],
+            "description": "Which Zoom connection owns this meeting. Defaults to 'zoom'.",
+        },
+    }
 
     if fan_out:
         connected = Config.connected_business_slugs()
@@ -102,6 +137,8 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
         request_props["business"] = business_param
         connections_props["business"] = business_param
         drive_props["business"] = business_param
+        send_email_props["business"] = business_param
+        zoom_invite_props["business"] = business_param
 
     tools: list[dict[str, Any]] = [
         {
@@ -112,6 +149,10 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
                 f"Allowed app slugs: {app_hint}. "
                 "`path` is the native API path for that app (everything after the app slug). "
                 "Examples: app='google-mail', path='/gmail/v1/users/me/messages'. "
+                "To SEND an email, use the dedicated `send_email` tool instead of building the "
+                "raw Gmail payload here yourself — hand-encoding the base64 MIME message risks "
+                "mojibake and mistyped tokens. For a Zoom meeting invite specifically, use "
+                "`zoom_send_invite` (it also auto-CCs the user). "
                 "app='google-sheets', path='/v4/spreadsheets/{id}/values/Sheet1!A1:C10'. "
                 "app='quickbooks', path='/quickbooks/v2/company/:realmId/query' "
                 "(`:realmId` is auto-substituted). "
@@ -228,6 +269,35 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": drive_props,
                 "required": ["file_id"],
+            },
+        },
+        {
+            "name": "send_email",
+            "description": (
+                "Send an email through the connected Gmail account. The MIME message and "
+                "base64 encoding are built in code from the plain `to`/`subject`/`body` you "
+                "pass — any characters (em dashes, curly quotes, etc.) are encoded correctly, "
+                "unlike hand-building the raw Gmail payload via maton_request, which risks "
+                "encoding corruption."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": send_email_props,
+                "required": ["to", "subject", "body"],
+            },
+        },
+        {
+            "name": "zoom_send_invite",
+            "description": (
+                "Send a Zoom meeting invite by email. Fetches the meeting's real topic, time, "
+                "and join link directly from Zoom and builds the email in code, so the join "
+                "URL is always copied byte-for-byte — never retyped/hallucinated. Automatically "
+                "also sends a copy to the user's own email."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": zoom_invite_props,
+                "required": ["meeting_id", "to"],
             },
         },
     ]
@@ -455,7 +525,7 @@ WATI_TOOLS = {
 # Names that Hermes executes locally (everything else is server-side).
 LOCAL_TOOLS = {
     "maton_request", "maton_list_connections", "maton_create_connection",
-    "drive_read_file", *WATI_TOOLS,
+    "drive_read_file", "send_email", "zoom_send_invite", *WATI_TOOLS,
 }
 
 # Drive mime types we can hand to Claude as a native document/image block, and
@@ -641,6 +711,82 @@ def _drive_read_file(
     return result, media, [block]
 
 
+def _build_mime_raw(
+    *, to: list[str], subject: str, body: str, cc: list[str] | None = None
+) -> str:
+    """Build an RFC 2822 message and base64url-encode it for Gmail's `raw`
+    field, using Python's email module so UTF-8 headers/body are always
+    encoded correctly (RFC 2047 for headers) — no hand-rolled byte/base64
+    arithmetic for the model to get wrong."""
+    msg = EmailMessage()
+    msg["To"] = ", ".join(to)
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    msg["Subject"] = subject
+    msg.set_content(body)
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+
+
+def _send_email(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    to = tool_input["to"]
+    to = to if isinstance(to, list) else [to]
+    cc = tool_input.get("cc")
+    if isinstance(cc, str):
+        cc = [cc]
+    raw = _build_mime_raw(to=to, subject=tool_input["subject"], body=tool_input["body"], cc=cc)
+    return client.request(
+        "google-mail", "POST", "/gmail/v1/users/me/messages/send", body={"raw": raw}
+    )
+
+
+def _zoom_send_invite(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    """Fetch the meeting straight from Zoom and build the invite email in code,
+    so the join URL is copied verbatim from the API response — never retyped
+    by the model — and always CC the user's own email."""
+    zoom_app = tool_input.get("zoom_app") or "zoom"
+    meeting_id = tool_input["meeting_id"]
+    meeting = client.request(zoom_app, "GET", f"/v2/meetings/{meeting_id}")
+    if not meeting.get("ok"):
+        return meeting
+
+    m = meeting.get("data") or {}
+    topic = m.get("topic") or "Zoom Meeting"
+    join_url = m.get("join_url") or ""
+    start_time = m.get("start_time")
+    duration = m.get("duration")
+    timezone = m.get("timezone") or "UTC"
+
+    to = tool_input["to"]
+    to = to if isinstance(to, list) else [to]
+
+    own_email: str | None = None
+    profile = client.request("google-mail", "GET", "/gmail/v1/users/me/profile")
+    if profile.get("ok"):
+        own_email = (profile.get("data") or {}).get("emailAddress")
+
+    lines = [f"You're invited to: {topic}", ""]
+    if start_time:
+        lines.append(f"When: {start_time} ({timezone})")
+    if duration:
+        lines.append(f"Duration: {duration} minutes")
+    note = tool_input.get("note")
+    if note:
+        lines += ["", note]
+    lines += ["", f"Join Zoom Meeting: {join_url}"]
+
+    raw = _build_mime_raw(
+        to=to,
+        cc=[own_email] if own_email and own_email not in to else None,
+        subject=f"Zoom Invite: {topic}",
+        body="\n".join(lines),
+    )
+    result = client.request(
+        "google-mail", "POST", "/gmail/v1/users/me/messages/send", body={"raw": raw}
+    )
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    return {**result, "data": {**data, "sent_to": to, "cc": own_email, "join_url": join_url}}
+
+
 def _wati_get_media(
     client: MatonClient, tool_input: dict[str, Any], active_business: str | None
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -758,6 +904,10 @@ def dispatch(
                 )
             elif name == "drive_read_file":
                 result, media, blocks = _drive_read_file(client, tool_input, active_business)
+            elif name == "send_email":
+                result = _send_email(client, tool_input)
+            elif name == "zoom_send_invite":
+                result = _zoom_send_invite(client, tool_input)
             elif name in WATI_TOOLS:
                 wati = WatiClient(client)
                 if name == "wati_list_contacts":
