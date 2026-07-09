@@ -30,7 +30,8 @@ APP_LABELS: dict[str, str] = {
     "google-drive": "Google Drive",
     "google-calendar": "Google Calendar",
     "google-mail": "Gmail",
-    "zoom": "Zoom (video meetings)",
+    "zoom": "Zoom (your own meetings/recordings/webinars)",
+    "zoom-admin": "Zoom Admin (account-wide: any user's meetings/recordings/settings)",
     "wati": "WATI (WhatsApp Business messaging)",
     "notion": "Notion (pages, databases, comments)",
 }
@@ -167,7 +168,8 @@ class Config:
         raw = os.getenv(
             "HERMES_APPS",
             "quickbooks,pdf-co,google-contacts,fathom,google-meet,google-forms,"
-            "google-sheets,google-docs,google-drive,google-calendar,google-mail,wati,notion",
+            "google-sheets,google-docs,google-drive,google-calendar,google-mail,wati,notion,"
+            "zoom,zoom-admin",
         )
         return [a.strip() for a in raw.split(",") if a.strip()]
 
