@@ -78,6 +78,71 @@ class MatonClient:
             "data": _parse_body(resp),
         }
 
+    def request_multipart(
+        self,
+        app: str,
+        method: str,
+        path: str,
+        files: dict[str, tuple[str, bytes, str]],
+        data: dict[str, Any] | None = None,
+        query: dict[str, Any] | None = None,
+        connection_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Like `request()`, but for endpoints that take multipart/form-data
+        (e.g. uploading a file). `files` is `{field: (filename, bytes, content_type)}`.
+        """
+        method = method.upper()
+        url = f"{self.base_url}/{app.strip('/')}/{path.lstrip('/')}"
+        headers = self._headers(connection_id)  # no Content-Type: requests sets the boundary
+        try:
+            resp = requests.request(
+                method,
+                url,
+                headers=headers,
+                params=query or None,
+                files=files,
+                data=data or None,
+                timeout=_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            raise MatonError(f"Network error calling Maton: {exc}") from exc
+
+        return {
+            "status": resp.status_code,
+            "ok": resp.ok,
+            "data": _parse_body(resp),
+        }
+
+    def download_binary(
+        self,
+        app: str,
+        method: str,
+        path: str,
+        query: dict[str, Any] | None = None,
+        connection_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch a response body in full, uninterpreted (e.g. downloading media).
+
+        Returns `{status, ok, content_type, raw}` — `raw` is the exact response
+        bytes. Callers must check `ok` before treating `raw` as file content:
+        a non-2xx response's bytes are just the (usually JSON) error body.
+        """
+        method = method.upper()
+        url = f"{self.base_url}/{app.strip('/')}/{path.lstrip('/')}"
+        headers = self._headers(connection_id)
+        try:
+            resp = requests.request(
+                method, url, headers=headers, params=query or None, timeout=_TIMEOUT
+            )
+        except requests.RequestException as exc:
+            raise MatonError(f"Network error calling Maton: {exc}") from exc
+        return {
+            "status": resp.status_code,
+            "ok": resp.ok,
+            "content_type": resp.headers.get("Content-Type", ""),
+            "raw": resp.content,
+        }
+
     # ---- Connection management --------------------------------------------
 
     def list_connections(

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -36,19 +37,35 @@ def _clean(d: dict) -> dict:
 
 # ── Businesses ───────────────────────────────────────────────────────────────
 
+# list_businesses() is called on nearly every request (chat, meeting copilot,
+# bills) just to resolve a slug -> display name, and the 8-ish rows behind it
+# change essentially never. A synchronous Postgres round trip on that hot path
+# was pure added latency, so cache it for a few seconds and invalidate on write.
+_businesses_cache: list[dict] | None = None
+_businesses_cache_at: float = 0.0
+_BUSINESSES_CACHE_TTL = 30.0  # seconds
+
+
 def list_businesses() -> list[dict]:
+    global _businesses_cache, _businesses_cache_at
+    now = time.monotonic()
+    if _businesses_cache is not None and (now - _businesses_cache_at) < _BUSINESSES_CACHE_TTL:
+        return _businesses_cache
     try:
         with cursor(commit=False) as cur:
             cur.execute(
                 "SELECT business_id, name, slug, emoji, color, industry, created_at "
                 "FROM businesses ORDER BY name;"
             )
-            return [_clean(r) for r in _row(cur, [
+            result = [_clean(r) for r in _row(cur, [
                 "business_id", "name", "slug", "emoji", "color", "industry", "created_at"
             ])]
     except Exception as exc:
         log.warning("list_businesses failed: %s", exc)
-        return []
+        return _businesses_cache or []
+    _businesses_cache = result
+    _businesses_cache_at = now
+    return result
 
 
 def upsert_business(
@@ -78,12 +95,15 @@ def upsert_business(
                     (name, slug, emoji, color, industry),
                 )
             row = cur.fetchone()
-            return _clean(dict(zip(
+            result = _clean(dict(zip(
                 ["business_id", "name", "slug", "emoji", "color", "industry"], row
             )))
     except Exception as exc:
         log.error("upsert_business failed: %s", exc)
         raise
+    global _businesses_cache
+    _businesses_cache = None  # force a fresh read next call, picking up this change
+    return result
 
 
 # ── Bills ────────────────────────────────────────────────────────────────────

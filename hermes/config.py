@@ -30,6 +30,10 @@ APP_LABELS: dict[str, str] = {
     "google-drive": "Google Drive",
     "google-calendar": "Google Calendar",
     "google-mail": "Gmail",
+    "zoom": "Zoom (your own meetings/recordings/webinars)",
+    "zoom-admin": "Zoom Admin (account-wide: any user's meetings/recordings/settings)",
+    "wati": "WATI (WhatsApp Business messaging)",
+    "notion": "Notion (pages, databases, comments)",
 }
 
 
@@ -63,10 +67,18 @@ class Config:
         """Business slugs that currently have a configured Maton key."""
         return [slug for slug, key in cls.MATON_BUSINESS_KEYS.items() if key]
 
-    MODEL: str = os.getenv("HERMES_MODEL", "claude-opus-4-8")
-    EFFORT: str = os.getenv("HERMES_EFFORT", "medium")
+    MODEL: str = os.getenv("HERMES_MODEL", "claude-sonnet-5")
+    EFFORT: str = os.getenv("HERMES_EFFORT", "low")
     MAX_TOKENS: int = int(os.getenv("HERMES_MAX_TOKENS", "8000"))
     MAX_TOOL_ITERATIONS: int = int(os.getenv("HERMES_MAX_TOOL_ITERATIONS", "12"))
+
+    # Dedicated fast model for the live meeting copilot's per-utterance guidance
+    # calls (hermes.meeting_copilot.get_guidance / get_guidance_comprehensive).
+    # Kept separate from MODEL above: that call is 0-4 short bullets, no tool
+    # use, in the middle of a live conversation — latency matters more than the
+    # extra reasoning depth a bigger model would add. Chat keeps MODEL so
+    # tool-use/agentic quality isn't affected by this.
+    GUIDANCE_MODEL: str = os.getenv("HERMES_GUIDANCE_MODEL", "claude-haiku-4-5-20251001")
 
     WEB_SEARCH: bool = _bool(os.getenv("HERMES_WEB_SEARCH"), True)
 
@@ -156,7 +168,8 @@ class Config:
         raw = os.getenv(
             "HERMES_APPS",
             "quickbooks,pdf-co,google-contacts,fathom,google-meet,google-forms,"
-            "google-sheets,google-docs,google-drive,google-calendar,google-mail",
+            "google-sheets,google-docs,google-drive,google-calendar,google-mail,wati,notion,"
+            "zoom,zoom-admin",
         )
         return [a.strip() for a in raw.split(",") if a.strip()]
 
@@ -180,6 +193,10 @@ class Config:
         problems = []
         if not cls.ANTHROPIC_API_KEY:
             problems.append("ANTHROPIC_API_KEY is not set")
+        if not cls.OPENAI_API_KEY:
+            problems.append(
+                "OPENAI_API_KEY is not set (needed only if the agent model is switched to an OpenAI option)"
+            )
         if not cls.MATON_API_KEY:
             problems.append("MATON_API_KEY is not set (app integrations will fail)")
         if not cls.NUEXTRACT_API_KEY:

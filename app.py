@@ -18,6 +18,7 @@ Endpoints:
     POST /api/voice/speak        — text -> speech (returns audio bytes)
     GET  /api/voice/voices       — list available TTS voices + current default
     GET/POST /api/connections    — list / create Maton app connections
+    GET/POST /api/settings/model — read/switch the agent's active model (Claude/OpenAI)
     POST /api/reset              — clear a conversation's history
 
 Interactive docs are auto-generated at /docs (Swagger) and /redoc.
@@ -28,6 +29,7 @@ can serve many tenants/users with isolated conversation memory and history.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import threading
 import uuid
@@ -39,19 +41,22 @@ log = logging.getLogger("hermes.app")
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 # Starlette's form parser yields starlette.UploadFile, which is the BASE class of
 # fastapi.UploadFile — so isinstance checks on parsed form files must use this.
+from starlette.concurrency import iterate_in_threadpool
 from starlette.datastructures import UploadFile as FormUploadFile
 
-from hermes.agent import run_turn
+from hermes.agent import run_turn, stream_turn
 from hermes.attachments import store as attachment_store
 from hermes.bills import check_paid_bills, extract_bill, fetch_gmail_body, guess_business, scan_drive, scan_gmail
 from hermes.businesses import to_business_slug, to_entity_slug
+from hermes import calendar as hermes_calendar
 from hermes.config import Config
+from hermes.fathom import find_recording_link as find_fathom_link
 from hermes import storage as s3
 from hermes.db.bills import (
     _BILL_NOT_FOUND,
@@ -65,9 +70,12 @@ from hermes.db.bills import (
     update_bill,
     upsert_business,
 )
+from hermes.db import meetings as meetings_db
 from hermes.ingest import ingest_document
 from hermes.maton import MatonClient, MatonError
+from hermes.meeting_copilot import generate_ai_notes, get_guidance, get_guidance_comprehensive, prepare_brief, summarize_meeting
 from hermes.memory import store
+from hermes import models as hermes_models
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
@@ -129,6 +137,16 @@ def _truthy(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _is_uuid(value: str) -> bool:
+    import uuid as _uuid_mod
+
+    try:
+        _uuid_mod.UUID(str(value))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 def _session_key(entity_id: str | None, session_id: str) -> str:
     """Namespace a session by entity so tenants never share conversation memory."""
     eid = (entity_id or "").strip()
@@ -181,7 +199,7 @@ def _asset_version() -> int:
     """A version stamp that changes whenever a static asset changes, so browsers
     fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
     latest = 0.0
-    for name in ("app.js", "style.css", "voice.js"):
+    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js"):
         try:
             latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
         except OSError:
@@ -197,7 +215,8 @@ def index(request: Request):
         name="index.html",
         context={
             "apps": Config.apps(),
-            "model": Config.MODEL,
+            "model_options": hermes_models.options(),
+            "active_model": hermes_models.active_model(),
             "web_search": Config.WEB_SEARCH,
             "voice_enabled": Config.voice_enabled(),
             "voices": Config.voice_voices(),
@@ -210,6 +229,76 @@ def index(request: Request):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "problems": Config.validate()}
+
+
+@app.get("/api/settings/model")
+def get_model_setting():
+    """Current agent model + the switchable options, for the UI's model picker."""
+    return {"active": hermes_models.active_model(), "options": hermes_models.options()}
+
+
+class ModelUpdate(BaseModel):
+    model: str
+
+
+@app.post("/api/settings/model")
+def set_model_setting(body: ModelUpdate):
+    """Switch the agent's active model platform-wide (Claude <-> OpenAI, cheap
+    <-> expensive tier). Takes effect on the next turn of every conversation."""
+    try:
+        hermes_models.set_active_model(body.model)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"active": hermes_models.active_model()}
+
+
+@app.post("/api/admin/migrate")
+async def admin_migrate():
+    """Apply pending SQL migrations (hermes/db/migrations/*.sql).
+
+    Exists because on some deployments (e.g. serverless platforms like
+    Vercel) the database is only reachable from inside the platform's own
+    network — the same place this endpoint runs — so this is the working
+    path to apply a new migration, not a local `scripts/init_db.py` run from
+    somewhere that may have no route to the DB at all. Idempotent: every
+    migration uses CREATE TABLE IF NOT EXISTS / DO $$ ... EXCEPTION
+    duplicate_object, and applied filenames are tracked in
+    schema_migrations so pending work is computed correctly on every call.
+    """
+    from pathlib import Path
+
+    from hermes.db import cursor
+
+    def _run() -> dict:
+        migrations_dir = Path(__file__).resolve().parent / "hermes" / "db" / "migrations"
+        files = sorted(migrations_dir.glob("*.sql"))
+        if not files:
+            return {"error": f"No .sql files found under {migrations_dir}"}
+        with cursor() as cur:
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations "
+                "(filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());"
+            )
+            cur.execute("SELECT filename FROM schema_migrations;")
+            done = {row[0] for row in cur.fetchall()}
+            applied = []
+            for f in files:
+                if f.name in done:
+                    continue
+                cur.execute(f.read_text(encoding="utf-8"))
+                cur.execute(
+                    "INSERT INTO schema_migrations (filename) VALUES (%s);", (f.name,)
+                )
+                applied.append(f.name)
+        return {"applied": applied, "already_done": sorted(done)}
+
+    try:
+        result = await run_in_threadpool(_run)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    if "error" in result:
+        return JSONResponse(result, status_code=500)
+    return result
 
 
 @app.post("/api/chat")
@@ -293,6 +382,113 @@ async def chat(request: Request):
     result["session_id"] = session_id
     result["entity_id"] = active_business  # authoritative, locked value — not just an echo
     return result
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: Request):
+    """Same agent turn as /api/chat, streamed as Server-Sent Events so the
+    typed chat UI can render the reply as it's generated instead of waiting
+    for the whole turn — including every tool round-trip — to finish first.
+
+    Voice mode keeps using plain /api/chat unchanged: it needs the complete
+    reply text before it can call text-to-speech, so streaming wouldn't help
+    it and this endpoint was kept additive rather than touching that path.
+
+    Same request shape as /api/chat (JSON or multipart). Response is
+    text/event-stream: one `data: <json>\\n\\n` line per event —
+    {"type": "text", "text": "<delta>"} as the reply is generated,
+    {"type": "tool_call", "tool": "...", "input": {...}} when a tool is invoked,
+    then a final {"type": "done", "session_id", "entity_id", "reply",
+    "thinking", "tool_calls", "stop_reason"} — the same fields /api/chat
+    returns as JSON, so the frontend's finishing logic (business lock,
+    history refresh) needs no new fields to handle.
+    """
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/"):
+        form = await request.form()
+        session_id = form.get("session_id") or str(uuid.uuid4())
+        entity_id = form.get("entity_id")
+        message = (form.get("message") or "").strip()
+        voice = _truthy(form.get("voice"))
+        attachment_ids = [a for a in form.getlist("attachment_ids") if isinstance(a, str)]
+        files: list[tuple[str, str, bytes]] = []
+        for upload in form.getlist("files"):
+            if isinstance(upload, FormUploadFile) and upload.filename:
+                files.append((upload.filename, upload.content_type or "", await upload.read()))
+        attachments = _build_attachments(files)
+    else:
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001 — tolerate empty/invalid bodies
+            data = {}
+        data = data or {}
+        session_id = data.get("session_id") or str(uuid.uuid4())
+        entity_id = data.get("entity_id")
+        message = (data.get("message") or "").strip()
+        voice = _truthy(data.get("voice"))
+        attachment_ids = data.get("attachment_ids") or []
+        attachments = []
+        files = []
+
+    if not message and not attachments and not attachment_ids:
+        return JSONResponse(
+            {"error": "Provide a message, a file, or an attachment_id."}, status_code=400
+        )
+
+    content: list[dict] = []
+    for aid in attachment_ids:
+        block = attachment_store.block(str(aid), entity_id)
+        if block is None:
+            return JSONResponse({"error": f"Unknown attachment_id: {aid}"}, status_code=400)
+        content.append(block)
+    content.extend(attachments)
+    if message:
+        content.append({"type": "text", "text": message})
+
+    key = _session_key(entity_id, session_id)
+
+    # Same business-locking rule as /api/chat.
+    prior_messages = await run_in_threadpool(store.get, key)
+    if prior_messages:
+        locked = await run_in_threadpool(store.locked_business_slug, key)
+        active_business = locked or "all"
+    else:
+        active_business = (entity_id or "").strip() or "all"
+
+    file_names = [name for name, _, _ in files]
+    n_files = len(file_names) + len(attachment_ids)
+    user_text = message
+    if n_files:
+        names = ", ".join(file_names) if file_names else f"{n_files} file(s)"
+        note = f"📎 {names}"
+        user_text = f"{message}\n{note}" if message else note
+    store_entity = None if active_business == "all" else to_entity_slug(active_business)
+
+    async def event_source():
+        result: dict = {}
+        try:
+            async for event in iterate_in_threadpool(
+                stream_turn(key, content, voice, active_business)
+            ):
+                if event["type"] == "done":
+                    result = event["result"]
+                    payload = {
+                        "type": "done",
+                        "session_id": session_id,
+                        "entity_id": active_business,
+                        **result,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                else:
+                    yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:  # noqa: BLE001 — surface a clean error to the client
+            yield f"data: {json.dumps({'type': 'error', 'error': f'Agent error: {exc}'})}\n\n"
+            return
+
+        # Same history recording as /api/chat, after the stream completes.
+        store.record_turn(key, store_entity, session_id, user_text, result)
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
 @app.get("/api/conversations")
@@ -392,6 +588,21 @@ def delete_attachment(attachment_id: str, entity_id: str | None = None):
     return JSONResponse({"error": "Attachment not found."}, status_code=404)
 
 
+@app.get("/api/media/presign")
+def presign_media(uri: str):
+    """Return a short-lived HTTPS URL for an s3:// URI produced by a tool call
+    (e.g. wati_get_media), so the chat UI can render it inline — both live and
+    when a past conversation is reopened (presigned URLs expire, so the raw
+    s3:// URI is what's persisted in the transcript, and this is called fresh
+    on every render). Only presigns URIs inside our own configured bucket."""
+    if not uri.startswith(f"s3://{s3.bucket()}/"):
+        return JSONResponse({"error": "Unknown or disallowed URI."}, status_code=400)
+    url = s3.presign(uri)
+    if not url:
+        return JSONResponse({"error": "Could not generate a link."}, status_code=404)
+    return {"url": url}
+
+
 @app.post("/api/documents")
 async def upload_documents(request: Request):
     """Ingest files into the knowledge base so they're searchable by meaning.
@@ -461,6 +672,323 @@ async def search(
     return {"entity_id": entity_id, "query": q, "results": results}
 
 
+# ════════════════════════════════════════════════════════════════════════════
+#  Meeting Copilot — private, real-time guidance during a live meeting
+# ════════════════════════════════════════════════════════════════════════════
+# Grounded ONLY in what the ingestion pipeline already read ahead of time
+# (Pinecone + Postgres) — never scans Gmail/Drive live, never speaks in the
+# meeting, never sends anything. One semantic search + one Claude call, so it
+# stays fast enough to use while actively talking.
+
+class MeetingCopilotRequest(BaseModel):
+    business: str                    # business slug, e.g. "nh" — required, always scoped
+    latest_text: str = ""            # what was just said (typed or transcribed)
+    notes_so_far: str = ""           # running transcript/notes for extra context
+    top_k: int = 6
+    session_id: str | None = None    # continue an existing meeting; omit to start one
+    comprehensive: bool = False      # if true, use enhanced guidance pulling from all business data
+    meeting_title: str = ""          # optional: meeting title for context
+    attendees: list[dict] | None = None  # optional: attendee info for context
+
+
+@app.post("/api/meetings/copilot")
+async def meeting_copilot(body: MeetingCopilotRequest):
+    """Return short, private, bullet-point guidance for the live meeting, and
+    persist the turn (heard text + bullets + sources) to history — same
+    pattern as chat's conversation history, so past meetings are retrievable.
+
+    JSON body: business (required, a specific business — "all" isn't allowed
+    here), latest_text (what was just said), notes_so_far (running transcript),
+    top_k (retrieval depth), session_id (optional — omit to auto-create one on
+    the first turn; the response echoes the authoritative id either way).
+    Response: {business, session_id, bullets: [...], sources: [...]}.
+    """
+    business = (body.business or "").strip()
+    if not business or business == "all":
+        return JSONResponse(
+            {"error": "A specific business is required — the copilot can't run in 'All Businesses' mode."},
+            status_code=400,
+        )
+    entity_slug = to_entity_slug(business)
+    if not entity_slug:
+        return JSONResponse({"error": f"Unknown or unmapped business '{business}'."}, status_code=400)
+    if not (body.latest_text or body.notes_so_far):
+        return JSONResponse({"error": "Provide latest_text or notes_so_far."}, status_code=400)
+
+    businesses = await run_in_threadpool(list_businesses)
+    biz = next((b for b in businesses if b.get("slug") == business), None)
+    business_name = (biz or {}).get("name") or business
+
+    # Choose guidance mode: standard or comprehensive (with all business data)
+    guidance_fn = get_guidance_comprehensive if body.comprehensive else get_guidance
+    guidance_kwargs = {
+        "entity_id": entity_slug,
+        "business_name": business_name,
+        "latest_text": body.latest_text,
+        "notes_so_far": body.notes_so_far,
+        "session_id": body.session_id,
+        "top_k": body.top_k,
+    }
+    if body.comprehensive:
+        guidance_kwargs["meeting_title"] = body.meeting_title
+        guidance_kwargs["attendees"] = body.attendees
+
+    try:
+        result = await run_in_threadpool(guidance_fn, **guidance_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Copilot error: {exc}"}, status_code=500)
+
+    # Persist to history. A DB hiccup here must never fail the live turn —
+    # the guidance above already succeeded and is what the user is waiting on.
+    session_id = body.session_id
+    if not session_id or not _is_uuid(session_id):
+        session_id = await run_in_threadpool(
+            meetings_db.create_session, entity_slug, (body.latest_text or "").strip()[:60] or None,
+        )
+    if session_id:
+        await run_in_threadpool(
+            meetings_db.add_turn,
+            session_id,
+            heard_text=body.latest_text or None,
+            bullets=result.get("bullets") or [],
+            sources=result.get("sources") or [],
+        )
+
+    return {"business": business, "session_id": session_id, **result}
+
+
+# ── Meeting history (list / reopen / delete meetings) ──────────────────────
+
+@app.get("/api/meetings/sessions")
+async def list_meeting_sessions(business: str | None = None, statuses: str | None = None):
+    """List meeting sessions (newest-first) for the history sidebar.
+
+    Pass `business` to scope to one business; omit for every business.
+    Pass `statuses` as a comma-separated list (e.g. "scheduled,prepared") to
+    scope to a lifecycle stage — the Upcoming view uses this; the plain
+    history sidebar omits it and gets everything except deleted.
+    """
+    entity_slug = to_entity_slug(business) if business else None
+    status_list = [s.strip() for s in statuses.split(",")] if statuses else None
+    result = await run_in_threadpool(
+        meetings_db.sessions, entity_slug, statuses=status_list,
+    )
+    return {"sessions": result, "business": business}
+
+
+@app.get("/api/meetings/upcoming")
+async def list_upcoming_meetings(business: str, days: int = 14):
+    """Upcoming events on `business`'s calendar, each annotated with its
+    meeting-copilot status (none / scheduled / prepared / ...) if one exists,
+    so the UI can show "Prepare" vs "Prepared — view brief" per event."""
+    business = (business or "").strip()
+    if not business or business == "all":
+        return JSONResponse(
+            {"error": "A specific business is required."}, status_code=400,
+        )
+    try:
+        events = await run_in_threadpool(hermes_calendar.list_upcoming, business, days)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+    entity_slug = to_entity_slug(business)
+    existing = await run_in_threadpool(
+        meetings_db.sessions, entity_slug,
+        statuses=["scheduled", "prepared", "active", "ended"], newest_first=False,
+    )
+    by_event_id = {s.get("calendar_event_id"): s for s in existing if s.get("calendar_event_id")}
+    for e in events:
+        matched = by_event_id.get(e["event_id"])
+        e["session_id"] = matched["session_id"] if matched else None
+        e["session_status"] = matched["status"] if matched else None
+        # Content itself (brief/ai_notes) is intentionally NOT sent here — the
+        # Upcoming list only needs status to pick Prepare vs. Open in Live.
+        # Full content loads once, when a specific meeting opens in Live view
+        # (GET /api/meetings/sessions/{id}) — avoids shipping every event's
+        # (potentially large) AI notes on every list load.
+
+    return {"business": business, "events": events}
+
+
+class MeetingPrepareRequest(BaseModel):
+    business: str
+    event_id: str
+    title: str
+    start: str | None = None    # ISO timestamp from the calendar event
+    description: str | None = None
+    attendees: list[dict] = []
+
+
+@app.post("/api/meetings/prepare")
+async def prepare_meeting(body: MeetingPrepareRequest):
+    """Generate an AI pre-meeting brief for a calendar event: background,
+    must-ask questions, risks, and links to relevant already-indexed files.
+    Creates (or reuses) the session for this event, idempotently."""
+    business = (body.business or "").strip()
+    if not business or business == "all":
+        return JSONResponse({"error": "A specific business is required."}, status_code=400)
+    entity_slug = to_entity_slug(business)
+    if not entity_slug:
+        return JSONResponse({"error": f"Unknown or unmapped business '{business}'."}, status_code=400)
+
+    session_id = await run_in_threadpool(
+        meetings_db.upsert_scheduled,
+        entity_slug,
+        calendar_event_id=body.event_id,
+        title=body.title,
+        scheduled_at=body.start,
+        attendees=body.attendees,
+    )
+    if not session_id:
+        return JSONResponse({"error": "Could not create a session for this meeting."}, status_code=500)
+
+    businesses = await run_in_threadpool(list_businesses)
+    biz = next((b for b in businesses if b.get("slug") == business), None)
+    business_name = (biz or {}).get("name") or business
+
+    try:
+        result = await run_in_threadpool(
+            prepare_brief,
+            entity_id=entity_slug,
+            business_name=business_name,
+            meeting_title=body.title,
+            attendees=body.attendees,
+            description=body.description,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Brief generation failed: {exc}"}, status_code=500)
+
+    await run_in_threadpool(
+        meetings_db.save_brief, session_id, brief=result["brief"], sources=result["sources"],
+    )
+    full = await run_in_threadpool(meetings_db.transcript, session_id)
+    return full or {"session_id": session_id, **result}
+
+
+class MeetingAiNotesRequest(BaseModel):
+    business: str
+    meeting_title: str
+
+
+@app.post("/api/meetings/sessions/{session_id}/ai-notes")
+async def generate_meeting_ai_notes(session_id: str, body: MeetingAiNotesRequest):
+    """Build (or rebuild) detailed pre-meeting notes via the full Hermes agent:
+    live Gmail search, Drive file search, read the contents, write clean
+    bullet-point notes ending with links to the relevant Drive files.
+
+    Slower than /prepare's brief (real tool calls against Gmail/Drive, not
+    just a Pinecone lookup) — call this on explicit request, and it's safe to
+    call again any time to regenerate with fresh results.
+    """
+    business = (body.business or "").strip()
+    if not business or business == "all":
+        return JSONResponse({"error": "A specific business is required."}, status_code=400)
+
+    businesses = await run_in_threadpool(list_businesses)
+    biz = next((b for b in businesses if b.get("slug") == business), None)
+    business_name = (biz or {}).get("name") or business
+
+    try:
+        result = await run_in_threadpool(
+            generate_ai_notes,
+            business_slug=business,
+            business_name=business_name,
+            meeting_title=body.meeting_title,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"AI notes generation failed: {exc}"}, status_code=500)
+
+    await run_in_threadpool(meetings_db.save_ai_notes, session_id, result["notes"])
+    full = await run_in_threadpool(meetings_db.transcript, session_id)
+    return full or {"session_id": session_id, **result}
+
+
+@app.get("/api/meetings/sessions/{session_id}")
+async def get_meeting_session(session_id: str):
+    """Full replay of one meeting: its metadata (brief/summary/fathom link/
+    attendees) + every turn, in order."""
+    result = await run_in_threadpool(meetings_db.transcript, session_id)
+    if result is None:
+        return JSONResponse({"error": "Meeting not found."}, status_code=404)
+    return result
+
+
+@app.post("/api/meetings/sessions/{session_id}/end")
+async def end_meeting_session(session_id: str):
+    """End a meeting: generate the AI post-meeting summary from its captured
+    turns, and best-effort attach a Fathom recording link if one can be found.
+    Both degrade gracefully — ending always succeeds even if either fails."""
+    existing = await run_in_threadpool(meetings_db.transcript, session_id)
+    if existing is None:
+        return JSONResponse({"error": "Meeting not found."}, status_code=404)
+
+    business_slug = existing.get("business")
+    business_name = existing.get("title") or "this business"
+    if business_slug:
+        businesses = await run_in_threadpool(list_businesses)
+        biz = next((b for b in businesses if b.get("slug") == business_slug), None)
+        if biz and biz.get("name"):
+            business_name = biz["name"]
+
+    try:
+        summary = await run_in_threadpool(
+            summarize_meeting, business_name=business_name, turns=existing.get("turns") or [],
+        )
+        await run_in_threadpool(meetings_db.save_summary, session_id, summary)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("end_meeting_session: summarize failed for %s: %s", session_id, exc)
+        await run_in_threadpool(meetings_db.end_session, session_id)  # still mark ended
+        summary = None
+
+    fathom_url = existing.get("fathom_url")
+    if not fathom_url and business_slug:
+        try:
+            fathom_url = await run_in_threadpool(
+                find_fathom_link, business_slug, title_hint=existing.get("title"),
+            )
+            if fathom_url:
+                await run_in_threadpool(meetings_db.save_fathom_url, session_id, fathom_url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("end_meeting_session: fathom lookup failed for %s: %s", session_id, exc)
+
+    full = await run_in_threadpool(meetings_db.transcript, session_id)
+    return full or {"session_id": session_id, "status": "ended", "summary": summary, "fathom_url": fathom_url}
+
+
+class FathomLinkRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/meetings/sessions/{session_id}/fathom")
+async def set_meeting_fathom_link(session_id: str, body: FathomLinkRequest):
+    """Manually attach a Fathom recording link — the fallback when auto-fetch
+    (attempted in the /end endpoint) doesn't find one, or to correct it."""
+    ok = await run_in_threadpool(meetings_db.save_fathom_url, session_id, body.url)
+    if not ok:
+        return JSONResponse({"error": "Meeting not found or URL was empty."}, status_code=404)
+    return {"session_id": session_id, "fathom_url": body.url.strip()}
+
+
+@app.delete("/api/meetings/sessions/{session_id}/turns")
+async def clear_meeting_turns(session_id: str):
+    """Wipe notes/transcript + guidance for a meeting without deleting it —
+    for clearing out test content while iterating on a live session."""
+    ok = await run_in_threadpool(meetings_db.clear_turns, session_id)
+    if not ok:
+        return JSONResponse({"error": "Meeting not found."}, status_code=404)
+    return {"session_id": session_id, "turns": []}
+
+
+@app.delete("/api/meetings/sessions/{session_id}")
+async def delete_meeting_session(session_id: str):
+    ok = await run_in_threadpool(meetings_db.delete_session, session_id)
+    if not ok:
+        return JSONResponse({"error": "Meeting not found."}, status_code=404)
+    return {"session_id": session_id, "status": "deleted"}
+
+
 class ConnectionRequest(BaseModel):
     app: str | None = None
 
@@ -487,18 +1015,21 @@ def create_connection(body: ConnectionRequest):
 async def voice_transcribe(
     audio: UploadFile | None = File(default=None),
     entity_id: str | None = Form(default=None),
+    context: str | None = Form(default=None),
 ):
     """Speech -> text. The client posts a recorded audio clip; the configured
     provider (OpenAI/Groq Whisper) returns the transcript, which the client then
     sends through /api/chat so the voice agent runs the exact same Claude + Maton
     agent as the typed chat.
 
-    Multipart fields: `audio` (file, required), `entity_id` (optional)."""
+    Multipart fields: `audio` (file, required), `entity_id` (optional),
+    `context` (optional — "chat" default, or "meeting" for ambient room audio,
+    see hermes.voice._stt_prompt)."""
     if audio is None:
         return JSONResponse({"error": "No audio uploaded."}, status_code=400)
     raw = await audio.read()
     try:
-        text = await run_in_threadpool(transcribe, raw, audio.content_type)
+        text = await run_in_threadpool(transcribe, raw, audio.content_type, context or "chat")
     except VoiceError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
     return {"text": text, "entity_id": entity_id}
@@ -870,6 +1401,6 @@ if __name__ == "__main__":
     voice = "on" if Config.voice_enabled() else "off (set OPENAI_API_KEY)"
     print(
         f"[Hermes] API backend starting on http://127.0.0.1:{Config.PORT}  "
-        f"(model: {Config.MODEL}, voice: {voice})"
+        f"(model: {hermes_models.active_model()}, voice: {voice})"
     )
     uvicorn.run("app:app", host="0.0.0.0", port=Config.PORT, reload=True)

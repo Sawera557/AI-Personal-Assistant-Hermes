@@ -12,6 +12,7 @@ const connectResult = document.getElementById("connect-result");
 const convosEl = document.getElementById("convos");
 const convosEmptyEl = document.getElementById("convos-empty");
 const convoSearchInput = document.getElementById("convo-search-input");
+const chatLockNoteEl = document.getElementById("chat-lock-note");
 
 // Current history search query (empty = show all conversations).
 let convoQuery = "";
@@ -51,6 +52,26 @@ let pendingFiles = [];
 // mean "no restriction", so a thread that started open stays open forever.
 function entityIdForSend() {
   return HermesBiz.lockFor(sessionId) || HermesBiz.current;
+}
+
+// Surfaces the mismatch above the composer: without this, switching the
+// dropdown mid-conversation looks like it re-scopes the chat, but it silently
+// doesn't — messages keep saving under whatever business locked the thread at
+// its first message. Only shown when there IS a mismatch, so it stays quiet
+// the rest of the time.
+function updateLockNote() {
+  if (!chatLockNoteEl) return;
+  const lock = HermesBiz.lockFor(sessionId);
+  if (!lock || lock === HermesBiz.current) {
+    chatLockNoteEl.hidden = true;
+    return;
+  }
+  const lockedBiz = HermesBiz.find(lock);
+  const lockedName = lock === "all" ? "All Businesses" : (lockedBiz ? lockedBiz.name : lock);
+  chatLockNoteEl.hidden = false;
+  chatLockNoteEl.textContent =
+    `This chat is scoped to ${lockedName} — switching the dropdown won't change it. ` +
+    `Click "+ New conversation" to start a fresh chat for your new selection.`;
 }
 
 function escapeHtml(s) {
@@ -115,16 +136,76 @@ function addMessage(role, html) {
   return wrap;
 }
 
+// Renders a media reference (image/file) a tool call produced — e.g. WATI
+// media saved to S3 by wati_get_media. The actual URL is resolved lazily by
+// hydrateMedia() since only the durable s3:// URI is persisted in history.
+function renderToolMedia(media) {
+  if (!media || !media.s3_uri) return "";
+  const label = escapeHtml(media.filename || "file");
+  const uri = escapeHtml(media.s3_uri);
+  if ((media.content_type || "").startsWith("image/")) {
+    return `<div class="tool-media"><img class="tool-media-img" data-s3-uri="${uri}" alt="${label}" title="${label}"></div>`;
+  }
+  return `<div class="tool-media"><a class="tool-media-file" data-s3-uri="${uri}" href="#" title="${label}">📎 ${label}</a></div>`;
+}
+
 function renderToolTrace(tools) {
   if (!tools || !tools.length) return "";
   const items = tools.map((t) => {
     const cls = t.ok ? "tool-ok" : "tool-err";
     const dot = t.ok ? "✓" : "✗";
     return `<details><summary><span class="${cls}">${dot}</span> ${escapeHtml(t.tool)}</summary>` +
-      `<pre>${escapeHtml(JSON.stringify(t.input, null, 2))}</pre></details>`;
+      `<pre>${escapeHtml(JSON.stringify(t.input, null, 2))}</pre></details>${renderToolMedia(t.media)}`;
   });
   return `<div class="tools">${items.join("")}</div>`;
 }
+
+// Resolves every [data-s3-uri] placeholder inside `container` to a fresh
+// presigned URL. Called after any innerHTML that may include renderToolMedia()
+// output — both the live streaming "done" handler and history replay.
+async function hydrateMedia(container) {
+  const nodes = container.querySelectorAll("[data-s3-uri]");
+  await Promise.all(Array.from(nodes).map(async (el) => {
+    const uri = el.getAttribute("data-s3-uri");
+    if (!uri) return;
+    try {
+      const res = await fetch(`/api/media/presign?uri=${encodeURIComponent(uri)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.url) return;
+      if (el.tagName === "IMG") el.src = data.url;
+      else el.href = data.url;
+    } catch (_) { /* leave placeholder as-is */ }
+  }));
+}
+
+// ---- Image lightbox — click a chat image (e.g. WATI media) to view it full-size ----
+const lightboxEl = document.createElement("div");
+lightboxEl.className = "lightbox-overlay";
+lightboxEl.innerHTML = `<img class="lightbox-img" alt="">`;
+document.body.appendChild(lightboxEl);
+const lightboxImg = lightboxEl.querySelector(".lightbox-img");
+
+function openLightbox(src, alt) {
+  lightboxImg.src = src;
+  lightboxImg.alt = alt || "";
+  lightboxEl.classList.add("open");
+}
+function closeLightbox() {
+  lightboxEl.classList.remove("open");
+  lightboxImg.src = "";
+}
+lightboxEl.addEventListener("click", closeLightbox);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeLightbox();
+});
+
+// Event delegation: images render asynchronously (streaming + history replay),
+// so listen on the whole message list instead of binding per-<img>.
+messagesEl.addEventListener("click", (e) => {
+  const img = e.target.closest(".tool-media-img");
+  if (img && img.src) openLightbox(img.src, img.alt);
+});
 
 function renderThinking(thinking) {
   if (!thinking) return "";
@@ -162,6 +243,7 @@ function renderAssistantTurn(turn) {
   bubble.innerHTML =
     renderMarkdown(turn.text) + renderThinking(turn.thinking) + renderToolTrace(turn.tool_calls);
   highlightCode(bubble);
+  hydrateMedia(bubble);
 }
 
 function renderTranscript(transcript) {
@@ -238,6 +320,7 @@ async function loadConversations() {
 }
 // Let voice.js refresh the list after a spoken turn.
 window.hermesReloadConversations = loadConversations;
+window.updateLockNote = updateLockNote;
 
 // ---- History search ----------------------------------------------------
 // Debounce so we query on a pause, not on every keystroke.
@@ -273,6 +356,7 @@ async function openConversation(id) {
       // Reseed the lock from the server's authoritative value (never a bare
       // null — "all" means "no restriction", so it stays open forever).
       HermesBiz.setLock(sessionId, data.entity_id || "all");
+      updateLockNote();
     } else {
       showGreeting();
     }
@@ -288,6 +372,7 @@ function startNewConversation() {
   showGreeting();
   closeMobileNav();
   loadConversations();
+  updateLockNote();
 }
 
 async function deleteConversation(id) {
@@ -321,6 +406,82 @@ input.addEventListener("keydown", (e) => {
   }
 });
 
+// Reads /api/chat/stream's Server-Sent Events and renders the reply as it's
+// generated, instead of showing nothing until the whole turn (every tool
+// round-trip included) finishes. Falls back to a plain error bubble on a
+// failed request or a mid-stream "error" event — voice mode is untouched and
+// keeps using plain /api/chat, since it needs the complete text before TTS.
+async function sendStreaming(body, bubble) {
+  const res = await fetch("/api/chat/stream", { method: "POST", body });
+  if (!res.ok || !res.body) {
+    let msg = `Request failed (${res.status})`;
+    try { const j = await res.json(); if (j.error) msg = j.error; } catch (_) {}
+    bubble.innerHTML = `<span class="tool-err">${escapeHtml(msg)}</span>`;
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  let final = null;
+  let sawError = null;
+
+  const renderLive = () => {
+    bubble.innerHTML = renderMarkdown(text);
+    if (stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const chunk = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const dataLine = chunk.split("\n").find((l) => l.startsWith("data: "));
+      if (!dataLine) continue;
+      let evt;
+      try { evt = JSON.parse(dataLine.slice(6)); } catch (_) { continue; }
+
+      if (evt.type === "text") {
+        text += evt.text;
+        renderLive();
+      } else if (evt.type === "tool_call") {
+        bubble.innerHTML = renderMarkdown(text) +
+          `<div class="tool-live">⚙ Calling ${escapeHtml(evt.tool)}…</div>`;
+        if (stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+      } else if (evt.type === "done") {
+        final = evt;
+      } else if (evt.type === "error") {
+        sawError = evt.error || "Agent error";
+      }
+    }
+  }
+
+  if (sawError && !final) {
+    bubble.innerHTML = `<span class="tool-err">${escapeHtml(sawError)}</span>`;
+    return;
+  }
+
+  if (final) {
+    bubble.innerHTML =
+      renderMarkdown(final.reply) + renderThinking(final.thinking) + renderToolTrace(final.tool_calls);
+    highlightCode(bubble);
+    hydrateMedia(bubble);
+    // Lock (or reaffirm) this session's business from the server's
+    // authoritative resolved value — never a bare null ("all" = open).
+    HermesBiz.setLock(sessionId, final.entity_id || "all");
+    updateLockNote();
+    // A new turn was recorded — refresh the history list (title / new entry).
+    loadConversations();
+  } else {
+    // Stream ended without a "done" event — show whatever text did arrive.
+    bubble.innerHTML = renderMarkdown(text || "(no response)");
+  }
+}
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = input.value.trim();
@@ -350,22 +511,7 @@ form.addEventListener("submit", async (e) => {
   );
 
   try {
-    const res = await fetch("/api/chat", { method: "POST", body });
-    const data = await res.json();
-    if (data.error) {
-      thinkingEl.querySelector(".bubble").innerHTML =
-        `<span class="tool-err">${escapeHtml(data.error)}</span>`;
-    } else {
-      const bubble = thinkingEl.querySelector(".bubble");
-      bubble.innerHTML =
-        renderMarkdown(data.reply) + renderThinking(data.thinking) + renderToolTrace(data.tool_calls);
-      highlightCode(bubble);
-      // Lock (or reaffirm) this session's business from the server's
-      // authoritative resolved value — never a bare null ("all" = open).
-      HermesBiz.setLock(sessionId, data.entity_id || "all");
-      // A new turn was recorded — refresh the history list (title / new entry).
-      loadConversations();
-    }
+    await sendStreaming(body, thinkingEl.querySelector(".bubble"));
   } catch (err) {
     thinkingEl.querySelector(".bubble").innerHTML =
       `<span class="tool-err">Network error: ${escapeHtml(String(err))}</span>`;
@@ -423,7 +569,7 @@ const openMobileNav  = () => appEl.classList.add("mobile-open");
 const closeMobileNav = () => appEl.classList.remove("mobile-open");
 
 // Wire up every hamburger button (chat topbar + bills topbar)
-["menu-btn", "menu-btn-bills"].forEach((id) => {
+["menu-btn", "menu-btn-bills", "menu-btn-meeting"].forEach((id) => {
   document.getElementById(id)?.addEventListener("click", openMobileNav);
 });
 
@@ -452,6 +598,10 @@ function setView(view) {
   // Lazy-init billing page on first open
   if (view === "bills" && typeof window._billsInit === "function") {
     window._billsInit();
+  }
+  // Lazy-init meeting copilot on first open
+  if (view === "meeting" && typeof window._meetingInit === "function") {
+    window._meetingInit();
   }
 }
 
@@ -495,7 +645,9 @@ connectBtn.addEventListener("click", async () => {
     document.getElementById("hermes-biz-select-agent"),
     document.getElementById("hermes-biz-badge-agent")
   );
-  // Switching the global business re-filters which past chats are shown.
-  HermesBiz.onChange(() => loadConversations());
+  // Switching the global business re-filters which past chats are shown, and
+  // may reveal a mismatch with the open chat's actual lock.
+  HermesBiz.onChange(() => { loadConversations(); updateLockNote(); });
   await loadConversations();
+  updateLockNote();
 })();
