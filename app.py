@@ -95,6 +95,13 @@ async def _lifespan(_app: "FastAPI"):
                 log.info("Startup: removed %d pre-June-2026 Drive bill stubs", removed)
         except Exception:  # noqa: BLE001
             pass
+        try:
+            # Warm the World Bank data cache so the agent's first data question
+            # hits the cache instead of the 8-25s cold API path mid-conversation.
+            from hermes import worldbank
+            worldbank.prewarm()
+        except Exception:  # noqa: BLE001
+            pass
 
     threading.Thread(target=_go, daemon=True).start()
     yield
