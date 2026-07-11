@@ -28,15 +28,21 @@ import requests
 log = logging.getLogger("hermes.worldbank")
 
 _BASE = "https://api.worldbank.org/v2"
-# (connect, read). Connect is near-instant (~0.03s). The World Bank API computes
-# a cold query in ~8-25s then caches it server-side (a warm repeat is ~0.1s), so
-# the read timeout must be long enough for at least ONE attempt to complete —
-# a timeout shorter than the server's compute time means the server aborts on
-# client disconnect and never caches, so every attempt then fails. 20s clears a
-# normal cold query while still bounding how long a live turn can hang; the
-# startup pre-warm (see prewarm()) means users usually hit the warm cache anyway.
-_TIMEOUT = (5, 20)
-_RETRIES = 1  # mainly to ride out an occasional transient 400; keeps worst-case ~40s
+# (connect, read). Connect is near-instant (~0.03s). A COLD World Bank query
+# computes in ~8-23s normally (and can spike to ~35s+ under load) before the
+# server caches it (a warm repeat is ~0.1s). The read timeout must exceed the
+# server's compute time or the server aborts on client disconnect, never caches,
+# and every attempt then fails — so 40s is chosen to clear a realistic cold
+# query rather than clip a valid slow one. This rarely bites in practice: the
+# canonical-window design (see fetch()) + the 12h cache + the startup prewarm()
+# mean live turns almost always hit the warm cache, so the generous timeout is a
+# safety net for the occasional first-ever/uncached fetch, not the common path.
+_TIMEOUT = (5, 40)
+_RETRIES = 1  # rides out an occasional transient 400 / warms-then-hits on a timeout
+# The background prewarm() can afford to wait longer than a live turn, since no
+# user is blocked on it — a patient timeout ensures the cache actually populates
+# even when the API is slow, which is the whole point of pre-warming.
+_PREWARM_TIMEOUT = (5, 60)
 
 # In-process cache. World Bank data is annual, so a fetched series is good to
 # reuse for hours — this makes the 15-25s cold cost a once-per-indicator event
@@ -44,6 +50,14 @@ _RETRIES = 1  # mainly to ride out an occasional transient 400; keeps worst-case
 _CACHE_TTL = 12 * 3600
 _cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _cache_lock = threading.Lock()
+
+# One canonical API window is fetched per indicator (see fetch()); every
+# temporal question (latest / past-N / range) is then sliced from it client-
+# side, so they all share a single cache entry. 30 years covers any realistic
+# ask ("since 2000", "past 20 years", trends) while staying one small page.
+_CANON_YEARS = 30
+# Default slice when the caller asks for neither a range nor most_recent.
+_DEFAULT_TREND_YEARS = 13
 
 # Sentinel: distinguishes "the fetch failed (timeout/error)" from "the fetch
 # succeeded but the World Bank has no data for this series" — the two need
@@ -130,7 +144,7 @@ def _cache_get(key: str) -> list[dict[str, Any]] | None:
     return None
 
 
-def _fetch_series(indicator_code: str, countries: str, *, date: str | None = None):
+def _fetch_series(indicator_code: str, countries: str, *, date: str | None = None, timeout=None):
     """One API call: all requested countries for a single indicator.
 
     Returns the raw World Bank rows on success ([] if the API genuinely has no
@@ -155,7 +169,7 @@ def _fetch_series(indicator_code: str, countries: str, *, date: str | None = Non
 
     for attempt in range(_RETRIES + 1):
         try:
-            resp = requests.get(url, params=params, timeout=_TIMEOUT)
+            resp = requests.get(url, params=params, timeout=timeout or _TIMEOUT)
             if resp.status_code == 200:
                 payload = resp.json()
                 rows = payload[1] if isinstance(payload, list) and len(payload) >= 2 and payload[1] else []
@@ -182,6 +196,7 @@ def fetch(
     start_year: int | None = None,
     end_year: int | None = None,
     most_recent: int | None = None,
+    _timeout=None,
 ) -> dict[str, Any]:
     """Fetch World Bank indicator series and return a compact, model-friendly shape.
 
@@ -209,25 +224,26 @@ def fetch(
     country_codes = [resolve_country(c) for c in (countries or [_DEFAULT_COUNTRY])]
     countries_param = ";".join(country_codes)
 
-    # A bounded year range keeps the query cheap. End at the current year
-    # (computed, not hardcoded, so it never goes stale); the API returns nulls
-    # for years it doesn't have yet, which we filter out. For "most recent N",
-    # fetch a window wide enough to survive indicators that lag 1-2 years, then
-    # trim to N non-null points client-side.
+    # ONE canonical API window per (indicator, countries), regardless of whether
+    # the caller wants the latest point, the past 5 years, or a custom range —
+    # the specific slice is applied client-side below. This is deliberate: the
+    # cache (and the startup prewarm) is keyed by the exact request, so if every
+    # question shape built its own window ("2016:2026" for latest, "2015:2026"
+    # for past-5, ...) they'd each miss the cache and pay the slow ~10-30s cold
+    # API cost separately. Sharing one window means the cold cost is paid at most
+    # once per indicator and every temporal question then hits the warm cache.
     this_year = datetime.date.today().year
-    if most_recent:
-        date = f"{this_year - max(most_recent + 6, 10)}:{this_year}"
-    else:
-        if not start_year and not end_year:
-            start_year, end_year = this_year - 13, this_year  # ~recent history
-        date = f"{start_year or 2000}:{end_year or this_year}"
+    canon_start = this_year - _CANON_YEARS
+    # Only widen the API window if the caller explicitly asks for older data.
+    api_start = min(canon_start, start_year) if start_year else canon_start
+    date = f"{api_start}:{this_year}"
 
     resolved = [resolve_indicator(i) for i in indicators]
 
     def _one(pair: tuple[str, str | None]):
         code, _label = pair
         try:
-            return pair, _fetch_series(code, countries_param, date=date)
+            return pair, _fetch_series(code, countries_param, date=date, timeout=_timeout)
         except Exception as exc:  # noqa: BLE001 — degrade per-series, never fail the whole call
             log.warning("World Bank fetch failed for %s: %s", code, exc)
             return pair, FETCH_FAILED
@@ -266,9 +282,19 @@ def fetch(
             crows = by_country.get(ciso)
             if not crows:
                 continue
-            crows.sort(key=lambda x: x["date"], reverse=True)
-            if most_recent:
+            crows.sort(key=lambda x: x["date"], reverse=True)  # newest first
+            # Apply the caller's requested slice CLIENT-SIDE (the API call always
+            # used the shared canonical window). Explicit range wins; else the
+            # most-recent-N; else a sensible recent-history default.
+            if start_year or end_year:
+                lo, hi = start_year or 0, end_year or 9999
+                crows = [r for r in crows if lo <= int(r["date"]) <= hi]
+            elif most_recent:
                 crows = crows[:most_recent]
+            else:
+                crows = [r for r in crows if int(r["date"]) >= this_year - _DEFAULT_TREND_YEARS]
+            if not crows:
+                continue
             country_name = (crows[0].get("country") or {}).get("value") or ciso
             series.append(
                 {
@@ -302,16 +328,18 @@ _PREWARM_KEYS = [
 
 
 def prewarm() -> int:
-    """Best-effort: pre-fetch Kenya's core indicators for the two query shapes
-    the tool emits most (a recent trend window and 'most recent'), populating
-    the cache. Safe to call in a background thread at boot; returns how many of
-    the two warm passes returned data. Never raises."""
-    warmed = 0
-    for kwargs in ({}, {"most_recent": 1}):
-        try:
-            out = fetch(_PREWARM_KEYS, [_DEFAULT_COUNTRY], **kwargs)
-            if out.get("series"):
-                warmed += 1
-        except Exception as exc:  # noqa: BLE001 — warming is optional
-            log.warning("World Bank prewarm pass failed: %s", exc)
-    return warmed
+    """Best-effort: pre-fetch Kenya's core indicators into the cache at boot, so
+    a live chat turn hits the warm cache instead of the slow cold API. One pass
+    is enough now that every temporal question (latest / past-N / range) shares
+    the single canonical API window per indicator. Returns the number of series
+    warmed. Safe in a background thread; never raises.
+
+    Uses a more patient timeout than live turns (see `_PREWARM_TIMEOUT`): nobody
+    is blocked on it, and warming reliably even against a slow API is the point.
+    """
+    try:
+        out = fetch(_PREWARM_KEYS, [_DEFAULT_COUNTRY], _timeout=_PREWARM_TIMEOUT)
+        return len(out.get("series") or [])
+    except Exception as exc:  # noqa: BLE001 — warming is optional
+        log.warning("World Bank prewarm failed: %s", exc)
+        return 0
