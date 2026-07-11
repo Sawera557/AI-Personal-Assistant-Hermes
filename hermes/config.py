@@ -182,6 +182,20 @@ class Config:
             lines.append(f"  - {slug}: {label}")
         return "\n".join(lines)
 
+    # ---- Persistent memory (owner/business/project/decision) ---------------
+    # Kill switch: extraction is pure upside when it works and pure noise when
+    # it doesn't, so it's worth being able to turn off without a deploy.
+    MEMORY_EXTRACT_ENABLED: bool = _bool(os.getenv("MEMORY_EXTRACT_ENABLED"), True)
+    # Cosine-similarity thresholds for write-time consolidation (see
+    # hermes/db/memories.py::write_memory) — same scale as pgvector's
+    # `1 - cosine_distance` score, so 1.0 is identical, 0.0 is unrelated.
+    MEMORY_DUP_THRESHOLD: float = float(os.getenv("MEMORY_DUP_THRESHOLD", "0.92"))
+    MEMORY_UPDATE_THRESHOLD: float = float(os.getenv("MEMORY_UPDATE_THRESHOLD", "0.75"))
+    # Retrieval knobs (hermes/memory_retrieve.py).
+    MEMORY_ALWAYS_INJECT_MAX: int = int(os.getenv("MEMORY_ALWAYS_INJECT_MAX", "20"))
+    MEMORY_SEMANTIC_TOP_K: int = int(os.getenv("MEMORY_SEMANTIC_TOP_K", "5"))
+    MEMORY_MAX_SENSITIVITY: str = os.getenv("MEMORY_MAX_SENSITIVITY", "confidential")
+
     # ---- NuExtract (bill / invoice OCR) ------------------------------------
     NUEXTRACT_API_KEY: str = os.getenv("NUEXTRACT_API_KEY", "").strip()
     NUEXTRACT_BASE_URL: str = os.getenv(

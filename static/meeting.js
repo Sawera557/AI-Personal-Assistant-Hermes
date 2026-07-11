@@ -1010,7 +1010,7 @@
     chunks = [];
     // Resume capturing the NEXT segment immediately, before this one is even
     // transcribed — the mic must never sit idle while the copilot round-trip
-    // (STT + Pinecone + Claude) for the previous segment is in flight, or
+    // (STT + vector search + Claude) for the previous segment is in flight, or
     // whatever's said during that window is lost for good.
     beginUtterance();
     if (hadSpeech) enqueueUtterance(blob);

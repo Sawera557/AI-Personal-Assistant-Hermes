@@ -56,6 +56,15 @@
             </svg>
             <span>Meeting</span>
           </button>
+          <button class="strip-tab" type="button" data-view="context" title="Business Context">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="8" y1="13" x2="16" y2="13"/>
+              <line x1="8" y1="17" x2="13" y2="17"/>
+            </svg>
+            <span>Context</span>
+          </button>
         </div>
 
         <button class="strip-toggle" id="strip-toggle" type="button" title="Toggle sidebar">
@@ -198,6 +207,19 @@
 
           <div class="panel push-bottom">
             <p class="hint">Guidance is grounded only in what's already been indexed for the selected business — nothing invented, every claim sourced.</p>
+          </div>
+        </div>
+
+        <!-- Business Context panel: sidebar metadata for the Context section -->
+        <div class="panel-section" id="panel-context">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-context" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-context" hidden></p>
+          </div>
+
+          <div class="panel push-bottom">
+            <p class="hint">Notes and files you add here are chunked, embedded, and searchable by Hermes in chat via `search_business_knowledge` — kept separate per business.</p>
           </div>
         </div>
 
@@ -435,6 +457,88 @@
       </div>
     </main>
 
+    <!-- ── Main area: Business Context ────────────────────────────── -->
+    <main class="context-view" id="context-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-context" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(245,166,35,.15);font-size:15px;">📚</span> Context</div>
+      </header>
+
+      <div class="context-page" id="context-page">
+        <div class="context-pg-header">
+          <div>
+            <div class="bills-panel-title">Business Context</div>
+            <div class="bills-panel-sub">Notes and files Hermes can search while chatting</div>
+          </div>
+          <div class="context-header-actions">
+            <input type="file" id="context-file-input" accept=".md,.markdown,text/markdown" hidden />
+            <button type="button" id="context-upload-btn" class="ghost">📄 Upload .md file</button>
+          </div>
+        </div>
+
+        <p class="hint" id="context-scope-hint" hidden>🌐 "All Businesses" is selected — this will be saved as a <strong>global</strong> note visible to every business, not just one.</p>
+
+        <div class="context-add" id="context-add">
+          <input type="text" id="context-paste-title" class="context-title-input" placeholder="Title (e.g. &quot;Lease terms overview&quot;)" autocomplete="off" />
+          <textarea id="context-paste-body" placeholder="Paste markdown context here…" rows="4"></textarea>
+          <div class="context-add-row">
+            <select id="context-sensitivity" aria-label="Sensitivity">
+              <option value="public">Public</option>
+              <option value="internal" selected>Internal</option>
+              <option value="confidential">Confidential</option>
+              <option value="restricted">Restricted</option>
+            </select>
+            <button type="button" id="context-save-btn">Save as context</button>
+          </div>
+          <p id="context-result" class="hint"></p>
+        </div>
+
+        <div class="context-subtabs" role="tablist">
+          <button type="button" class="context-subtab active" id="context-subtab-files" data-subview="files">Files</button>
+          <button type="button" class="context-subtab" id="context-subtab-memories" data-subview="memories">Memories</button>
+        </div>
+
+        <div id="files-subview">
+          <ul class="context-list" id="context-list"></ul>
+          <p class="hint" id="context-empty" hidden>No context files yet.</p>
+        </div>
+
+        <div id="memories-subview" hidden>
+          <ul class="context-list" id="memory-list"></ul>
+          <p class="hint" id="memory-empty" hidden>No memories yet.</p>
+        </div>
+      </div>
+
+      <!-- Context file editor/viewer modal -->
+      <div class="cx-overlay" id="cx-overlay" hidden>
+        <div class="cx-modal">
+          <div class="cx-header">
+            <input type="text" id="cx-edit-title" class="cx-edit-title" />
+            <button class="cx-close-btn" id="cx-close-btn" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="cx-body">
+            <textarea id="cx-edit-body" rows="16"></textarea>
+          </div>
+          <div class="cx-footer">
+            <select id="cx-edit-sensitivity" aria-label="Sensitivity">
+              <option value="public">Public</option>
+              <option value="internal">Internal</option>
+              <option value="confidential">Confidential</option>
+              <option value="restricted">Restricted</option>
+            </select>
+            <span class="hint" id="cx-edit-result"></span>
+            <div class="cx-footer-actions">
+              <button class="cx-action-btn cx-delete-btn" id="cx-delete-btn" type="button">Delete</button>
+              <button class="cx-action-btn cx-save-btn" id="cx-save-btn" type="button">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
   </div><!-- /app -->
 
   {% if voice_enabled %}
@@ -461,6 +565,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="/static/business.js?v={{ v }}"></script>
+  <script src="/static/context.js?v={{ v }}"></script>
   <script src="/static/model.js?v={{ v }}"></script>
   <script src="/static/app.js?v={{ v }}"></script>
   <script src="/static/bills.js?v={{ v }}"></script>

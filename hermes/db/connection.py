@@ -104,6 +104,21 @@ def connect() -> psycopg.Connection:
             kwargs["sslrootcert"] = cfg["sslrootcert"]
         try:
             conn = psycopg.connect(**kwargs)
+            from pgvector.psycopg import register_vector  # lazy: only needed once connected
+
+            try:
+                # Adapts Python list[float] <-> Postgres `vector` on this connection.
+                # Fails on a database where `CREATE EXTENSION vector` hasn't run yet
+                # (e.g. the very first connect, used to apply that migration) —
+                # degrade rather than block connecting, since scripts/init_db.py
+                # itself needs a working connection to create the extension.
+                register_vector(conn)
+            except psycopg.ProgrammingError:
+                conn.rollback()
+                log.warning(
+                    "pgvector extension not found yet — vector columns won't adapt "
+                    "on this connection until migrations are applied."
+                )
             if i > 0:
                 log.info("DB connect succeeded on attempt %d/%d", i + 1, attempts)
             return conn

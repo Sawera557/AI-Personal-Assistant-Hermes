@@ -70,11 +70,14 @@ from hermes.db.bills import (
     update_bill,
     upsert_business,
 )
+from hermes.db import documents as docs_repo
+from hermes.db import memories as mem_repo
 from hermes.db import meetings as meetings_db
-from hermes.ingest import ingest_document
+from hermes.ingest import ingest_document, update_document
 from hermes.maton import MatonClient, MatonError
 from hermes.meeting_copilot import generate_ai_notes, get_guidance, get_guidance_comprehensive, prepare_brief, summarize_meeting
 from hermes.memory import store
+from hermes.memory_extract import extract_async
 from hermes import models as hermes_models
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
@@ -378,6 +381,10 @@ async def chat(request: Request):
         user_text = f"{message}\n{note}" if message else note
     store_entity = None if active_business == "all" else to_entity_slug(active_business)
     store.record_turn(key, store_entity, session_id, user_text, result)
+    extract_async(
+        session_id=session_id, entity_slug=store_entity,
+        user_text=user_text, reply=result.get("reply") or "",
+    )
 
     result["session_id"] = session_id
     result["entity_id"] = active_business  # authoritative, locked value — not just an echo
@@ -487,6 +494,10 @@ async def chat_stream(request: Request):
 
         # Same history recording as /api/chat, after the stream completes.
         store.record_turn(key, store_entity, session_id, user_text, result)
+        extract_async(
+            session_id=session_id, entity_slug=store_entity,
+            user_text=user_text, reply=result.get("reply") or "",
+        )
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
 
@@ -608,16 +619,22 @@ async def upload_documents(request: Request):
     """Ingest files into the knowledge base so they're searchable by meaning.
 
     Each file is stored (S3, if configured), recorded in `documents`, chunked,
-    embedded, and upserted into the business's Pinecone namespace.
+    embedded, and written into the business's document_chunks rows (pgvector).
 
     Multipart fields: `files` (one or more, required), `entity_id` (required —
-    which business the files belong to), `sensitivity_level` (optional, default
-    'internal'), `message_id` (optional, link to a chat message)."""
+    the BUSINESS slug, e.g. "afk", same convention as /api/chat, converted to
+    the underlying entities.slug here; or "all" to make it a GLOBAL document
+    that surfaces for every business), `sensitivity_level` (optional, default
+    'internal'), `source_system` (optional, default 'upload' — the Business
+    Context panel tags its uploads 'business_context'), `message_id` (optional,
+    link to a chat message)."""
     form = await request.form()
-    entity_id = (form.get("entity_id") or "").strip()
-    if not entity_id:
+    business_slug = (form.get("entity_id") or "").strip()
+    if not business_slug:
         return JSONResponse({"error": "entity_id is required."}, status_code=400)
+    entity_id = None if business_slug == "all" else (to_entity_slug(business_slug) or business_slug)
     sensitivity = (form.get("sensitivity_level") or "internal").strip()
+    source_system = (form.get("source_system") or "upload").strip()
     message_id = form.get("message_id") or None
 
     uploads = [
@@ -641,6 +658,7 @@ async def upload_documents(request: Request):
                 mime=upload.content_type or "",
                 raw=raw,
                 message_id=message_id,
+                source_system=source_system,
                 sensitivity_level=sensitivity,
             )
         except ValueError as exc:
@@ -648,7 +666,112 @@ async def upload_documents(request: Request):
         except Exception as exc:  # noqa: BLE001
             return JSONResponse({"error": f"Ingest failed: {exc}"}, status_code=500)
         out.append({"filename": upload.filename, **result})
-    return {"documents": out, "entity_id": entity_id}
+    return {"documents": out, "entity_id": business_slug}
+
+
+def _tag_business_slug(rows: list[dict]) -> list[dict]:
+    """Add a `business_slug` field (may be None for archived/unmapped
+    entities like Comfort Services) alongside the raw entity_slug/entity_name
+    every all-businesses row already carries — the frontend groups by this."""
+    for row in rows:
+        row["business_slug"] = to_business_slug(row.get("entity_slug"))
+    return rows
+
+
+@app.get("/api/documents")
+async def list_documents_endpoint(entity_id: str, source_system: str | None = None):
+    """List ingested documents (newest first), one business or every business.
+    `entity_id` is the BUSINESS slug (same convention as /api/chat), or "all"
+    to list across every business (each row tagged with its business). Optional
+    `source_system` filter (the Context tab passes 'business_context')."""
+    all_mode = entity_id == "all"
+    resolved = None if all_mode else (to_entity_slug(entity_id) or entity_id)
+    try:
+        docs = await run_in_threadpool(docs_repo.list_documents, resolved, source_system)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if all_mode:
+        docs = _tag_business_slug(docs)
+    return {"entity_id": entity_id, "documents": docs}
+
+
+@app.delete("/api/documents/{document_id}")
+async def delete_document_endpoint(document_id: str):
+    """Remove a document (and its chunks/embeddings, via cascade). Best-effort
+    S3 cleanup if the original bytes were stored."""
+    result = await run_in_threadpool(docs_repo.delete_document, document_id)
+    if result is None:
+        return JSONResponse({"error": "Document not found."}, status_code=404)
+    if result.get("s3_uri"):
+        await run_in_threadpool(s3.delete, result["s3_uri"])
+    return {"deleted": document_id}
+
+
+def _resolve_entity_uuid(business_slug: str) -> str | None:
+    """BUSINESS slug -> entities.entity_id (uuid), or None if unresolvable."""
+    from hermes.db.connection import cursor as _cursor
+
+    entity_slug = to_entity_slug(business_slug) or business_slug
+    with _cursor(commit=False) as cur:
+        resolved = docs_repo.resolve_entity(cur, entity_slug)
+    return resolved[0] if resolved else None
+
+
+@app.get("/api/memories")
+async def list_memories_endpoint(entity_id: str = "all", scope_type: str | None = None):
+    """List persistent memories (owner/business/project), newest first — one
+    business or every business. `entity_id` is the BUSINESS slug, or "all"
+    (default) to list across every business plus owner-scope memories."""
+    entity_uuid = None
+    if entity_id != "all":
+        entity_uuid = await run_in_threadpool(_resolve_entity_uuid, entity_id)
+        if entity_uuid is None:
+            return JSONResponse({"error": f"Unknown business: {entity_id!r}"}, status_code=400)
+    memories = await run_in_threadpool(
+        mem_repo.list_memories, entity_id=entity_uuid, scope_type=scope_type,
+    )
+    memories = _tag_business_slug(memories)
+    return {"entity_id": entity_id, "memories": memories}
+
+
+@app.delete("/api/memories/{memory_id}")
+async def delete_memory_endpoint(memory_id: str):
+    """Remove one memory."""
+    ok = await run_in_threadpool(mem_repo.delete_memory, memory_id)
+    if not ok:
+        return JSONResponse({"error": "Memory not found."}, status_code=404)
+    return {"deleted": memory_id}
+
+
+@app.get("/api/documents/{document_id}")
+async def get_document_endpoint(document_id: str):
+    """Full document detail, including body_text — for loading into an editor.
+    The list endpoint above deliberately omits body_text to stay light."""
+    doc = await run_in_threadpool(docs_repo.get_document, document_id)
+    if doc is None:
+        return JSONResponse({"error": "Document not found."}, status_code=404)
+    return {"document": doc}
+
+
+class DocumentPatch(BaseModel):
+    title: str | None = None
+    sensitivity_level: str | None = None
+    body_text: str | None = None
+
+
+@app.patch("/api/documents/{document_id}")
+async def update_document_endpoint(document_id: str, body: DocumentPatch):
+    """Edit a document's title/sensitivity/content. Editing body_text discards
+    and regenerates its chunks/embeddings so search reflects the edit, not the
+    stale version."""
+    try:
+        doc = await run_in_threadpool(
+            update_document, document_id,
+            title=body.title, sensitivity_level=body.sensitivity_level, body_text=body.body_text,
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    return {"document": doc}
 
 
 @app.get("/api/search")
@@ -676,7 +799,7 @@ async def search(
 #  Meeting Copilot — private, real-time guidance during a live meeting
 # ════════════════════════════════════════════════════════════════════════════
 # Grounded ONLY in what the ingestion pipeline already read ahead of time
-# (Pinecone + Postgres) — never scans Gmail/Drive live, never speaks in the
+# (pgvector + Postgres) — never scans Gmail/Drive live, never speaks in the
 # meeting, never sends anything. One semantic search + one Claude call, so it
 # stays fast enough to use while actively talking.
 
@@ -879,7 +1002,7 @@ async def generate_meeting_ai_notes(session_id: str, body: MeetingAiNotesRequest
     bullet-point notes ending with links to the relevant Drive files.
 
     Slower than /prepare's brief (real tool calls against Gmail/Drive, not
-    just a Pinecone lookup) — call this on explicit request, and it's safe to
+    just a vector-search lookup) — call this on explicit request, and it's safe to
     call again any time to regenerate with fresh results.
     """
     business = (body.business or "").strip()

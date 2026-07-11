@@ -12,6 +12,7 @@ import requests
 
 from . import storage
 from .attachments import store as attachment_store
+from .businesses import BUSINESS_TO_ENTITY_SLUG, to_entity_slug
 from .config import Config
 from .maton import MatonClient, MatonError
 from .wati import WatiClient
@@ -122,6 +123,12 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             "description": "Which Zoom connection owns this meeting. Defaults to 'zoom'.",
         },
     }
+    knowledge_props: dict[str, Any] = {
+        "query": {
+            "type": "string",
+            "description": "What to look for, in plain language (meaning-based search, not exact keywords).",
+        },
+    }
 
     if fan_out:
         connected = Config.connected_business_slugs()
@@ -138,6 +145,16 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
         connections_props["business"] = business_param
         drive_props["business"] = business_param
         send_email_props["business"] = business_param
+        # Knowledge search isn't gated by a Maton connection — any business with
+        # uploaded context is searchable, whether or not it has an app connected.
+        knowledge_props["business"] = {
+            "type": "string",
+            "enum": sorted(BUSINESS_TO_ENTITY_SLUG),
+            "description": (
+                "Required: which business's knowledge base to search. The user has 'All "
+                "Businesses' selected, so you must pick one per call."
+            ),
+        }
         zoom_invite_props["business"] = business_param
 
     tools: list[dict[str, Any]] = [
@@ -500,6 +517,22 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             }
         )
 
+    tools.append({
+        "name": "search_business_knowledge",
+        "description": (
+            "Search a business's uploaded knowledge base (context files, documents, and notes "
+            "ingested for it) by meaning, not exact keywords. Check here before saying you lack "
+            "information about a business's specific rules, background, or policies — this is "
+            "where manually-added business context lives. Returns the most relevant snippets "
+            "with their source; if nothing relevant comes back, say so rather than guessing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": knowledge_props,
+            "required": ["query"],
+        },
+    })
+
     if Config.WEB_SEARCH:
         # allowed_callers=["direct"] restricts these to normal tool_use calls
         # (what the dispatch loop already handles) instead of also allowing
@@ -525,7 +558,8 @@ WATI_TOOLS = {
 # Names that Hermes executes locally (everything else is server-side).
 LOCAL_TOOLS = {
     "maton_request", "maton_list_connections", "maton_create_connection",
-    "drive_read_file", "send_email", "zoom_send_invite", *WATI_TOOLS,
+    "drive_read_file", "send_email", "zoom_send_invite", "search_business_knowledge",
+    *WATI_TOOLS,
 }
 
 # Drive mime types we can hand to Claude as a native document/image block, and
@@ -581,6 +615,52 @@ def _attachment_scope(tool_input: dict[str, Any], active_business: str | None) -
     if slug:
         return slug
     return active_business if active_business != ALL_BUSINESSES else None
+
+
+def _search_business_knowledge(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Meaning-search one business's ingested knowledge base (uploaded context
+    files + any other documents). No Maton client needed — pure Postgres/pgvector
+    via hermes.search, so this doesn't go through `_resolve_client`."""
+    from .search import semantic_search  # local import: avoid a module-load cycle
+
+    slug = tool_input.get("business") or None
+    if not slug:
+        if active_business == ALL_BUSINESSES:
+            raise MatonError(
+                "No business specified. In 'All Businesses' mode you must pass a "
+                "`business` argument naming which business's knowledge base to search."
+            )
+        slug = active_business
+    if not slug:
+        raise MatonError("No business is scoped for this conversation — nothing to search.")
+
+    entity_slug = to_entity_slug(slug)
+    if not entity_slug:
+        raise MatonError(f"Unknown business: {slug!r}.")
+
+    query = (tool_input.get("query") or "").strip()
+    if not query:
+        raise MatonError("`query` is required.")
+
+    try:
+        hits = semantic_search(entity_slug, query, max_sensitivity="confidential", top_k=6)
+    except ValueError as exc:
+        raise MatonError(str(exc)) from exc
+
+    if not hits:
+        return {"ok": True, "results": [], "message": "No matching context found in this business's knowledge base."}
+    return {
+        "ok": True,
+        "results": [
+            {
+                "title": h.get("title") or "untitled",
+                "source_system": h.get("source_system"),
+                "snippet": (h.get("snippet") or "").strip()[:500],
+                "score": h.get("score"),
+            }
+            for h in hits
+        ],
+    }
 
 
 def _fetch_url_bytes(url: str) -> tuple[bytes, str, str]:
@@ -887,6 +967,9 @@ def dispatch(
                 )
             client = _resolve_client({}, active_business)
             result = client.create_connection(app=tool_input["app"])
+        elif name == "search_business_knowledge":
+            # No Maton client involved at all — pure Postgres/pgvector search.
+            result = _search_business_knowledge(tool_input, active_business)
         else:
             client = _resolve_client(tool_input, active_business)
             if name == "maton_request":

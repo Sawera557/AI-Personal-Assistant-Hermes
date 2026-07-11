@@ -1,6 +1,6 @@
 """Meaning search — the guarded entry point the backend uses.
 
-The website and the agent NEVER talk to Pinecone directly. They call this, which:
+The website and the agent NEVER talk to the vector store directly. They call this, which:
   1. resolves which business (entity) is in scope and its region,
   2. searches only that business's namespace,
   3. enforces sensitivity (<= the caller's clearance) + region + is_active,
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import pinecone_store as ps
+from . import vector_store as ps
 from .db import documents as docs_repo
 from .db.connection import cursor
 

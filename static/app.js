@@ -569,7 +569,7 @@ const openMobileNav  = () => appEl.classList.add("mobile-open");
 const closeMobileNav = () => appEl.classList.remove("mobile-open");
 
 // Wire up every hamburger button (chat topbar + bills topbar)
-["menu-btn", "menu-btn-bills", "menu-btn-meeting"].forEach((id) => {
+["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context"].forEach((id) => {
   document.getElementById(id)?.addEventListener("click", openMobileNav);
 });
 
@@ -602,6 +602,10 @@ function setView(view) {
   // Lazy-init meeting copilot on first open
   if (view === "meeting" && typeof window._meetingInit === "function") {
     window._meetingInit();
+  }
+  // Lazy-init business context on first open
+  if (view === "context" && typeof window._contextInit === "function") {
+    window._contextInit();
   }
 }
 

@@ -13,13 +13,12 @@ its own docstring for why that's a conscious, separate decision.
 """
 from __future__ import annotations
 
-import json
-import re
 from concurrent.futures import ThreadPoolExecutor
 
 import anthropic
 
 from .config import Config
+from .llm_json import call_claude_json
 from .search import semantic_search
 
 _client: anthropic.Anthropic | None = None
@@ -167,7 +166,7 @@ def get_guidance(
          answers and will keep re-deriving the same obvious point turn after
          turn; seen for real in production (the same question asked 11 turns
          in a row). Also cheap next to the vector search.
-      3. The wider Pinecone semantic search over everything else indexed for
+      3. The wider pgvector semantic search over everything else indexed for
          this business (the existing, slower path: an embedding call + a
          vector query).
 
@@ -264,31 +263,6 @@ def _sources_of(hits: list[dict]) -> list[dict]:
     ]
 
 
-def _call_claude_json(*, system: str, user_message: str, max_tokens: int, fallback_key: str) -> dict:
-    """Call Claude expecting a JSON object back. Tolerates a stray ```json
-    fence around the object (models do this despite instructions not to).
-    On any parse failure, degrades to {fallback_key: <raw text>} rather than
-    raising — a malformed brief/summary is still better than a crashed turn."""
-    client = _anthropic()
-    resp = client.messages.create(
-        model=Config.MODEL,
-        max_tokens=max_tokens,
-        system=system,
-        messages=[{"role": "user", "content": user_message}],
-    )
-    text = "".join(
-        getattr(block, "text", "") for block in resp.content
-        if getattr(block, "type", None) == "text"
-    ).strip()
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            pass
-    return {fallback_key: text}
-
-
 _BRIEF_SYSTEM_TEMPLATE = """You are Gandi's private meeting-preparation assistant for \
 {business_name}. You are producing a brief he'll read privately before the meeting starts.
 
@@ -345,7 +319,7 @@ def prepare_brief(
     if description:
         user_message += f"\nDescription: {description}"
 
-    brief = _call_claude_json(
+    brief = call_claude_json(
         system=system, user_message=user_message, max_tokens=900, fallback_key="background",
     )
     brief.setdefault("background", "")
@@ -391,7 +365,7 @@ def summarize_meeting(*, business_name: str, turns: list[dict]) -> dict:
     system = _SUMMARY_SYSTEM_TEMPLATE.format(business_name=business_name)
     user_message = f"Meeting notes/transcript (in order):\n{transcript}"
 
-    summary = _call_claude_json(
+    summary = call_claude_json(
         system=system, user_message=user_message, max_tokens=900, fallback_key="summary",
     )
     summary.setdefault("summary", "")

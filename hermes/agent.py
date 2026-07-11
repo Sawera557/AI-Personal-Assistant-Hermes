@@ -22,6 +22,7 @@ import openai
 from . import models
 from .config import Config
 from .memory import store
+from .memory_retrieve import build_memory_block
 from .tools import LOCAL_TOOLS, build_tools, dispatch
 
 _anthropic_client: anthropic.Anthropic | None = None
@@ -56,7 +57,7 @@ _VOICE_STYLE = (
 )
 
 
-def _system_prompt(voice: bool = False, active_business: str | None = None) -> str:
+def _system_prompt(voice: bool = False, active_business: str | None = None, memory_block: str = "") -> str:
     today = datetime.date.today().isoformat()
     base = (
         "You are Hermes, a capable AI executive assistant. You help the user get "
@@ -81,6 +82,9 @@ def _system_prompt(voice: bool = False, active_business: str | None = None) -> s
         "- Never substitute one business's data or connected account for another's. If a "
         "business isn't connected yet, tell the user plainly instead of guessing or using "
         "a different business's account.\n"
+        "- Before saying you lack context on a business's specific rules, background, or "
+        "policies, call `search_business_knowledge` — that's where manually-added business "
+        "context (uploaded notes/files) lives, separate from the MEMORY section below.\n"
         "- When you use web search, cite the sources.\n"
         "- Lead with the answer; be concise and practical.\n"
         f"Today's date is {today}."
@@ -97,6 +101,8 @@ def _system_prompt(voice: bool = False, active_business: str | None = None) -> s
             f"\n\nBusiness scope: this conversation is locked to business '{active_business}'. "
             "All Maton tool calls automatically use that business's connected account."
         )
+    if memory_block:
+        base += f"\n\nMEMORY (what you already know — preferences, business rules, standing decisions):\n{memory_block}"
     return base + _VOICE_STYLE if voice else base
 
 
@@ -373,13 +379,22 @@ def stream_turn(
     messages = store.get(session_id)
     messages.append({"role": "user", "content": user_content})
 
+    # Fetched once per turn (not per tool round-trip, not cached across turns —
+    # next-turn recall of what was just extracted is the point of the feature).
+    try:
+        memory_block = build_memory_block(
+            active_business=active_business, latest_user_text=_text_of(user_content),
+        )
+    except Exception:  # noqa: BLE001 — a memory-retrieval failure must never break the turn
+        memory_block = ""
+
     tool_trace: list[dict[str, Any]] = []
     reply = ""
     thinking_summary = ""
     stop_reason = None
 
     for _ in range(Config.MAX_TOOL_ITERATIONS):
-        system_prompt = _system_prompt(voice, active_business)
+        system_prompt = _system_prompt(voice, active_business, memory_block)
         turn = (
             _anthropic_turn(model_id, tools, system_prompt, messages)
             if provider == "anthropic"

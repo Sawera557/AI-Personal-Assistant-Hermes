@@ -18,7 +18,9 @@ Architecture (per the project scope doc):
 
 Cross-turn agent memory is rebuilt from the stored user/assistant text. The
 in-turn tool-use blocks stay ephemeral within a single turn — Postgres is the
-display/record truth; long-term semantic memory lives in Pinecone.
+display/record truth; long-term semantic memory (documents + the owner/
+business/project memory in hermes/db/memories.py) lives in pgvector, also
+Postgres.
 """
 from __future__ import annotations
 
