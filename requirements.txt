@@ -10,3 +10,4 @@ psycopg[binary]>=3.1
 pgvector>=0.3
 boto3>=1.34
 pinecone>=5.0
+fpdf2>=2.7

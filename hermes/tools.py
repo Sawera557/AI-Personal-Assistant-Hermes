@@ -129,6 +129,23 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             "description": "What to look for, in plain language (meaning-based search, not exact keywords).",
         },
     }
+    create_file_props: dict[str, Any] = {
+        "filename": {
+            "type": "string",
+            "description": "Name for the file, with extension, e.g. 'q3_summary.md' or 'notes.txt'.",
+        },
+        "content": {
+            "type": "string",
+            "description": "The full text content to write into the file.",
+        },
+        "content_type": {
+            "type": "string",
+            "description": (
+                "Optional MIME type, e.g. 'text/markdown' or 'text/csv'. If omitted, it's "
+                "guessed from the filename's extension (falls back to text/plain)."
+            ),
+        },
+    }
 
     if fan_out:
         connected = Config.connected_business_slugs()
@@ -156,6 +173,16 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             ),
         }
         zoom_invite_props["business"] = business_param
+        # Optional, unlike the others above — a created file isn't tied to any
+        # business's connection, so leaving it out just files it generally.
+        create_file_props["business"] = {
+            "type": "string",
+            "enum": sorted(BUSINESS_TO_ENTITY_SLUG),
+            "description": (
+                "Optional: which business to file this under, just for organizing in S3. "
+                "Omit for a general file not tied to one business."
+            ),
+        }
 
     tools: list[dict[str, Any]] = [
         {
@@ -533,6 +560,27 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
         },
     })
 
+    tools.append({
+        "name": "create_file",
+        "description": (
+            "Create a new file from text you write and store it in S3, returning a download "
+            "link. Use this whenever the user asks you to generate a document, report, note, "
+            "CSV, or any other file they can download — write the full content yourself, then "
+            "call this to persist it and get a real, working link. Always share the returned "
+            "`download_url` with the user in your reply; never invent or guess a URL yourself. "
+            "The link expires after 24 hours — tell the user if they'll need it longer than that. "
+            "A `.pdf` filename is rendered into a REAL PDF automatically — but as plain text "
+            "only: markdown syntax (#, **, etc.) is NOT interpreted/formatted, it just shows up "
+            "as literal characters, so write clean prose for a PDF rather than markdown. Every "
+            "other extension (.md, .txt, .csv, .json, .html, ...) is saved exactly as written."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": create_file_props,
+            "required": ["filename", "content"],
+        },
+    })
+
     if Config.WEB_SEARCH:
         # allowed_callers=["direct"] restricts these to normal tool_use calls
         # (what the dispatch loop already handles) instead of also allowing
@@ -559,6 +607,7 @@ WATI_TOOLS = {
 LOCAL_TOOLS = {
     "maton_request", "maton_list_connections", "maton_create_connection",
     "drive_read_file", "send_email", "zoom_send_invite", "search_business_knowledge",
+    "create_file",
     *WATI_TOOLS,
 }
 
@@ -660,6 +709,97 @@ def _search_business_knowledge(tool_input: dict[str, Any], active_business: str 
             }
             for h in hits
         ],
+    }
+
+
+# Presigned link lifetime for create_file — much longer than the 900s used for
+# internal search-result previews, since the user is meant to actually click
+# this one, possibly a while after the turn it was created in.
+_CREATED_FILE_LINK_EXPIRES = 24 * 60 * 60
+
+
+def _render_text_as_pdf(content: str) -> bytes:
+    """Render plain text into a REAL, valid PDF — a .pdf filename with raw
+    UTF-8 text bytes dumped into it (the naive approach) isn't a valid PDF and
+    fails to open in any viewer. Uses fpdf2 (pure Python, no system/native
+    dependencies — safe on serverless). Markdown syntax (#, **, etc.) is not
+    interpreted, just shown as literal characters — plain text only, for now.
+
+    fpdf2's built-in core font is Latin-1 only, so common "smart" punctuation
+    is normalized to its ASCII equivalent first; anything else outside Latin-1
+    is replaced rather than crashing the render.
+    """
+    from fpdf import FPDF
+
+    normalized = (
+        content.replace("‘", "'").replace("’", "'")
+        .replace("“", '"').replace("”", '"')
+        .replace("–", "-").replace("—", "-")
+        .replace("…", "...")
+    )
+    safe = normalized.encode("latin-1", errors="replace").decode("latin-1")
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=11)
+    for line in safe.split("\n"):
+        # multi_cell(w=0, ...) leaves the cursor at the right edge afterward
+        # rather than resetting to the left margin — without this, the next
+        # call computes an ~empty width and raises FPDFException.
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(0, 6, line or " ")
+    return bytes(pdf.output())
+
+
+def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Write model-authored text content to S3 and return a download link. No
+    Maton client involved — pure storage.py, same as _search_business_knowledge."""
+    if not storage.enabled():
+        raise MatonError(
+            "File creation isn't available — S3_BUCKET isn't configured. Tell the user "
+            "to set S3_BUCKET (and AWS credentials) before this tool can be used."
+        )
+
+    filename = (tool_input.get("filename") or "").strip()
+    if not filename:
+        raise MatonError("`filename` is required.")
+    content = tool_input.get("content")
+    if not content:
+        raise MatonError("`content` is required.")
+
+    if filename.lower().endswith(".pdf"):
+        # A .pdf filename with plain UTF-8 text bytes isn't a valid PDF — render
+        # a real one instead of just labeling text as application/pdf.
+        try:
+            raw = _render_text_as_pdf(content)
+        except Exception as exc:  # noqa: BLE001 — surface as a clean tool error
+            raise MatonError(f"Could not render this content as a PDF: {exc}") from exc
+        content_type = "application/pdf"
+    else:
+        import mimetypes
+
+        content_type = (tool_input.get("content_type") or "").strip() or (
+            mimetypes.guess_type(filename)[0] or "text/plain"
+        )
+        raw = content.encode("utf-8")
+
+    scope = _attachment_scope(tool_input, active_business) or "general"
+    key = f"generated/{scope}/{uuid.uuid4().hex}/{filename}"
+
+    s3_uri = storage.put(key, raw, content_type)
+    download_url = storage.presign(s3_uri, expires=_CREATED_FILE_LINK_EXPIRES)
+    if not download_url:
+        raise MatonError("File was written but a download link could not be generated.")
+
+    return {
+        "ok": True,
+        "filename": filename,
+        "content_type": content_type,
+        "size_bytes": len(raw),
+        "business": scope if scope != "general" else None,
+        "download_url": download_url,
+        "expires_in_hours": _CREATED_FILE_LINK_EXPIRES // 3600,
     }
 
 
@@ -970,6 +1110,9 @@ def dispatch(
         elif name == "search_business_knowledge":
             # No Maton client involved at all — pure Postgres/pgvector search.
             result = _search_business_knowledge(tool_input, active_business)
+        elif name == "create_file":
+            # No Maton client involved at all — pure S3 write.
+            result = _create_file(tool_input, active_business)
         else:
             client = _resolve_client(tool_input, active_business)
             if name == "maton_request":
