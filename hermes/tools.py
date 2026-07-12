@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import requests
 
 from . import storage
+from . import worldbank
 from .attachments import store as attachment_store
 from .businesses import BUSINESS_TO_ENTITY_SLUG, to_entity_slug
 from .config import Config
@@ -344,6 +345,52 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
                 "required": ["meeting_id", "to"],
             },
         },
+        {
+            "name": "worldbank_data",
+            "description": (
+                "Fetch authoritative agriculture & livestock statistics from the World Bank "
+                "Open Data API — reliable, machine-readable numbers to ground data-driven "
+                "farming decisions (crop strategy, livestock benchmarking, export context) in "
+                "real figures instead of guesses. Defaults to Kenya. Use this whenever the user "
+                "wants a defensible number, a trend over time, or a country comparison for "
+                "agriculture/livestock — prefer it over web_search for these, since it returns "
+                "clean multi-year series you can cite.\n"
+                "`indicators` accepts these curated keys (or any raw World Bank indicator code): "
+                "crop_production_index, livestock_production_index, food_production_index, "
+                "cereal_yield, cereal_production, agricultural_land_pct, arable_land_pct, "
+                "irrigated_land_pct, fertilizer_use, agri_pct_gdp, agri_value_added_usd, "
+                "employment_in_agri_pct, rural_population_pct, food_exports_pct, "
+                "agri_raw_exports_pct.\n"
+                "`countries` accepts names (e.g. 'kenya', 'ethiopia', 'netherlands') or ISO3 "
+                "codes ('KEN'), plus aggregates 'world'/'WLD' and 'sub-saharan africa'/'SSF' — "
+                "pass several to compare Kenya against peers or export markets. Omit for Kenya.\n"
+                "Use `most_recent: 1` for 'the latest figure', or `start_year`/`end_year` for a "
+                "trend. Data is annual and typically lags 1-2 years. Cite the source and year in "
+                "your answer."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "indicators": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "One or more catalog keys or raw World Bank indicator codes.",
+                    },
+                    "countries": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Country names/ISO3 codes or aggregates. Defaults to Kenya.",
+                    },
+                    "start_year": {"type": "integer", "description": "Inclusive start year of the range."},
+                    "end_year": {"type": "integer", "description": "Inclusive end year of the range."},
+                    "most_recent": {
+                        "type": "integer",
+                        "description": "Keep only the N most recent non-null points per series (e.g. 1 for the latest).",
+                    },
+                },
+                "required": ["indicators"],
+            },
+        },
     ]
 
     # ---- WATI (WhatsApp Business) — dedicated tools ------------------------
@@ -607,7 +654,7 @@ WATI_TOOLS = {
 LOCAL_TOOLS = {
     "maton_request", "maton_list_connections", "maton_create_connection",
     "drive_read_file", "send_email", "zoom_send_invite", "search_business_knowledge",
-    "create_file",
+    "create_file", "worldbank_data",
     *WATI_TOOLS,
 }
 
@@ -1113,6 +1160,19 @@ def dispatch(
         elif name == "create_file":
             # No Maton client involved at all — pure S3 write.
             result = _create_file(tool_input, active_business)
+        elif name == "worldbank_data":
+            # Public data source — no Maton key / business scoping needed.
+            result = {
+                "status": 200,
+                "ok": True,
+                "data": worldbank.fetch(
+                    indicators=tool_input.get("indicators") or [],
+                    countries=tool_input.get("countries"),
+                    start_year=tool_input.get("start_year"),
+                    end_year=tool_input.get("end_year"),
+                    most_recent=tool_input.get("most_recent"),
+                ),
+            }
         else:
             client = _resolve_client(tool_input, active_business)
             if name == "maton_request":
