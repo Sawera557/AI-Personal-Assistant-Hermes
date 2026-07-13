@@ -23,7 +23,7 @@ from . import models
 from .config import Config
 from .memory import store
 from .memory_retrieve import build_memory_block
-from .tools import LOCAL_TOOLS, build_tools, dispatch
+from .tools import LOCAL_TOOLS, build_tools, dispatch, tool_status
 
 _anthropic_client: anthropic.Anthropic | None = None
 _openai_client: openai.OpenAI | None = None
@@ -431,12 +431,14 @@ def stream_turn(
                     continue
                 name = block["name"]
                 tool_input = block.get("input", {}) or {}
-                yield {"type": "tool_call", "tool": name, "input": tool_input}
+                label = tool_status(name, tool_input)
+                yield {"type": "tool_call", "tool": name, "input": tool_input, "label": label}
                 content_str, is_error, media, blocks = dispatch(name, tool_input, active_business)
                 trace_entry = {
                     "tool": name,
                     "input": tool_input,
                     "ok": not is_error,
+                    "label": label,
                 }
                 if media:
                     trace_entry["media"] = media

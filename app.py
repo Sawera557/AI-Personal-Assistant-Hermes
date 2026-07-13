@@ -411,7 +411,11 @@ async def chat_stream(request: Request):
     Same request shape as /api/chat (JSON or multipart). Response is
     text/event-stream: one `data: <json>\\n\\n` line per event —
     {"type": "text", "text": "<delta>"} as the reply is generated,
-    {"type": "tool_call", "tool": "...", "input": {...}} when a tool is invoked,
+    {"type": "tool_call", "tool": "...", "input": {...}, "label": "..."} when a
+    tool is invoked — `label` is a short, friendly "what I'm doing right now"
+    string (e.g. "📅 Peeking at your calendar…") meant to be shown as-is in the
+    UI instead of the raw tool name; `tool_calls` entries in the final `done`
+    event below carry the same `label` too, so history replay shows it,
     then a final {"type": "done", "session_id", "entity_id", "reply",
     "thinking", "tool_calls", "stop_reason"} — the same fields /api/chat
     returns as JSON, so the frontend's finishing logic (business lock,

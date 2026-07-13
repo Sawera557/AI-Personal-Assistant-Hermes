@@ -154,8 +154,9 @@ function renderToolTrace(tools) {
   const items = tools.map((t) => {
     const cls = t.ok ? "tool-ok" : "tool-err";
     const dot = t.ok ? "✓" : "✗";
-    return `<details><summary><span class="${cls}">${dot}</span> ${escapeHtml(t.tool)}</summary>` +
-      `<pre>${escapeHtml(JSON.stringify(t.input, null, 2))}</pre></details>${renderToolMedia(t.media)}`;
+    const label = t.label || `⚙️ ${t.tool}`;
+    return `<details><summary><span class="${cls}">${dot}</span> ${escapeHtml(label)}</summary>` +
+      `<pre title="${escapeHtml(t.tool)}">${escapeHtml(JSON.stringify(t.input, null, 2))}</pre></details>${renderToolMedia(t.media)}`;
   });
   return `<div class="tools">${items.join("")}</div>`;
 }
@@ -449,8 +450,9 @@ async function sendStreaming(body, bubble) {
         text += evt.text;
         renderLive();
       } else if (evt.type === "tool_call") {
+        const label = evt.label || `⚙️ Working on it (${evt.tool})…`;
         bubble.innerHTML = renderMarkdown(text) +
-          `<div class="tool-live">⚙ Calling ${escapeHtml(evt.tool)}…</div>`;
+          `<div class="tool-live">${escapeHtml(label)}</div>`;
         if (stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
       } else if (evt.type === "done") {
         final = evt;

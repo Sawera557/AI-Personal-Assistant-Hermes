@@ -1375,3 +1375,58 @@ def dispatch(
     # hard tool error, so Claude can read the error body and adjust.
     is_error = not result.get("ok", False)
     return (json.dumps(result, default=str), is_error, media, blocks if not is_error else None)
+
+
+# ---- Friendly in-progress status text --------------------------------------
+# What the chat UI shows WHILE a tool call is in flight, so a live turn reads
+# like a person working ("📅 Peeking at the calendar…") instead of a debug log
+# ("Calling calendar_list_upcoming…"). Keyed by tool name; `maton_request` is
+# one tool serving every connected app, so its message is keyed by the `app`
+# argument instead, via _MATON_APP_STATUS.
+_TOOL_STATUS: dict[str, str] = {
+    "maton_list_connections": "🔌 Checking what's connected…",
+    "maton_create_connection": "🔌 Setting up a new connection…",
+    "drive_read_file": "📁 Opening that file from Drive…",
+    "send_email": "📧 Sending your email…",
+    "zoom_send_invite": "🎥 Sending your Zoom invite…",
+    "zoom_list_meetings": "🎥 Checking your Zoom meetings…",
+    "calendar_list_upcoming": "📅 Peeking at your calendar…",
+    "search_business_knowledge": "🔎 Searching your knowledge base…",
+    "create_file": "📝 Putting your file together…",
+    "worldbank_data": "🌍 Pulling stats from the World Bank…",
+    "wati_list_contacts": "💬 Looking up WhatsApp contacts…",
+    "wati_add_contact": "💬 Adding a WhatsApp contact…",
+    "wati_update_contact_attributes": "💬 Updating contact info…",
+    "wati_get_messages": "💬 Checking WhatsApp messages…",
+    "wati_send_message": "💬 Sending a WhatsApp message…",
+    "wati_send_file": "💬 Sending a file over WhatsApp…",
+    "wati_assign_operator": "💬 Assigning a WhatsApp operator…",
+    "wati_get_media": "💬 Fetching WhatsApp media…",
+}
+
+_MATON_APP_STATUS: dict[str, str] = {
+    "google-mail": "📧 Sorting through Gmail…",
+    "google-drive": "📁 Rifling through Google Drive…",
+    "google-calendar": "📅 Peeking at the calendar…",
+    "google-sheets": "📊 Opening a spreadsheet…",
+    "google-docs": "📄 Reading a Google Doc…",
+    "google-forms": "📋 Checking Google Forms…",
+    "google-contacts": "👤 Looking up a contact…",
+    "google-meet": "🎥 Checking Google Meet…",
+    "notion": "📝 Flipping through Notion…",
+    "zoom": "🎥 Dialing into Zoom…",
+    "zoom-admin": "🎥 Dialing into Zoom…",
+    "quickbooks": "💰 Crunching the QuickBooks numbers…",
+    "wati": "💬 Pinging WhatsApp…",
+    "fathom": "🎙️ Pulling up the meeting recording…",
+    "pdf-co": "📄 Processing a PDF…",
+}
+
+
+def tool_status(name: str, tool_input: dict[str, Any]) -> str:
+    """A short, friendly 'what I'm doing right now' line for the chat UI to
+    show while this tool call is in flight — never the raw tool/app name."""
+    if name == "maton_request":
+        app = (tool_input or {}).get("app") or ""
+        return _MATON_APP_STATUS.get(app, f"🔌 Connecting to {app or 'a connected app'}…")
+    return _TOOL_STATUS.get(name, f"⚙️ Running {name.replace('_', ' ')}…")
