@@ -17,11 +17,17 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 
 def _now() -> float:
     return time.time()
+
+
+def _iso(epoch_seconds: float) -> str:
+    """Unix epoch seconds -> ISO 8601 UTC string, matching the Postgres-backed store."""
+    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).isoformat()
 
 
 class ConversationStore:
@@ -138,6 +144,9 @@ class ConversationStore:
                     "business": to_business_slug(rec["entity_id"]),
                 })
         out.sort(key=lambda c: c["updated_at"], reverse=True)
+        for c in out:
+            c["created_at"] = _iso(c["created_at"])
+            c["updated_at"] = _iso(c["updated_at"])
         return out
 
     def transcript(self, key: str) -> list[dict[str, Any]]:

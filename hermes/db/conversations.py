@@ -28,11 +28,19 @@ import json
 import logging
 import os
 import uuid as _uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from .connection import cursor
 
 log = logging.getLogger("hermes.db.conversations")
+
+
+def _iso(epoch_seconds: float | None) -> str | None:
+    """Unix epoch seconds -> ISO 8601 UTC string (e.g. "2026-07-13T14:32:07.078369+00:00")."""
+    if epoch_seconds is None:
+        return None
+    return datetime.fromtimestamp(float(epoch_seconds), tz=timezone.utc).isoformat()
 
 
 def _session_id_from_key(key: str) -> str:
@@ -326,8 +334,8 @@ class PostgresConversationStore:
             out.append({
                 "session_id": str(sid),
                 "title": title or "New conversation",
-                "created_at": created,
-                "updated_at": updated,
+                "created_at": _iso(created),
+                "updated_at": _iso(updated),
                 "message_count": int(count),
                 "snippet": snippet,
                 "business": to_business_slug(entity_slug),

@@ -1,0 +1,895 @@
+{
+  "info": {
+    "_postman_id": "a1e2c3d4-1111-4222-8333-444455556666",
+    "name": "Hermes API",
+    "description": "## Hermes AI Agent — API collection\n\nTwo services:\n\n1. **Main API** (`{{base_url}}`, default `http://localhost:5000`) — chat agent, conversations, attachments, documents/RAG, memories, meeting copilot, connections, voice, businesses, bills. No built-in auth — secure it at the network/CORS/reverse-proxy layer before exposing it publicly.\n2. **Ingestion Service** (`{{ingestion_url}}`, default `http://localhost:5100`) — standalone autopilot worker that syncs Gmail/Drive/etc into pgvector and exposes a protected RAG search endpoint. Every route except `/api/health` requires `X-Cron-Secret: {{cron_secret}}` OR `Authorization: Bearer {{cron_secret}}` (or `{{internal_api_token}}`).\n\n### Businesses (`entity_id` / `business`)\n\nAlmost every Main API endpoint is scoped by a business slug, or the sentinel `\"all\"`. Run **Main API → Businesses → List businesses** first — that's the live source of truth. As of the last check, these slugs exist and are Maton-connected:\n\n| slug | name |\n|---|---|\n| `afk` | Afro Farm Holding |\n| `gak` | GAK Properties LLC |\n| `gif` | GIF Properties LLC |\n| `gakc` | GAK Commodities Ltd |\n| `nh` | Nour Hammam LLC |\n| `per` | Personal & Family |\n\nSet the `entity_id` collection variable (or the environment variable of the same name) to whichever slug you're testing against.\n\n### Business selection is NOT shared across frontends\n\nThe backend has no concept of a globally \"current\" business — every request must say which business it means via `entity_id`/`business`. The bundled web UI keeps its dropdown selection in browser `localStorage` only. The one exception: once a `session_id` has messages, the server locks *that conversation* to whichever business started it — `GET /api/conversations/{session_id}` returns the authoritative locked value.\n\n### Import\n\nImport this collection plus `Hermes_Local.postman_environment.json`, select the **Hermes Local** environment (top-right dropdown), fill in `cron_secret` if you need the Ingestion Service's protected routes, and go.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Main API",
+      "description": "http://localhost:5000 — chat, documents, bills, meetings, voice, businesses. No auth by default.",
+      "item": [
+        {
+          "name": "Health & Config",
+          "item": [
+            {
+              "name": "Health check",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/health", "host": ["{{base_url}}"], "path": ["api", "health"] },
+                "description": "Liveness + config-validation check. No params.\n\n**Response**\n```json\n{ \"status\": \"ok\", \"problems\": [] }\n```\n`problems` lists any missing/invalid config (e.g. unset API keys) — empty array means fully healthy."
+              },
+              "response": []
+            },
+            {
+              "name": "Get active model",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/settings/model", "host": ["{{base_url}}"], "path": ["api", "settings", "model"] },
+                "description": "Returns the agent's current LLM platform plus the switchable options.\n\n**Response**\n```json\n{ \"active\": \"claude\", \"options\": [\"claude\", \"openai\"] }\n```"
+              },
+              "response": []
+            },
+            {
+              "name": "Set active model",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"model\": \"claude\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/settings/model", "host": ["{{base_url}}"], "path": ["api", "settings", "model"] },
+                "description": "Switches the agent's active model platform-wide (affects every conversation, every business), effective on the next turn.\n\n**Body**\n- `model` (string, required) — one of the values returned by `Get active model`'s `options`.\n\n400 if `model` isn't a recognized option."
+              },
+              "response": []
+            },
+            {
+              "name": "Apply pending DB migrations",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/admin/migrate", "host": ["{{base_url}}"], "path": ["api", "admin", "migrate"] },
+                "description": "Applies any pending SQL files under `hermes/db/migrations/*.sql` that haven't already run. Idempotent — safe to call repeatedly.\n\n**Response**\n```json\n{ \"applied\": [\"0012_x.sql\"], \"already_done\": [\"0001_init.sql\", ...] }\n```"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Chat",
+          "item": [
+            {
+              "name": "Chat (JSON, no files)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"entity_id\": \"{{entity_id}}\",\n  \"message\": \"What's the status of our vacant unit at 2609 15th Ave S?\",\n  \"voice\": false,\n  \"attachment_ids\": []\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/chat", "host": ["{{base_url}}"], "path": ["api", "chat"] },
+                "description": "Runs one user turn through the Claude/OpenAI + Maton agent and returns the full reply (no streaming).\n\n**Body**\n- `session_id` (string, optional) — omit to start a new conversation; the response echoes the id to reuse for follow-ups.\n- `entity_id` (string, optional) — a business slug (see collection description) or `\"all\"`. Only used on the FIRST turn of a session — once a session has messages, its business is locked server-side and this is ignored.\n- `message` (string) — required unless `attachment_ids` or files are provided.\n- `voice` (bool, optional) — if true, response includes synthesized audio metadata for voice mode.\n- `attachment_ids` (string[], optional) — ids from a prior `POST /api/attachments` call.\n\n**Response** includes `reply`, `session_id`, `entity_id` (authoritative — the locked business, not just an echo), plus tool-call/thinking traces."
+              },
+              "response": []
+            },
+            {
+              "name": "Chat (multipart, with files)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    { "key": "session_id", "value": "{{session_id}}", "type": "text" },
+                    { "key": "entity_id", "value": "{{entity_id}}", "type": "text" },
+                    { "key": "message", "value": "Summarize this file.", "type": "text" },
+                    { "key": "voice", "value": "false", "type": "text" },
+                    { "key": "files", "type": "file", "src": [] }
+                  ]
+                },
+                "url": { "raw": "{{base_url}}/api/chat", "host": ["{{base_url}}"], "path": ["api", "chat"] },
+                "description": "Same as `Chat (JSON, no files)` but multipart/form-data, for attaching new files inline (PDF, image, or text/csv/etc. — anything else is read as text). Add one or more entries under the `files` key. Max request size 25 MB."
+              },
+              "response": []
+            },
+            {
+              "name": "Chat (streaming SSE)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Accept", "value": "text/event-stream" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"entity_id\": \"{{entity_id}}\",\n  \"message\": \"Give me a one-paragraph portfolio update.\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/chat/stream", "host": ["{{base_url}}"], "path": ["api", "chat", "stream"] },
+                "description": "Same request shape as `/api/chat` (JSON or multipart). Response is `text/event-stream`, one `data: <json>\\n\\n` line per event:\n- `{\"type\": \"text\", \"text\": \"<delta>\"}` — reply text as it's generated\n- `{\"type\": \"tool_call\", \"tool\": \"...\", \"input\": {...}}` — when the agent invokes a tool\n- final `{\"type\": \"done\", \"session_id\", \"entity_id\", \"reply\", \"thinking\", \"tool_calls\", \"stop_reason\"}`\n\nPostman's response viewer shows raw SSE text — use 'Send' and read the body, it won't render as separate events."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Conversations",
+          "item": [
+            {
+              "name": "List conversations",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/conversations?entity_id={{entity_id}}&q=",
+                  "host": ["{{base_url}}"], "path": ["api", "conversations"],
+                  "query": [{ "key": "entity_id", "value": "{{entity_id}}" }, { "key": "q", "value": "", "disabled": true }]
+                },
+                "description": "Lists past conversations, newest first.\n\n**Query**\n- `entity_id` (optional) — a business slug, or `\"all\"`/omitted for every business.\n- `q` (optional) — free-text search across titles and message content; matches carry a `snippet`.\n\nEach item: `{session_id, title, created_at, updated_at, message_count, snippet, business}`. `created_at`/`updated_at` are **ISO 8601 UTC strings** (e.g. `\"2026-07-13T14:32:07.078369+00:00\"`) — parse directly with `new Date(created_at)`. `business` is the locked slug, or `null` for an All-Businesses chat.\n\n**Example**\n```json\n{ \"session_id\": \"8d240890-195b-467d-ae25-95a3ac0c4f46\", \"title\": \"...\", \"created_at\": \"2026-07-13T14:32:07.078369+00:00\", \"updated_at\": \"2026-07-13T14:34:03.508517+00:00\", \"message_count\": 4, \"snippet\": null, \"business\": \"afk\" }\n```"
+              },
+              "response": []
+            },
+            {
+              "name": "Get conversation transcript",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/conversations/{{session_id}}?entity_id={{entity_id}}",
+                  "host": ["{{base_url}}"], "path": ["api", "conversations", "{{session_id}}"],
+                  "query": [{ "key": "entity_id", "value": "{{entity_id}}" }]
+                },
+                "description": "Replays one conversation's full transcript (user/assistant turns with thinking + tool traces).\n\nResponse's `entity_id` is the AUTHORITATIVE locked business for this session — use it to reseed a UI's business selector on reopen, regardless of what was passed in the query string. 404 if not found.\n\n**Note:** individual turns in `transcript` are `{role, text}` (assistant turns add `thinking`, `tool_calls`) — there is currently NO per-message timestamp, only the conversation-level `created_at`/`updated_at` from `List conversations`. Ask the backend team if you need per-message dates; the DB column exists (`hermes_messages.created_at`) but isn't selected by this endpoint yet."
+              },
+              "response": []
+            },
+            {
+              "name": "Delete conversation",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/conversations/{{session_id}}?entity_id={{entity_id}}",
+                  "host": ["{{base_url}}"], "path": ["api", "conversations", "{{session_id}}"],
+                  "query": [{ "key": "entity_id", "value": "{{entity_id}}" }]
+                },
+                "description": "Deletes a conversation's agent memory AND its history transcript. Irreversible."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Attachments",
+          "item": [
+            {
+              "name": "Upload attachments",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    { "key": "entity_id", "value": "{{entity_id}}", "type": "text" },
+                    { "key": "files", "type": "file", "src": [] }
+                  ]
+                },
+                "url": { "raw": "{{base_url}}/api/attachments", "host": ["{{base_url}}"], "path": ["api", "attachments"] },
+                "description": "Uploads one or more files and returns stable `attachment_id`s to reuse across multiple `/api/chat` calls without re-uploading. Attachments are scoped to `entity_id` — only the same entity can reference or delete them.\n\n**Form fields**\n- `files` (required, one or more)\n- `entity_id` (optional)"
+              },
+              "response": []
+            },
+            {
+              "name": "Get attachment metadata",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/attachments/{{attachment_id}}?entity_id={{entity_id}}",
+                  "host": ["{{base_url}}"], "path": ["api", "attachments", "{{attachment_id}}"],
+                  "query": [{ "key": "entity_id", "value": "{{entity_id}}" }]
+                },
+                "description": "Returns `{filename, type, bytes}` for a previously uploaded attachment. Pass the same `entity_id` it was uploaded with. 404 if not found or wrong entity."
+              },
+              "response": []
+            },
+            {
+              "name": "Delete attachment",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/attachments/{{attachment_id}}?entity_id={{entity_id}}",
+                  "host": ["{{base_url}}"], "path": ["api", "attachments", "{{attachment_id}}"],
+                  "query": [{ "key": "entity_id", "value": "{{entity_id}}" }]
+                },
+                "description": "Deletes an attachment. Pass the same `entity_id` it was uploaded with."
+              },
+              "response": []
+            },
+            {
+              "name": "Presign S3 media URI",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/media/presign?uri=s3://your-bucket/path/to/file.png",
+                  "host": ["{{base_url}}"], "path": ["api", "media", "presign"],
+                  "query": [{ "key": "uri", "value": "s3://your-bucket/path/to/file.png" }]
+                },
+                "description": "Turns an `s3://` URI produced by a tool call (e.g. `wati_get_media`) into a short-lived HTTPS URL for rendering. Only works for URIs inside the app's own configured bucket — otherwise 400."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Documents (Knowledge Base)",
+          "item": [
+            {
+              "name": "Upload documents (ingest)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    { "key": "entity_id", "value": "{{entity_id}}", "type": "text" },
+                    { "key": "sensitivity_level", "value": "internal", "type": "text" },
+                    { "key": "source_system", "value": "upload", "type": "text" },
+                    { "key": "message_id", "value": "", "type": "text", "disabled": true },
+                    { "key": "files", "type": "file", "src": [] }
+                  ]
+                },
+                "url": { "raw": "{{base_url}}/api/documents", "host": ["{{base_url}}"], "path": ["api", "documents"] },
+                "description": "Ingests files into the semantic-search knowledge base: stores the file (S3, if configured), records it in `documents`, chunks it, embeds it, and writes rows into pgvector.\n\n**Form fields**\n- `files` (required, one or more)\n- `entity_id` (required) — business slug, or `\"all\"` to make it a GLOBAL document visible to every business\n- `sensitivity_level` (optional, default `internal`)\n- `source_system` (optional, default `upload`)\n- `message_id` (optional) — links the document to a chat message"
+              },
+              "response": []
+            },
+            {
+              "name": "List documents",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/documents?entity_id={{entity_id}}",
+                  "host": ["{{base_url}}"], "path": ["api", "documents"],
+                  "query": [{ "key": "entity_id", "value": "{{entity_id}}" }, { "key": "source_system", "value": "", "disabled": true }]
+                },
+                "description": "Lists ingested documents, newest first (omits `body_text` — use the detail endpoint for that).\n\n**Query**\n- `entity_id` (required) — business slug, or `\"all\"` (each row tagged with its `business_slug`)\n- `source_system` (optional filter)"
+              },
+              "response": []
+            },
+            {
+              "name": "Get document detail",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/documents/{{document_id}}", "host": ["{{base_url}}"], "path": ["api", "documents", "{{document_id}}"] },
+                "description": "Full document detail, including `body_text` — for loading into an editor. 404 if not found."
+              },
+              "response": []
+            },
+            {
+              "name": "Update document",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Updated title\",\n  \"sensitivity_level\": \"internal\",\n  \"body_text\": null\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/documents/{{document_id}}", "host": ["{{base_url}}"], "path": ["api", "documents", "{{document_id}}"] },
+                "description": "Edits a document's title/sensitivity/content. All fields optional — send only what changes. Editing `body_text` discards and regenerates its chunks/embeddings so search reflects the edit."
+              },
+              "response": []
+            },
+            {
+              "name": "Delete document",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/documents/{{document_id}}", "host": ["{{base_url}}"], "path": ["api", "documents", "{{document_id}}"] },
+                "description": "Removes a document and its chunks/embeddings (cascade), plus best-effort S3 cleanup of the original file."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Memories",
+          "item": [
+            {
+              "name": "List memories",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/memories?entity_id={{entity_id}}",
+                  "host": ["{{base_url}}"], "path": ["api", "memories"],
+                  "query": [{ "key": "entity_id", "value": "{{entity_id}}" }, { "key": "scope_type", "value": "", "disabled": true }]
+                },
+                "description": "Lists persistent memories (owner/business/project scope), newest first.\n\n**Query**\n- `entity_id` (optional, default `\"all\"`) — a business slug, or `\"all\"` to list across every business plus owner-scope memories\n- `scope_type` (optional filter)"
+              },
+              "response": []
+            },
+            {
+              "name": "Delete memory",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/memories/{{memory_id}}", "host": ["{{base_url}}"], "path": ["api", "memories", "{{memory_id}}"] },
+                "description": "Removes one memory. 404 if not found."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Search",
+          "item": [
+            {
+              "name": "Semantic search",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/search?q=lease renewal&entity_id={{entity_id}}&max_sensitivity=internal&top_k=8",
+                  "host": ["{{base_url}}"], "path": ["api", "search"],
+                  "query": [
+                    { "key": "q", "value": "lease renewal" },
+                    { "key": "entity_id", "value": "{{entity_id}}" },
+                    { "key": "max_sensitivity", "value": "internal" },
+                    { "key": "top_k", "value": "8" }
+                  ]
+                },
+                "description": "Meaning (vector) search scoped to one business's ingested knowledge.\n\n**Query**\n- `q` (required) — search text\n- `entity_id` (required) — business slug\n- `max_sensitivity` (optional, default `internal`) — ceiling on how sensitive returned chunks may be\n- `top_k` (optional, default `8`)"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Meeting Copilot",
+          "item": [
+            {
+              "name": "Live copilot guidance",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"business\": \"{{entity_id}}\",\n  \"latest_text\": \"They're asking about the renewal terms.\",\n  \"notes_so_far\": \"\",\n  \"top_k\": 6,\n  \"session_id\": \"{{session_id}}\",\n  \"comprehensive\": false,\n  \"meeting_title\": \"\",\n  \"attendees\": []\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/meetings/copilot", "host": ["{{base_url}}"], "path": ["api", "meetings", "copilot"] },
+                "description": "Returns short, private, bullet-point guidance for a LIVE meeting, grounded only in what's already been ingested (never scans Gmail/Drive live). Persists the turn to history.\n\n**Body**\n- `business` (required) — a SPECIFIC business slug; `\"all\"` is not allowed here\n- `latest_text` / `notes_so_far` — at least one required\n- `top_k` (optional, default 6)\n- `session_id` (optional) — omit to auto-create on the first turn\n- `comprehensive` (optional) — true pulls from all business data, slower\n- `meeting_title` / `attendees` — only used when `comprehensive` is true\n\n**Response** `{business, session_id, bullets: [...], sources: [...]}`"
+              },
+              "response": []
+            },
+            {
+              "name": "List meeting sessions",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/meetings/sessions?business={{entity_id}}",
+                  "host": ["{{base_url}}"], "path": ["api", "meetings", "sessions"],
+                  "query": [{ "key": "business", "value": "{{entity_id}}" }, { "key": "statuses", "value": "", "disabled": true }]
+                },
+                "description": "Lists meeting sessions, newest first.\n\n**Query**\n- `business` (optional) — scope to one business; omit for every business\n- `statuses` (optional, comma-separated, e.g. `scheduled,prepared`) — scope to a lifecycle stage"
+              },
+              "response": []
+            },
+            {
+              "name": "List upcoming meetings",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/meetings/upcoming?business={{entity_id}}&days=14",
+                  "host": ["{{base_url}}"], "path": ["api", "meetings", "upcoming"],
+                  "query": [{ "key": "business", "value": "{{entity_id}}" }, { "key": "days", "value": "14" }]
+                },
+                "description": "Upcoming calendar events for `business` (required, must be specific), each annotated with its meeting-copilot status if one exists. `days` (optional, default 14) controls the look-ahead window."
+              },
+              "response": []
+            },
+            {
+              "name": "Prepare pre-meeting brief",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"business\": \"{{entity_id}}\",\n  \"event_id\": \"calendar-event-id\",\n  \"title\": \"Renewal call with A Caring Living\",\n  \"start\": \"2026-07-20T15:00:00Z\",\n  \"description\": \"\",\n  \"attendees\": []\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/meetings/prepare", "host": ["{{base_url}}"], "path": ["api", "meetings", "prepare"] },
+                "description": "Generates an AI pre-meeting brief (background, must-ask questions, risks, relevant already-indexed files) for a calendar event. Creates or idempotently reuses the session for `event_id`.\n\n**Body** — `business`, `event_id`, `title` required; `start` (ISO timestamp), `description`, `attendees` optional."
+              },
+              "response": []
+            },
+            {
+              "name": "Generate AI notes for a session",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"business\": \"{{entity_id}}\",\n  \"meeting_title\": \"Renewal call with A Caring Living\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/meetings/sessions/{{session_id}}/ai-notes", "host": ["{{base_url}}"], "path": ["api", "meetings", "sessions", "{{session_id}}", "ai-notes"] },
+                "description": "Builds (or rebuilds) detailed pre-meeting notes via the full agent — LIVE Gmail/Drive search, not just a vector lookup, so it's slower than `Prepare pre-meeting brief`. Safe to call again to regenerate with fresh results."
+              },
+              "response": []
+            },
+            {
+              "name": "Get meeting session (full replay)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/meetings/sessions/{{session_id}}", "host": ["{{base_url}}"], "path": ["api", "meetings", "sessions", "{{session_id}}"] },
+                "description": "Full replay of one meeting: metadata (brief/summary/fathom link/attendees) + every turn, in order. 404 if not found."
+              },
+              "response": []
+            },
+            {
+              "name": "End meeting session",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/meetings/sessions/{{session_id}}/end", "host": ["{{base_url}}"], "path": ["api", "meetings", "sessions", "{{session_id}}", "end"] },
+                "description": "Ends a meeting: generates an AI post-meeting summary from its captured turns and best-effort attaches a Fathom recording link if one can be found. Always succeeds even if summary/Fathom lookup fails."
+              },
+              "response": []
+            },
+            {
+              "name": "Set Fathom recording link",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"url\": \"https://fathom.video/share/xxxxx\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/meetings/sessions/{{session_id}}/fathom", "host": ["{{base_url}}"], "path": ["api", "meetings", "sessions", "{{session_id}}", "fathom"] },
+                "description": "Manually attach/correct a Fathom recording link — the fallback when `End meeting session`'s auto-fetch doesn't find one."
+              },
+              "response": []
+            },
+            {
+              "name": "Clear meeting turns",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/meetings/sessions/{{session_id}}/turns", "host": ["{{base_url}}"], "path": ["api", "meetings", "sessions", "{{session_id}}", "turns"] },
+                "description": "Wipes notes/transcript/guidance for a meeting WITHOUT deleting the session — useful for clearing test content while iterating."
+              },
+              "response": []
+            },
+            {
+              "name": "Delete meeting session",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/meetings/sessions/{{session_id}}", "host": ["{{base_url}}"], "path": ["api", "meetings", "sessions", "{{session_id}}"] },
+                "description": "Deletes a meeting session entirely. 404 if not found."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Connections (Maton)",
+          "item": [
+            {
+              "name": "List connections",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/connections",
+                  "host": ["{{base_url}}"], "path": ["api", "connections"],
+                  "query": [{ "key": "app", "value": "", "disabled": true }, { "key": "status", "value": "", "disabled": true }]
+                },
+                "description": "Lists Maton app connections (Gmail, Drive, WATI, etc.) used by the agent's tools.\n\n**Query** — `app` and `status` are both optional filters. 502 if Maton is unreachable."
+              },
+              "response": []
+            },
+            {
+              "name": "Create connection",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"app\": \"gmail\"\n}", "options": { "raw": { "language": "json" } } },
+                "url": { "raw": "{{base_url}}/api/connections", "host": ["{{base_url}}"], "path": ["api", "connections"] },
+                "description": "Starts a new Maton connection for `app` (required). 502 if Maton is unreachable."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Voice",
+          "item": [
+            {
+              "name": "Transcribe audio (speech to text)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    { "key": "audio", "type": "file", "src": [] },
+                    { "key": "entity_id", "value": "{{entity_id}}", "type": "text" },
+                    { "key": "context", "value": "chat", "type": "text" }
+                  ]
+                },
+                "url": { "raw": "{{base_url}}/api/voice/transcribe", "host": ["{{base_url}}"], "path": ["api", "voice", "transcribe"] },
+                "description": "Speech → text via the configured provider (OpenAI/Groq Whisper). Send the transcript on to `/api/chat` to run the voice agent.\n\n**Form fields**\n- `audio` (required file)\n- `entity_id` (optional)\n- `context` (optional) — `chat` (default) or `meeting` for ambient room audio"
+              },
+              "response": []
+            },
+            {
+              "name": "Speak text (text to speech)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hello, this is a test.\",\n  \"voice\": null,\n  \"entity_id\": \"{{entity_id}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/voice/speak", "host": ["{{base_url}}"], "path": ["api", "voice", "speak"] },
+                "description": "Text → speech. Returns raw audio bytes (not JSON) with the appropriate `Content-Type`.\n\n**Body** — `text` required; `voice` (optional override, see `List voices`); `entity_id` (optional, echoed in the `X-Entity-Id` response header)."
+              },
+              "response": []
+            },
+            {
+              "name": "List voices",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/voice/voices", "host": ["{{base_url}}"], "path": ["api", "voice", "voices"] },
+                "description": "Lists TTS voices available for the active provider plus the current default. Response: `{provider, default, voices, enabled}`."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Session",
+          "item": [
+            {
+              "name": "Reset conversation",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"entity_id\": \"{{entity_id}}\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/reset", "host": ["{{base_url}}"], "path": ["api", "reset"] },
+                "description": "Clears a conversation's in-memory agent history (not its stored transcript — use `Delete conversation` for that). No-op if `session_id` is omitted."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Businesses",
+          "item": [
+            {
+              "name": "List businesses",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/businesses", "host": ["{{base_url}}"], "path": ["api", "businesses"] },
+                "description": "THE source of truth for valid `entity_id`/`business` slugs — always call this first when testing. Each row includes `slug, name, emoji, color, industry, connected` (`connected` = a Maton key is configured for that slug).\n\n**Response**\n```json\n{ \"businesses\": [ { \"slug\": \"afk\", \"name\": \"Afro Farm Holding\", \"connected\": true }, ... ] }\n```"
+              },
+              "response": []
+            },
+            {
+              "name": "Create/update business",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Afro Farm Kenya\",\n  \"slug\": \"afk\",\n  \"emoji\": \"\\ud83c\\udf3e\",\n  \"color\": \"#4caf50\",\n  \"industry\": \"agriculture\",\n  \"business_id\": null\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/businesses", "host": ["{{base_url}}"], "path": ["api", "businesses"] },
+                "description": "Upserts a business (matches on `slug` if `business_id` is omitted).\n\n**Body** — `name`, `slug` required; `emoji`, `color`, `industry`, `business_id` optional."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Bills & Invoices",
+          "item": [
+            {
+              "name": "List bills",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/bills",
+                  "host": ["{{base_url}}"], "path": ["api", "bills"],
+                  "query": [
+                    { "key": "business_id", "value": "", "disabled": true },
+                    { "key": "status", "value": "", "disabled": true },
+                    { "key": "source", "value": "", "disabled": true }
+                  ]
+                },
+                "description": "Lists bills, plus `insights` (aggregate stats) in the same response.\n\n**Query** — `business_id`, `status`, `source` all optional filters. Note: `business_id` here, unlike most endpoints, is the `businesses` table id/slug used by the Bills feature specifically."
+              },
+              "response": []
+            },
+            {
+              "name": "Upload bills",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    { "key": "business_id", "value": "", "type": "text", "disabled": true },
+                    { "key": "files", "type": "file", "src": [] }
+                  ]
+                },
+                "url": { "raw": "{{base_url}}/api/bills/upload", "host": ["{{base_url}}"], "path": ["api", "bills", "upload"] },
+                "description": "Uploads bill files → runs them through NuExtract → stores structured records. Auto-guesses the business from vendor/category if `business_id` is omitted.\n\n**Form fields** — `files` (required, one or more); `business_id` (optional)."
+              },
+              "response": []
+            },
+            {
+              "name": "Update bill",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"paid\",\n  \"notes\": \"Paid via ACH\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/bills/{{bill_id}}", "host": ["{{base_url}}"], "path": ["api", "bills", "{{bill_id}}"] },
+                "description": "Partial update of a bill. All fields optional — send only what changes: `business_id, status, vendor, amount, invoice_number, due_date, category, notes`. Setting `business_id` also sets `confidence` to 1.0 (manual assignment). 404 if not found."
+              },
+              "response": []
+            },
+            {
+              "name": "Delete bill",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/bills/{{bill_id}}", "host": ["{{base_url}}"], "path": ["api", "bills", "{{bill_id}}"] },
+                "description": "Permanently deletes a bill and its line items, and removes the original file from S3 if one was stored. 404 if not found."
+              },
+              "response": []
+            },
+            {
+              "name": "Bill insights",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/bills/insights", "host": ["{{base_url}}"], "path": ["api", "bills", "insights"] },
+                "description": "Aggregate bill stats across all businesses (same object embedded in `List bills`)."
+              },
+              "response": []
+            },
+            {
+              "name": "View bill document",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/bills/{{bill_id}}/view", "host": ["{{base_url}}"], "path": ["api", "bills", "{{bill_id}}", "view"] },
+                "description": "Returns a short-lived URL to view the original bill document: a presigned S3 GET (15 min) for uploaded files, a Drive `webViewLink`, or a Gmail deep link for bills with no attachment. 404 if there's no document."
+              },
+              "response": []
+            },
+            {
+              "name": "Get bill's Gmail body",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/bills/{{bill_id}}/email-body", "host": ["{{base_url}}"], "path": ["api", "bills", "{{bill_id}}", "email-body"] },
+                "description": "Fetches the decoded HTML/plain-text body of a Gmail-sourced bill on demand via Maton (nothing is cached in the DB). Only works for bills with `source = \"gmail\"`. Response `{\"type\": \"html\"|\"text\", \"content\": \"...\"}`."
+              },
+              "response": []
+            },
+            {
+              "name": "Scan Gmail/Drive for bills",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"business\": \"{{entity_id}}\",\n  \"sources\": [\"gmail\", \"google-drive\"],\n  \"days\": 45\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": { "raw": "{{base_url}}/api/bills/scan", "host": ["{{base_url}}"], "path": ["api", "bills", "scan"] },
+                "description": "Scans ONE business's own Gmail and/or Drive for new bills — scans exactly one business per call by design (fanning out across every business risks a platform timeout).\n\n**Body** — `business` (optional, defaults to `\"per\"`); `sources` (optional, default `[\"gmail\", \"google-drive\"]`); `days` (optional, default 45 — use 45 for initial backfill, 7 for recurring scans, capped 1–365). 400 if the business has no Maton connection configured."
+              },
+              "response": []
+            },
+            {
+              "name": "Check payments (auto-mark paid)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": { "raw": "{{base_url}}/api/bills/check-payments", "host": ["{{base_url}}"], "path": ["api", "bills", "check-payments"] },
+                "description": "Searches Gmail for payment-confirmation emails and auto-marks matching bills as paid. Response `{marked_paid: [...bill_ids], count}`."
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ingestion Service",
+      "description": "http://localhost:5100 — standalone autopilot sync worker + protected RAG search. Every route below except Health requires X-Cron-Secret or Authorization: Bearer.",
+      "item": [
+        {
+          "name": "Health check (public)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{ingestion_url}}/api/health", "host": ["{{ingestion_url}}"], "path": ["api", "health"] },
+            "description": "Public, no auth required. Response: `{service, version, ok, problems, connected_businesses, sources, worker_auth_configured, blocked_entities, phi_guard}`."
+          },
+          "response": []
+        },
+        {
+          "name": "Sync one business",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Cron-Secret", "value": "{{cron_secret}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"business\": \"{{entity_id}}\",\n  \"sources\": null,\n  \"lookback_days\": null,\n  \"max_items\": null,\n  \"trigger\": \"api\",\n  \"force\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{ingestion_url}}/api/workers/sync-business", "host": ["{{ingestion_url}}"], "path": ["api", "workers", "sync-business"] },
+            "description": "Runs the autopilot sync for one business (a slug, required). `sources`/`lookback_days`/`max_items` optional overrides; `force` bypasses incremental-sync skip logic. 404 unknown business, 409 if not Maton-connected."
+          },
+          "response": []
+        },
+        {
+          "name": "Sync all businesses",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Cron-Secret", "value": "{{cron_secret}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lookback_days\": null,\n  \"trigger\": \"cron\",\n  \"force\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{ingestion_url}}/api/workers/sync-all", "host": ["{{ingestion_url}}"], "path": ["api", "workers", "sync-all"] },
+            "description": "Runs the autopilot sync for every connected business. Same optional fields as `Sync one business`, minus `business`/`sources`/`max_items`."
+          },
+          "response": []
+        },
+        {
+          "name": "Reindex one business",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Cron-Secret", "value": "{{cron_secret}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"business\": \"{{entity_id}}\",\n  \"trigger\": \"api\",\n  \"limit\": 1000\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{ingestion_url}}/api/workers/reindex-business", "host": ["{{ingestion_url}}"], "path": ["api", "workers", "reindex-business"] },
+            "description": "Rebuilds embeddings for already-ingested items of one business (a slug, required). `limit` caps how many items are reprocessed (default 1000). 404 unknown business."
+          },
+          "response": []
+        },
+        {
+          "name": "Index one item manually",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Cron-Secret", "value": "{{cron_secret}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"business\": \"{{entity_id}}\",\n  \"text\": \"Note content to index...\",\n  \"source_system\": \"manual\",\n  \"source_ref\": null,\n  \"title\": \"Manual note\",\n  \"doc_type\": \"manual_note\",\n  \"sensitivity_level\": \"internal\",\n  \"metadata\": {}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{ingestion_url}}/api/workers/index-source-item", "host": ["{{ingestion_url}}"], "path": ["api", "workers", "index-source-item"] },
+            "description": "Indexes one arbitrary text item outside the normal sync sources. `business` and `text` required; everything else optional (auto-generates `source_ref` from a hash of `text` if omitted)."
+          },
+          "response": []
+        },
+        {
+          "name": "Semantic search (RAG retrieval)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Cron-Secret", "value": "{{cron_secret}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"business\": \"{{entity_id}}\",\n  \"query\": \"lease renewal terms\",\n  \"top_k\": 6,\n  \"max_sensitivity\": \"confidential\",\n  \"source_systems\": null,\n  \"presign\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{ingestion_url}}/api/search", "host": ["{{ingestion_url}}"], "path": ["api", "search"] },
+            "description": "The fast read path for RAG retrieval — same underlying index as the Main API's `GET /api/search`, but as a protected POST for service-to-service calls. Never serves `restricted`-sensitivity content regardless of `max_sensitivity`. `business` and `query` required; `source_systems` optionally filters to e.g. `['gmail','google-drive','fathom']`. 404 unknown business."
+          },
+          "response": []
+        },
+        {
+          "name": "Cron: sync all (GET)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{cron_secret}}" }],
+            "url": {
+              "raw": "{{ingestion_url}}/api/cron/sync-all?lookback_days=",
+              "host": ["{{ingestion_url}}"], "path": ["api", "cron", "sync-all"],
+              "query": [{ "key": "lookback_days", "value": "", "disabled": true }]
+            },
+            "description": "GET variant of `Sync all businesses`, for schedulers that only issue GET (e.g. Vercel Cron, which auto-attaches `Authorization: Bearer <CRON_SECRET>` when the env var is literally named `CRON_SECRET`)."
+          },
+          "response": []
+        },
+        {
+          "name": "Apply pending DB migrations",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Cron-Secret", "value": "{{cron_secret}}" }],
+            "url": { "raw": "{{ingestion_url}}/api/admin/migrate", "host": ["{{ingestion_url}}"], "path": ["api", "admin", "migrate"] },
+            "description": "Applies pending SQL files under `ingestion-service/migrations/*.sql`. For platforms (e.g. Vercel) where the DB is only reachable from inside the platform's own network. Idempotent."
+          },
+          "response": []
+        },
+        {
+          "name": "Worker status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Cron-Secret", "value": "{{cron_secret}}" }],
+            "url": {
+              "raw": "{{ingestion_url}}/api/workers/status?business={{entity_id}}",
+              "host": ["{{ingestion_url}}"], "path": ["api", "workers", "status"],
+              "query": [{ "key": "business", "value": "{{entity_id}}" }]
+            },
+            "description": "Recent sync runs (last 20) plus, if `business` is passed, that business's current sync state."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:5000", "description": "Main API base URL" },
+    { "key": "ingestion_url", "value": "http://localhost:5100", "description": "Ingestion Service base URL" },
+    { "key": "entity_id", "value": "afk", "description": "Active business slug: afk | gak | gif | gakc | nh | per (or \"all\" where supported) — confirm live via 'List businesses'" },
+    { "key": "session_id", "value": "", "description": "Chat/meeting conversation id — leave blank to start a new one, then copy it from the first response" },
+    { "key": "attachment_id", "value": "", "description": "Set after calling 'Upload attachments'" },
+    { "key": "document_id", "value": "", "description": "Set after calling 'Upload documents (ingest)' or 'List documents'" },
+    { "key": "memory_id", "value": "", "description": "Set from 'List memories'" },
+    { "key": "bill_id", "value": "", "description": "Set after calling 'Upload bills' or 'List bills'" },
+    { "key": "cron_secret", "value": "", "description": "Ingestion Service auth — matches CRON_SECRET env var" },
+    { "key": "internal_api_token", "value": "", "description": "Alternate Ingestion Service auth — matches INTERNAL_API_TOKEN env var" }
+  ]
+}
