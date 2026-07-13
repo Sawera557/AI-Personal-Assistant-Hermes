@@ -125,6 +125,18 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             "description": "Which Zoom connection owns this meeting. Defaults to 'zoom'.",
         },
     }
+    zoom_list_props: dict[str, Any] = {
+        "type": {
+            "type": "string",
+            "enum": ["scheduled", "live", "upcoming", "previous_meetings"],
+            "description": "Which meetings to list. Defaults to 'upcoming'.",
+        },
+        "zoom_app": {
+            "type": "string",
+            "enum": ["zoom", "zoom-admin"],
+            "description": "Which Zoom connection to list from. Defaults to 'zoom'.",
+        },
+    }
     knowledge_props: dict[str, Any] = {
         "query": {
             "type": "string",
@@ -185,6 +197,7 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             ),
         }
         zoom_invite_props["business"] = business_param
+        zoom_list_props["business"] = business_param
         calendar_props["business"] = business_param
         # Optional, unlike the others above — a created file isn't tied to any
         # business's connection, so leaving it out just files it generally.
@@ -364,11 +377,29 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
                 "meetings, their time, location, and attendees. Use this whenever the user asks "
                 "what meetings/events they have, today or in a coming window, instead of "
                 "`maton_request` — it already handles the Calendar API's date-range query and "
-                "returns a clean, flattened list instead of raw Google JSON."
+                "returns a clean, flattened list instead of raw Google JSON. When the user asks "
+                "generally 'what meetings do I have', also call `zoom_list_meetings` and combine "
+                "both — a meeting may exist in only one of the two."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": calendar_props,
+                "required": [],
+            },
+        },
+        {
+            "name": "zoom_list_meetings",
+            "description": (
+                "List a business's Zoom meetings (scheduled/upcoming/live/past), with join links "
+                "and meeting IDs — use this instead of `maton_request` for a clean flattened list "
+                "instead of Zoom's raw paginated response. When the user asks generally 'what "
+                "meetings do I have', also call `calendar_list_upcoming` and combine both — a "
+                "meeting may exist in only one of the two (e.g. a Zoom call with no calendar "
+                "invite, or a calendar event with no Zoom link)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": zoom_list_props,
                 "required": [],
             },
         },
@@ -681,7 +712,7 @@ WATI_TOOLS = {
 LOCAL_TOOLS = {
     "maton_request", "maton_list_connections", "maton_create_connection",
     "drive_read_file", "send_email", "zoom_send_invite", "search_business_knowledge",
-    "create_file", "worldbank_data", "calendar_list_upcoming",
+    "create_file", "worldbank_data", "calendar_list_upcoming", "zoom_list_meetings",
     *WATI_TOOLS,
 }
 
@@ -1112,6 +1143,32 @@ def _zoom_send_invite(client: MatonClient, tool_input: dict[str, Any]) -> dict[s
     return {**result, "data": {**data, "sent_to": to, "cc": own_email, "join_url": join_url}}
 
 
+def _zoom_list_meetings(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    """List Zoom meetings, shaped into a clean flat list (not Zoom's raw
+    paginated envelope) so it reads consistently alongside
+    calendar_list_upcoming's already-shaped output."""
+    zoom_app = tool_input.get("zoom_app") or "zoom"
+    meeting_type = tool_input.get("type") or "upcoming"
+    result = client.request(zoom_app, "GET", "/v2/users/me/meetings", query={"type": meeting_type})
+    if not result.get("ok"):
+        return result
+
+    raw_meetings = (result.get("data") or {}).get("meetings") or []
+    meetings = [
+        {
+            "meeting_id": m.get("id"),
+            "topic": m.get("topic"),
+            "start_time": m.get("start_time"),
+            "duration": m.get("duration"),
+            "timezone": m.get("timezone"),
+            "join_url": m.get("join_url"),
+            "type": m.get("type"),
+        }
+        for m in raw_meetings
+    ]
+    return {**result, "data": {"meetings": meetings}}
+
+
 def _wati_get_media(
     client: MatonClient, tool_input: dict[str, Any], active_business: str | None
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -1255,6 +1312,8 @@ def dispatch(
                 result = _send_email(client, tool_input)
             elif name == "zoom_send_invite":
                 result = _zoom_send_invite(client, tool_input)
+            elif name == "zoom_list_meetings":
+                result = _zoom_list_meetings(client, tool_input)
             elif name in WATI_TOOLS:
                 wati = WatiClient(client)
                 if name == "wati_list_contacts":
