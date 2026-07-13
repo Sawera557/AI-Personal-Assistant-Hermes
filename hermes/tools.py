@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 import requests
 
+from . import calendar as hermes_calendar
 from . import storage
 from . import worldbank
 from .attachments import store as attachment_store
@@ -147,6 +148,16 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             ),
         },
     }
+    calendar_props: dict[str, Any] = {
+        "days": {
+            "type": "integer",
+            "description": "How many days ahead to look, from now. Defaults to 14.",
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "Cap on the number of events returned. Defaults to 20.",
+        },
+    }
 
     if fan_out:
         connected = Config.connected_business_slugs()
@@ -174,6 +185,7 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             ),
         }
         zoom_invite_props["business"] = business_param
+        calendar_props["business"] = business_param
         # Optional, unlike the others above — a created file isn't tied to any
         # business's connection, so leaving it out just files it generally.
         create_file_props["business"] = {
@@ -343,6 +355,21 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": zoom_invite_props,
                 "required": ["meeting_id", "to"],
+            },
+        },
+        {
+            "name": "calendar_list_upcoming",
+            "description": (
+                "List a business's upcoming Google Calendar events (its primary calendar) — "
+                "meetings, their time, location, and attendees. Use this whenever the user asks "
+                "what meetings/events they have, today or in a coming window, instead of "
+                "`maton_request` — it already handles the Calendar API's date-range query and "
+                "returns a clean, flattened list instead of raw Google JSON."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": calendar_props,
+                "required": [],
             },
         },
         {
@@ -654,7 +681,7 @@ WATI_TOOLS = {
 LOCAL_TOOLS = {
     "maton_request", "maton_list_connections", "maton_create_connection",
     "drive_read_file", "send_email", "zoom_send_invite", "search_business_knowledge",
-    "create_file", "worldbank_data",
+    "create_file", "worldbank_data", "calendar_list_upcoming",
     *WATI_TOOLS,
 }
 
@@ -711,6 +738,37 @@ def _attachment_scope(tool_input: dict[str, Any], active_business: str | None) -
     if slug:
         return slug
     return active_business if active_business != ALL_BUSINESSES else None
+
+
+def _calendar_list_upcoming(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Upcoming Google Calendar events for one business, via hermes.calendar
+    (which already owns the Maton app slug / date-range / response-shaping
+    boilerplate). No MatonClient here — just the same business-slug resolution
+    precedence as _resolve_client, translated into the {status, ok, data}
+    envelope every other tool result uses."""
+    slug = tool_input.get("business") or None
+    if not slug:
+        if active_business == ALL_BUSINESSES:
+            raise MatonError(
+                "No business specified. In 'All Businesses' mode you must pass a "
+                "`business` argument on every Maton tool call."
+            )
+        if not active_business:
+            raise MatonError(
+                "No business specified — calendar events are scoped per business."
+            )
+        slug = active_business
+
+    try:
+        events = hermes_calendar.list_upcoming(
+            slug,
+            days=tool_input.get("days") or 14,
+            max_results=tool_input.get("max_results") or 20,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise MatonError(str(exc)) from exc
+
+    return {"status": 200, "ok": True, "data": {"business": slug, "events": events}}
 
 
 def _search_business_knowledge(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
@@ -1160,6 +1218,9 @@ def dispatch(
         elif name == "create_file":
             # No Maton client involved at all — pure S3 write.
             result = _create_file(tool_input, active_business)
+        elif name == "calendar_list_upcoming":
+            # hermes.calendar resolves its own per-business Maton key internally.
+            result = _calendar_list_upcoming(tool_input, active_business)
         elif name == "worldbank_data":
             # Public data source — no Maton key / business scoping needed.
             result = {

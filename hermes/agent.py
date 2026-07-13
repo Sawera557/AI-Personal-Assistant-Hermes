@@ -74,6 +74,8 @@ def _system_prompt(voice: bool = False, active_business: str | None = None, memo
         "- To email a Zoom meeting invite, use `zoom_send_invite` (not maton_request) — it "
         "pulls the real join link straight from Zoom so it's never mistyped, and it "
         "automatically CCs the user's own email too. Use `send_email` for any other email.\n"
+        "- When asked what meetings/events are coming up, use `calendar_list_upcoming` (not "
+        "maton_request) — it already handles the Google Calendar API's date-range query.\n"
         "- For any write or destructive action (sending email, sending a WhatsApp/WATI "
         "message or file, assigning a WATI operator, creating/editing calendar events, "
         "modifying QuickBooks data, deleting Drive files, etc.), first clearly summarize "
