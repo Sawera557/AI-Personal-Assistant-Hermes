@@ -275,6 +275,70 @@ def due(now: datetime | None = None, limit: int = 25) -> list[dict[str, Any]]:
     return [_task_row_to_dict(r) for r in rows]
 
 
+def claim_due(task_id: str, next_run_at: datetime | None, now: datetime | None = None) -> bool:
+    """Atomically claim a due task for a scheduled fire and advance its next_run_at.
+
+    A single UPDATE both re-checks the task is still enabled AND due and moves
+    next_run_at forward to the next slot, returning the row only if it actually
+    changed it. This is the guard against the re-entrancy multi-fire: the agent
+    run takes minutes, and without advancing next_run_at up front every poll in
+    that window would re-select the same (still-due) task and fire it again. It
+    also makes concurrent pollers safe — only the first UPDATE matches the
+    `next_run_at <= now` predicate; the rest see the advanced value and get no row.
+
+    Returns True if THIS caller won the claim (so it should run the task), False
+    otherwise (another poll already took it, or it's no longer due/enabled)."""
+    if not _is_uuid(task_id):
+        return False
+    now = now or datetime.now(timezone.utc)
+    try:
+        with cursor() as cur:
+            cur.execute(
+                """UPDATE scheduled_tasks
+                       SET next_run_at = %s, last_status = 'running', updated_at = now()
+                   WHERE task_id = %s AND enabled
+                         AND next_run_at IS NOT NULL AND next_run_at <= %s
+                   RETURNING task_id;""",
+                (next_run_at, task_id, now),
+            )
+            return cur.fetchone() is not None
+    except Exception as exc:  # noqa: BLE001
+        log.warning("claim_due(%s) failed: %s", task_id, exc)
+        return False
+
+
+def reap_stale_runs(older_than_minutes: int = 15) -> int:
+    """Close runs stuck in 'running' whose process died mid-run (no finish_run).
+
+    Without this a killed/crashed run shows as perpetually 'running' in the UI.
+    Marks any run still 'running' past the cutoff as 'error', and clears the
+    parent task's last_status if it was left 'running'. Returns how many it
+    reaped. Called at the top of run_due so it self-heals on the next tick."""
+    try:
+        with cursor() as cur:
+            cur.execute(
+                """UPDATE scheduled_task_runs
+                       SET status = 'error',
+                           error = 'run did not finish (process ended before completion)',
+                           finished_at = now()
+                   WHERE status = 'running'
+                         AND started_at < now() - make_interval(mins => %s)
+                   RETURNING task_id;""",
+                (older_than_minutes,),
+            )
+            reaped = cur.fetchall()
+            for (task_id,) in reaped:
+                cur.execute(
+                    "UPDATE scheduled_tasks SET last_status = 'error' "
+                    "WHERE task_id = %s AND last_status = 'running';",
+                    (task_id,),
+                )
+            return len(reaped)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("reap_stale_runs failed: %s", exc)
+        return 0
+
+
 def start_run(task_id: str, trigger: str = "schedule") -> str | None:
     """Open a run row (status='running') and mark the task running. Returns the
     run_id, or None on failure."""

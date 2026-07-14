@@ -1598,7 +1598,13 @@ class TaskCreateBody(BaseModel):
 async def list_scheduled_tasks(entity_id: str | None = None):
     """List the owner's scheduled tasks (newest-updated first). `entity_id` is a
     business slug to scope to one business, or "all"/omitted for every task."""
-    tasks = await run_in_threadpool(tasks_db.list_tasks, entity_id)
+    # `entity_id` arrives as a business slug (afk, gak, …), matching the chat
+    # convention — but the store filters on the entity slug (gak_properties, …).
+    # Convert it the same way create does, or the filter matches nothing.
+    # `to_entity_slug(...) or entity_id` also passes an entity slug/uuid through
+    # untouched; "all"/None mean "every task".
+    scope = to_entity_slug(entity_id) or entity_id if entity_id and entity_id != "all" else entity_id
+    tasks = await run_in_threadpool(tasks_db.list_tasks, scope)
     return {"tasks": [_enrich_task(t) for t in tasks], "entity_id": entity_id}
 
 

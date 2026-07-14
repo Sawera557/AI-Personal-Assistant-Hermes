@@ -1575,6 +1575,9 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 /* Modals (editor + detail) */
 .tk-overlay { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center;
   background: rgba(4,6,11,.72); backdrop-filter: blur(3px); padding: 20px; }
+/* JS toggles these via the [hidden] attribute; an explicit display: flex would
+   otherwise defeat it and leave both modals stacked over the page on load. */
+.tk-overlay[hidden] { display: none; }
 .tk-modal { background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 18px;
   width: 100%; max-width: 620px; max-height: 90vh; display: flex; flex-direction: column;
   box-shadow: 0 24px 70px rgba(0,0,0,.55); overflow: hidden; }

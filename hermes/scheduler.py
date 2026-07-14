@@ -232,19 +232,30 @@ def execute_and_record(task: dict[str, Any], trigger: str = "schedule") -> dict[
     A `trigger='manual'` run records the run but leaves the next scheduled fire
     untouched. Returns a small summary ({task_id, run_id, status, reply?, error?}).
     Never raises — an agent failure is recorded as an 'error' run so the schedule
-    keeps advancing instead of re-running a poison task every cron tick."""
+    keeps advancing instead of re-running a poison task every cron tick.
+
+    For a scheduled fire we ATOMICALLY CLAIM the task first (advancing next_run_at
+    to its next slot before the multi-minute agent run), so the same still-due
+    task can't be re-selected and fired again by every poll in that window, and
+    concurrent pollers can't both grab it. If another poll already claimed it we
+    return a 'skipped' summary without running. A manual run never claims."""
     from .db import scheduled_tasks as repo
 
     task_id = task.get("task_id")
+
+    # Claim before running (scheduled only). This is the fix for the re-entrancy
+    # multi-fire: next_run_at moves forward up front, atomically, guarding the
+    # whole agent run — not after it finishes minutes later.
+    if trigger == "schedule":
+        next_run = compute_next_run(task.get("schedule") or {}, task.get("timezone")) \
+            if task.get("enabled") else None
+        if not repo.claim_due(task_id, next_run):
+            return {"task_id": task_id, "status": "skipped", "reason": "already claimed or not due"}
+
     run_id = repo.start_run(task_id, trigger=trigger)
 
-    # A scheduled fire advances next_run_at from NOW (so an errored task doesn't
-    # re-fire on the very next tick); a manual run leaves the schedule alone.
-    advance = trigger == "schedule"
-    next_run = None
-    if advance and task.get("enabled"):
-        next_run = compute_next_run(task.get("schedule") or {}, task.get("timezone"))
-
+    # next_run_at is already advanced (at claim, for scheduled) or intentionally
+    # left alone (manual), so finish_run never touches it here.
     try:
         result = run_task(task)
         status = "error" if result.get("stop_reason") == "refusal" else "success"
@@ -253,16 +264,12 @@ def execute_and_record(task: dict[str, Any], trigger: str = "schedule") -> dict[
             status=status,
             reply=result.get("reply"),
             tool_calls=result.get("tool_calls") or [],
-            next_run_at=next_run,
-            set_next=advance,
+            set_next=False,
         )
         return {"task_id": task_id, "run_id": run_id, "status": status, "reply": result.get("reply")}
     except Exception as exc:  # noqa: BLE001 — record, don't crash the whole batch
         log.warning("execute_and_record(%s) failed: %s", task_id, exc)
-        repo.finish_run(
-            run_id, task_id, status="error", error=str(exc),
-            next_run_at=next_run, set_next=advance,
-        )
+        repo.finish_run(run_id, task_id, status="error", error=str(exc), set_next=False)
         return {"task_id": task_id, "run_id": run_id, "status": "error", "error": str(exc)}
 
 
@@ -273,9 +280,11 @@ def run_due(limit: int = 25) -> dict[str, Any]:
     recorded and the rest still run."""
     from .db import scheduled_tasks as repo
 
+    reaped = repo.reap_stale_runs()  # self-heal runs whose process died mid-run
     tasks = repo.due(limit=limit)
     results = [execute_and_record(t, trigger="schedule") for t in tasks]
-    return {"ran": len(results), "results": results}
+    ran = [r for r in results if r.get("status") != "skipped"]
+    return {"ran": len(ran), "skipped": len(results) - len(ran), "reaped": reaped, "results": results}
 
 
 # ── In-process poller ───────────────────────────────────────────────────────
