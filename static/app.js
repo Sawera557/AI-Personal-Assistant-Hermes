@@ -214,6 +214,31 @@ function renderThinking(thinking) {
     `<pre>${escapeHtml(thinking)}</pre></details></div>`;
 }
 
+// Live, uncollapsed "Reasoning" view shown WHILE a turn is still fetching its
+// response. `entries` is an ordered mix of two kinds, in the order they
+// actually happened:
+//   {kind: "thought", text}  — Claude's REAL streamed reasoning (only on
+//                              models/turns where it chose to think out loud)
+//   {kind: "tool", label}    — a tool call in flight/completed
+// The most recent entry pulses (still happening); earlier ones settle down
+// (✓ for tools, dimmed for thoughts). Replaced by the final reply + collapsed
+// renderThinking()/renderToolTrace() once the turn completes, so this is only
+// ever visible before the response lands.
+function renderLiveReasoning(entries) {
+  if (!entries.length) return "";
+  const items = entries
+    .map((e, i) => {
+      const active = i === entries.length - 1;
+      if (e.kind === "tool") {
+        return `<div class="reasoning-step${active ? " active" : " done"}">` +
+          `${active ? "" : "✓ "}${escapeHtml(e.label)}</div>`;
+      }
+      return `<div class="reasoning-thought${active ? " active" : " done"}">${escapeHtml(e.text)}</div>`;
+    })
+    .join("");
+  return `<div class="thinking-live"><div class="thinking-live-title">🧠 Reasoning</div>${items}</div>`;
+}
+
 function refreshAttachments() {
   attachmentsEl.innerHTML = "";
   pendingFiles.forEach((file, i) => {
@@ -427,9 +452,19 @@ async function sendStreaming(body, bubble) {
   let text = "";
   let final = null;
   let sawError = null;
+  // Every reasoning step this turn, in order — real streamed thinking text
+  // (when Claude chose to think out loud) interleaved with tool calls — so
+  // the live view shows the whole process unfolding, not just the latest
+  // step overwriting the last.
+  const reasoningEntries = [];
+  // The currently-open thought entry, so consecutive "thinking" deltas
+  // append to one entry instead of each delta becoming its own line. Reset
+  // to null on anything else (a tool call, or real reply text starting) so
+  // the next thought (if any) starts a fresh entry.
+  let openThought = null;
 
   const renderLive = () => {
-    bubble.innerHTML = renderMarkdown(text);
+    bubble.innerHTML = renderMarkdown(text) + renderLiveReasoning(reasoningEntries);
     if (stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
   };
 
@@ -446,14 +481,21 @@ async function sendStreaming(body, bubble) {
       let evt;
       try { evt = JSON.parse(dataLine.slice(6)); } catch (_) { continue; }
 
-      if (evt.type === "text") {
+      if (evt.type === "thinking") {
+        if (!openThought) {
+          openThought = { kind: "thought", text: "" };
+          reasoningEntries.push(openThought);
+        }
+        openThought.text += evt.text;
+        renderLive();
+      } else if (evt.type === "text") {
+        openThought = null;
         text += evt.text;
         renderLive();
       } else if (evt.type === "tool_call") {
-        const label = evt.label || `⚙️ Working on it (${evt.tool})…`;
-        bubble.innerHTML = renderMarkdown(text) +
-          `<div class="tool-live">${escapeHtml(label)}</div>`;
-        if (stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+        openThought = null;
+        reasoningEntries.push({ kind: "tool", label: evt.label || `⚙️ Working on it (${evt.tool})…` });
+        renderLive();
       } else if (evt.type === "done") {
         final = evt;
       } else if (evt.type === "error") {
@@ -571,7 +613,7 @@ const openMobileNav  = () => appEl.classList.add("mobile-open");
 const closeMobileNav = () => appEl.classList.remove("mobile-open");
 
 // Wire up every hamburger button (chat topbar + bills topbar)
-["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context"].forEach((id) => {
+["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context", "menu-btn-tasks"].forEach((id) => {
   document.getElementById(id)?.addEventListener("click", openMobileNav);
 });
 
@@ -608,6 +650,10 @@ function setView(view) {
   // Lazy-init business context on first open
   if (view === "context" && typeof window._contextInit === "function") {
     window._contextInit();
+  }
+  // Lazy-init scheduled tasks on first open
+  if (view === "tasks" && typeof window._tasksInit === "function") {
+    window._tasksInit();
   }
 }
 

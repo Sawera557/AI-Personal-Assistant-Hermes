@@ -155,6 +155,32 @@ class Config:
 
     PORT: int = int(os.getenv("PORT", "5000"))
 
+    # ---- Scheduled Tasks ---------------------------------------------------
+    # The run-due endpoint (POST /api/scheduled-tasks/run-due) is what a cron
+    # hits to fire due tasks. Set SCHEDULER_SECRET to require it as a bearer
+    # token / ?token= on that call, so only your scheduler can trigger runs.
+    # If unset, the endpoint is open (fine for local dev; set it in production).
+    SCHEDULER_SECRET: str = os.getenv("SCHEDULER_SECRET", "").strip()
+    # Wall-clock timezone new tasks default to (the owner's local zone). AFK/Kenya
+    # tasks can override per-task in the UI.
+    SCHEDULER_DEFAULT_TZ: str = os.getenv("SCHEDULER_DEFAULT_TZ", "America/Chicago").strip()
+    # How often the in-process poller scans for due tasks (seconds).
+    SCHEDULER_POLL_SECONDS: int = int(os.getenv("SCHEDULER_POLL_SECONDS", "60"))
+
+    @classmethod
+    def scheduler_inprocess(cls) -> bool:
+        """Whether to run the in-process due-task poller so tasks fire without an
+        external cron. Auto-ON everywhere EXCEPT Vercel serverless (where a
+        background thread wouldn't survive between frozen invocations — the
+        vercel.json cron hits /run-due there instead). Force it with
+        SCHEDULER_INPROCESS=true/false."""
+        raw = os.getenv("SCHEDULER_INPROCESS", "").strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        return not os.getenv("VERCEL")  # Vercel sets VERCEL=1 in its runtime
+
     @classmethod
     def cors_origins(cls) -> list[str] | str:
         """Allowed origins for the API. Comma-separated CORS_ORIGINS, or "*"."""
@@ -196,11 +222,12 @@ class Config:
     MEMORY_SEMANTIC_TOP_K: int = int(os.getenv("MEMORY_SEMANTIC_TOP_K", "5"))
     MEMORY_MAX_SENSITIVITY: str = os.getenv("MEMORY_MAX_SENSITIVITY", "confidential")
 
-    # ---- NuExtract (bill / invoice OCR) ------------------------------------
+    # ---- NuExtract (bill / invoice OCR, document text extraction) ----------
+    # Base URL isn't configurable — the official `numind` SDK (hermes/bills.py)
+    # manages its own endpoint; there used to be a NUEXTRACT_BASE_URL override
+    # here pointing at a non-resolving host (api.nuextract.ai), a leftover from
+    # a hand-rolled client that never actually reached the real API.
     NUEXTRACT_API_KEY: str = os.getenv("NUEXTRACT_API_KEY", "").strip()
-    NUEXTRACT_BASE_URL: str = os.getenv(
-        "NUEXTRACT_BASE_URL", "https://api.nuextract.ai"
-    ).rstrip("/")
 
     @classmethod
     def validate(cls) -> list[str]:
@@ -209,7 +236,10 @@ class Config:
             problems.append("ANTHROPIC_API_KEY is not set")
         if not cls.OPENAI_API_KEY:
             problems.append(
-                "OPENAI_API_KEY is not set (needed only if the agent model is switched to an OpenAI option)"
+                "OPENAI_API_KEY is not set — needed for embeddings (pgvector search, memory "
+                "extraction/retrieval, document ingestion) regardless of which chat model is "
+                "active, and additionally for the agent model itself if that's switched to an "
+                "OpenAI option"
             )
         if not cls.MATON_API_KEY:
             problems.append("MATON_API_KEY is not set (app integrations will fail)")

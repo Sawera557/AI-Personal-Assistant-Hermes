@@ -65,6 +65,15 @@
             </svg>
             <span>Context</span>
           </button>
+          <button class="strip-tab" type="button" data-view="tasks" title="Scheduled Tasks">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="13" r="8"/>
+              <path d="M12 9v4l2.5 1.5"/>
+              <path d="M5 3 2 6"/>
+              <path d="M19 3l3 3"/>
+            </svg>
+            <span>Tasks</span>
+          </button>
         </div>
 
         <button class="strip-toggle" id="strip-toggle" type="button" title="Toggle sidebar">
@@ -220,6 +229,31 @@
 
           <div class="panel push-bottom">
             <p class="hint">Notes and files you add here are chunked, embedded, and searchable by Hermes in chat via `search_business_knowledge` — kept separate per business.</p>
+          </div>
+        </div>
+
+        <!-- Scheduled Tasks panel: sidebar metadata for the Tasks section -->
+        <div class="panel-section" id="panel-tasks">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-tasks" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-tasks" hidden></p>
+          </div>
+
+          <button id="task-new-btn" class="ghost new-convo">＋ New task</button>
+
+          <div class="panel">
+            <h2>How it works</h2>
+            <ul class="feature-list">
+              <li>Runs on your schedule, unattended</li>
+              <li>Scoped to one business &amp; its apps</li>
+              <li>Read-only by default — safe to run</li>
+              <li>Every run is saved &amp; reviewable</li>
+            </ul>
+          </div>
+
+          <div class="panel push-bottom">
+            <p class="hint" id="tasks-cron-hint">Tasks fire when your scheduler pings <code>/api/scheduled-tasks/run-due</code>. Use <strong>Run now</strong> to test any task instantly.</p>
           </div>
         </div>
 
@@ -539,6 +573,164 @@
       </div>
     </main>
 
+    <!-- ── Main area: Scheduled Tasks ─────────────────────────────── -->
+    <main class="tasks-view" id="tasks-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-tasks" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(139,92,246,.18);font-size:15px;">⏰</span> Tasks</div>
+        <button class="icon-btn plus" id="task-new-btn-m" aria-label="New task" style="margin-left:auto">＋</button>
+      </header>
+
+      <div class="tasks-page" id="tasks-page">
+        <div class="tasks-pg-header">
+          <div>
+            <h2 class="tasks-pg-title">Scheduled tasks</h2>
+            <p class="tasks-pg-sub">Run Hermes on a schedule — briefings, triage, sweeps — automatically.</p>
+          </div>
+          <button class="tasks-new-btn" id="task-new-btn-main" type="button">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New task
+          </button>
+        </div>
+
+        <div class="tasks-list" id="tasks-list"></div>
+        <div class="tasks-empty" id="tasks-empty" hidden>
+          <div class="tasks-empty-icon">⏰</div>
+          <h3>No scheduled tasks yet</h3>
+          <p class="hint">Create one to have Hermes run on a schedule — a daily briefing, inbox triage, a rent-arrears sweep, whatever you'd otherwise ask in chat every day.</p>
+          <button class="tasks-new-btn" id="task-new-btn-empty" type="button">＋ Create your first task</button>
+        </div>
+      </div>
+
+      <!-- ── Task editor modal (create / edit) ─────────────────────── -->
+      <div class="tk-overlay" id="tk-editor-overlay" hidden>
+        <div class="tk-modal">
+          <div class="tk-header">
+            <div class="tk-title" id="tk-editor-title">New scheduled task</div>
+            <button class="tk-close-btn" id="tk-editor-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="tk-body">
+
+            <!-- Quick-start templates -->
+            <div class="tk-templates" id="tk-templates"></div>
+
+            <label class="tk-label">Task name</label>
+            <input type="text" id="tk-name" class="tk-input" placeholder="e.g. Daily AFK morning briefing" autocomplete="off" />
+
+            <label class="tk-label">What should Hermes do? <span class="tk-req">*</span></label>
+            <textarea id="tk-prompt" class="tk-textarea" rows="4" placeholder="Describe the task exactly as you'd ask in chat. e.g. “Scan AFK's Gmail and Calendar for anything that needs my attention today and write me a short briefing with what's urgent, what's coming up, and any bills due.”"></textarea>
+
+            <div class="tk-row">
+              <div class="tk-col">
+                <label class="tk-label">Business</label>
+                <select id="tk-business" class="tk-input"></select>
+              </div>
+              <div class="tk-col">
+                <label class="tk-label">Timezone</label>
+                <select id="tk-timezone" class="tk-input">
+                  <option value="America/Chicago">Central (Twin Cities)</option>
+                  <option value="America/New_York">Eastern</option>
+                  <option value="America/Los_Angeles">Pacific</option>
+                  <option value="Africa/Nairobi">East Africa (Kenya)</option>
+                  <option value="UTC">UTC</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Schedule builder -->
+            <label class="tk-label">When should it run?</label>
+            <div class="tk-schedule">
+              <div class="tk-freq-tabs" id="tk-freq-tabs">
+                <button type="button" class="tk-freq active" data-freq="daily">Daily</button>
+                <button type="button" class="tk-freq" data-freq="weekdays">Weekdays</button>
+                <button type="button" class="tk-freq" data-freq="weekly">Weekly</button>
+                <button type="button" class="tk-freq" data-freq="hourly">Hourly</button>
+              </div>
+
+              <div class="tk-days" id="tk-days" hidden>
+                <button type="button" class="tk-day" data-day="0">Mon</button>
+                <button type="button" class="tk-day" data-day="1">Tue</button>
+                <button type="button" class="tk-day" data-day="2">Wed</button>
+                <button type="button" class="tk-day" data-day="3">Thu</button>
+                <button type="button" class="tk-day" data-day="4">Fri</button>
+                <button type="button" class="tk-day" data-day="5">Sat</button>
+                <button type="button" class="tk-day" data-day="6">Sun</button>
+              </div>
+
+              <div class="tk-times-wrap" id="tk-times-wrap">
+                <div class="tk-times-label" id="tk-times-label">At these times</div>
+                <div class="tk-times" id="tk-times"></div>
+                <div class="tk-add-time">
+                  <input type="time" id="tk-time-input" class="tk-input tk-time-input" value="07:00" />
+                  <button type="button" id="tk-add-time-btn" class="tk-add-btn">＋ Add time</button>
+                </div>
+              </div>
+              <p class="tk-sched-preview" id="tk-sched-preview"></p>
+            </div>
+
+            <!-- Allowed apps -->
+            <label class="tk-label">Which apps can it use? <span class="tk-hint-inline">(none selected = all connected apps)</span></label>
+            <div class="tk-apps" id="tk-apps"></div>
+
+            <!-- Autonomy -->
+            <label class="tk-label">How far can it act on its own?</label>
+            <div class="tk-autonomy" id="tk-autonomy">
+              <label class="tk-auto-opt"><input type="radio" name="tk-autonomy" value="readonly" checked><div><span class="tk-auto-name">Read-only</span><span class="tk-auto-desc">Reads, analyzes &amp; reports. Never sends or changes anything. Safest.</span></div></label>
+              <label class="tk-auto-opt"><input type="radio" name="tk-autonomy" value="draft"><div><span class="tk-auto-name">Draft</span><span class="tk-auto-desc">Read-only, plus can prepare Gmail drafts for you to review &amp; send.</span></div></label>
+              <label class="tk-auto-opt"><input type="radio" name="tk-autonomy" value="full"><div><span class="tk-auto-name">Full — act on my behalf</span><span class="tk-auto-desc">May send &amp; modify unattended. Only for tasks you fully trust.</span></div></label>
+            </div>
+          </div>
+
+          <div class="tk-footer">
+            <label class="tk-enabled">
+              <input type="checkbox" id="tk-enabled" checked />
+              <span>Enabled</span>
+            </label>
+            <span class="hint" id="tk-editor-msg"></span>
+            <div class="tk-footer-actions">
+              <button class="tk-btn tk-cancel" id="tk-editor-cancel" type="button">Cancel</button>
+              <button class="tk-btn tk-save" id="tk-editor-save" type="button">Save task</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Task detail modal (info + runs + run now) ─────────────── -->
+      <div class="tk-overlay" id="tk-detail-overlay" hidden>
+        <div class="tk-modal">
+          <div class="tk-header">
+            <div class="tk-detail-head">
+              <div class="tk-title" id="tk-detail-name">Task</div>
+              <div class="tk-detail-sched" id="tk-detail-sched"></div>
+            </div>
+            <button class="tk-close-btn" id="tk-detail-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="tk-body">
+            <div class="tk-detail-meta" id="tk-detail-meta"></div>
+            <div class="tk-detail-prompt" id="tk-detail-prompt"></div>
+
+            <div class="tk-runs-head">
+              <span>Run history</span>
+              <span class="hint" id="tk-runs-count"></span>
+            </div>
+            <div class="tk-runs" id="tk-runs"></div>
+            <p class="hint" id="tk-runs-empty" hidden>No runs yet. Press “Run now” to try it.</p>
+          </div>
+          <div class="tk-footer">
+            <div class="tk-footer-actions" style="margin-right:auto">
+              <button class="tk-btn tk-danger" id="tk-detail-delete" type="button">Delete</button>
+              <button class="tk-btn tk-cancel" id="tk-detail-edit" type="button">Edit</button>
+            </div>
+            <span class="hint" id="tk-detail-msg"></span>
+            <button class="tk-btn tk-save" id="tk-detail-run" type="button">▶ Run now</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
   </div><!-- /app -->
 
   {% if voice_enabled %}
@@ -570,6 +762,7 @@
   <script src="/static/app.js?v={{ v }}"></script>
   <script src="/static/bills.js?v={{ v }}"></script>
   <script src="/static/meeting.js?v={{ v }}"></script>
+  <script src="/static/tasks.js?v={{ v }}"></script>
   {% if voice_enabled %}<script src="/static/voice.js?v={{ v }}"></script>{% endif %}
 </body>
 </html>

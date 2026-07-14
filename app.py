@@ -20,6 +20,11 @@ Endpoints:
     GET/POST /api/connections    — list / create Maton app connections
     GET/POST /api/settings/model — read/switch the agent's active model (Claude/OpenAI)
     POST /api/reset              — clear a conversation's history
+    GET/POST /api/scheduled-tasks           — list / create recurring agent tasks
+    GET/PATCH/DELETE /api/scheduled-tasks/{id} — read / edit / delete one task
+    POST /api/scheduled-tasks/{id}/run      — run a task now (manual)
+    GET  /api/scheduled-tasks/{id}/runs     — a task's run history
+    */POST /api/scheduled-tasks/run-due     — cron trigger: fire all due tasks
 
 Interactive docs are auto-generated at /docs (Swagger) and /redoc.
 
@@ -31,6 +36,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -79,6 +85,8 @@ from hermes.meeting_copilot import generate_ai_notes, get_guidance, get_guidance
 from hermes.memory import store
 from hermes.memory_extract import extract_async
 from hermes import models as hermes_models
+from hermes import scheduler as hermes_scheduler
+from hermes.db import scheduled_tasks as tasks_db
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
@@ -107,6 +115,17 @@ async def _lifespan(_app: "FastAPI"):
             pass
 
     threading.Thread(target=_go, daemon=True).start()
+
+    # Fire scheduled tasks automatically on any always-on process (local dev, a
+    # VM, Railway/Render) with no external cron needed. Auto-disabled on Vercel,
+    # where the vercel.json cron hits /api/scheduled-tasks/run-due instead — so a
+    # task created in the UI "just runs" in every deployment, and never twice.
+    if Config.scheduler_inprocess():
+        try:
+            hermes_scheduler.start_background_poller(Config.SCHEDULER_POLL_SECONDS)
+        except Exception:  # noqa: BLE001 — never block startup on the poller
+            log.warning("Could not start in-process scheduler", exc_info=True)
+
     yield
 
 
@@ -209,7 +228,7 @@ def _asset_version() -> int:
     """A version stamp that changes whenever a static asset changes, so browsers
     fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
     latest = 0.0
-    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js"):
+    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js", "tasks.js"):
         try:
             latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
         except OSError:
@@ -410,6 +429,11 @@ async def chat_stream(request: Request):
 
     Same request shape as /api/chat (JSON or multipart). Response is
     text/event-stream: one `data: <json>\\n\\n` line per event —
+    {"type": "thinking", "text": "<delta>"} — Claude's REAL extended-thinking
+    text, streamed live, only on models/turns where it chose to think out
+    loud (Haiku never produces this; Opus/Sonnet only produce it for turns
+    complex enough to warrant it — a simple one-tool-call question often has
+    none at all, which is expected, not a bug),
     {"type": "text", "text": "<delta>"} as the reply is generated,
     {"type": "tool_call", "tool": "...", "input": {...}, "label": "..."} when a
     tool is invoked — `label` is a short, friendly "what I'm doing right now"
@@ -1522,6 +1546,242 @@ async def api_check_payments():
         log.warning("check_paid_bills error: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=502)
     return {"marked_paid": paid_ids, "count": len(paid_ids)}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Scheduled Tasks — recurring, unattended agent runs (Claude-style)
+# ════════════════════════════════════════════════════════════════════════════
+# Each task is the same Hermes agent turn as chat, but automated: a locked
+# business, an allowed-apps toolset, an autonomy level, and a schedule that
+# decides when it fires. Firing is pull-based — a cron hits /run-due (below),
+# which runs every task whose next_run_at has passed. See hermes/scheduler.py.
+
+def _validate_schedule(schedule: dict) -> str | None:
+    """Return an error string if the schedule is unusable, else None."""
+    freq = (schedule or {}).get("frequency")
+    if freq not in hermes_scheduler.VALID_FREQUENCIES:
+        return f"frequency must be one of {sorted(hermes_scheduler.VALID_FREQUENCIES)}."
+    if freq == "weekly" and not (schedule.get("days_of_week") or []):
+        return "A weekly schedule needs at least one day in days_of_week (0=Mon … 6=Sun)."
+    if freq != "hourly" and not (schedule.get("times") or []):
+        return "Provide at least one time (HH:MM) for this schedule."
+    return None
+
+
+def _enrich_task(task: dict) -> dict:
+    """Add the human schedule summary the UI shows on each card."""
+    if task:
+        task["schedule_summary"] = hermes_scheduler.describe_schedule(
+            task.get("schedule") or {}, task.get("timezone")
+        )
+    return task
+
+
+class ScheduleBody(BaseModel):
+    frequency: str = "daily"           # hourly | daily | weekdays | weekly
+    times: list[str] = []              # ["07:00", "13:00", ...] wall-clock
+    days_of_week: list[int] = []       # 0=Mon … 6=Sun, for weekly
+
+
+class TaskCreateBody(BaseModel):
+    name: str
+    prompt: str
+    business: str | None = None        # business slug, "all", or None == unscoped
+    allowed_apps: list[str] = []       # Maton app slugs (+ "web"); [] == all apps
+    autonomy: str = "readonly"         # readonly | draft | full
+    schedule: ScheduleBody
+    timezone: str | None = None
+    enabled: bool = True
+
+
+@app.get("/api/scheduled-tasks")
+async def list_scheduled_tasks(entity_id: str | None = None):
+    """List the owner's scheduled tasks (newest-updated first). `entity_id` is a
+    business slug to scope to one business, or "all"/omitted for every task."""
+    tasks = await run_in_threadpool(tasks_db.list_tasks, entity_id)
+    return {"tasks": [_enrich_task(t) for t in tasks], "entity_id": entity_id}
+
+
+@app.post("/api/scheduled-tasks")
+async def create_scheduled_task(body: TaskCreateBody):
+    """Create a scheduled task. Resolves the business scope, validates the
+    schedule + autonomy, computes the first next_run_at, and stores it."""
+    name = (body.name or "").strip()
+    prompt = (body.prompt or "").strip()
+    if not name:
+        return JSONResponse({"error": "A task name is required."}, status_code=400)
+    if not prompt:
+        return JSONResponse({"error": "A task prompt is required."}, status_code=400)
+    if body.autonomy not in hermes_scheduler.VALID_AUTONOMY:
+        return JSONResponse(
+            {"error": f"autonomy must be one of {sorted(hermes_scheduler.VALID_AUTONOMY)}."},
+            status_code=400,
+        )
+
+    schedule = body.schedule.model_dump()
+    if err := _validate_schedule(schedule):
+        return JSONResponse({"error": err}, status_code=400)
+
+    business = (body.business or "").strip()
+    entity_slug = None
+    if business and business != "all":
+        entity_slug = to_entity_slug(business)
+        if not entity_slug:
+            return JSONResponse({"error": f"Unknown or unmapped business '{business}'."}, status_code=400)
+
+    tz = (body.timezone or Config.SCHEDULER_DEFAULT_TZ).strip() or Config.SCHEDULER_DEFAULT_TZ
+    next_run = hermes_scheduler.compute_next_run(schedule, tz) if body.enabled else None
+
+    task_id = await run_in_threadpool(
+        tasks_db.create_task,
+        entity_slug=entity_slug,
+        name=name,
+        prompt=prompt,
+        schedule=schedule,
+        timezone_name=tz,
+        allowed_apps=body.allowed_apps or [],
+        autonomy=body.autonomy,
+        enabled=body.enabled,
+        next_run_at=next_run,
+    )
+    if not task_id:
+        return JSONResponse({"error": "Could not create the task."}, status_code=500)
+    task = await run_in_threadpool(tasks_db.get_task, task_id)
+    return {"task": _enrich_task(task)}
+
+
+@app.get("/api/scheduled-tasks/{task_id}")
+async def get_scheduled_task(task_id: str):
+    """One task plus its recent run history (for the detail panel)."""
+    task = await run_in_threadpool(tasks_db.get_task, task_id)
+    if not task:
+        return JSONResponse({"error": "Task not found."}, status_code=404)
+    runs = await run_in_threadpool(tasks_db.list_runs, task_id, 20)
+    return {"task": _enrich_task(task), "runs": runs}
+
+
+class TaskPatchBody(BaseModel):
+    name: str | None = None
+    prompt: str | None = None
+    business: str | None = None
+    allowed_apps: list[str] | None = None
+    autonomy: str | None = None
+    schedule: ScheduleBody | None = None
+    timezone: str | None = None
+    enabled: bool | None = None
+
+
+@app.patch("/api/scheduled-tasks/{task_id}")
+async def update_scheduled_task(task_id: str, body: TaskPatchBody):
+    """Edit a task. Only the fields sent are changed. Any change to the schedule,
+    timezone, or enabled flag recomputes next_run_at."""
+    existing = await run_in_threadpool(tasks_db.get_task, task_id)
+    if not existing:
+        return JSONResponse({"error": "Task not found."}, status_code=404)
+
+    sent = body.model_dump(exclude_unset=True)
+    kwargs: dict = {}
+
+    if "name" in sent:
+        if not (body.name or "").strip():
+            return JSONResponse({"error": "A task name is required."}, status_code=400)
+        kwargs["name"] = body.name.strip()
+    if "prompt" in sent:
+        if not (body.prompt or "").strip():
+            return JSONResponse({"error": "A task prompt is required."}, status_code=400)
+        kwargs["prompt"] = body.prompt.strip()
+    if "autonomy" in sent:
+        if body.autonomy not in hermes_scheduler.VALID_AUTONOMY:
+            return JSONResponse({"error": "Invalid autonomy."}, status_code=400)
+        kwargs["autonomy"] = body.autonomy
+    if "allowed_apps" in sent:
+        kwargs["allowed_apps"] = body.allowed_apps or []
+    if "schedule" in sent and body.schedule is not None:
+        sched = body.schedule.model_dump()
+        if err := _validate_schedule(sched):
+            return JSONResponse({"error": err}, status_code=400)
+        kwargs["schedule"] = sched
+    if "timezone" in sent and body.timezone:
+        kwargs["timezone_name"] = body.timezone.strip()
+    if "enabled" in sent:
+        kwargs["enabled"] = body.enabled
+    if "business" in sent:
+        business = (body.business or "").strip()
+        if not business or business == "all":
+            kwargs["entity_slug"] = None
+        else:
+            resolved = to_entity_slug(business)
+            if not resolved:
+                return JSONResponse({"error": f"Unknown business '{business}'."}, status_code=400)
+            kwargs["entity_slug"] = resolved
+        kwargs["entity_slug_set"] = True
+
+    # Recompute next_run_at whenever timing-relevant fields change.
+    schedule = kwargs.get("schedule", existing.get("schedule") or {})
+    tz = kwargs.get("timezone_name", existing.get("timezone"))
+    enabled = kwargs.get("enabled", existing.get("enabled"))
+    if {"schedule", "timezone_name", "enabled"} & kwargs.keys():
+        kwargs["next_run_at"] = hermes_scheduler.compute_next_run(schedule, tz) if enabled else None
+        kwargs["next_run_set"] = True
+
+    ok = await run_in_threadpool(lambda: tasks_db.update_task(task_id, **kwargs))
+    if not ok:
+        return JSONResponse({"error": "Nothing to update or task not found."}, status_code=400)
+    task = await run_in_threadpool(tasks_db.get_task, task_id)
+    return {"task": _enrich_task(task)}
+
+
+@app.delete("/api/scheduled-tasks/{task_id}")
+async def delete_scheduled_task(task_id: str):
+    ok = await run_in_threadpool(tasks_db.delete_task, task_id)
+    if not ok:
+        return JSONResponse({"error": "Task not found."}, status_code=404)
+    return {"deleted": task_id}
+
+
+@app.get("/api/scheduled-tasks/{task_id}/runs")
+async def list_scheduled_task_runs(task_id: str, limit: int = 20):
+    runs = await run_in_threadpool(tasks_db.list_runs, task_id, max(1, min(limit, 100)))
+    return {"task_id": task_id, "runs": runs}
+
+
+@app.post("/api/scheduled-tasks/{task_id}/run")
+async def run_scheduled_task_now(task_id: str):
+    """Run a task immediately (manual trigger), without disturbing its next
+    scheduled fire. Blocks until the agent run completes, then returns the run
+    summary — the UI refreshes the run history from it."""
+    task = await run_in_threadpool(tasks_db.get_task, task_id)
+    if not task:
+        return JSONResponse({"error": "Task not found."}, status_code=404)
+    try:
+        summary = await run_in_threadpool(
+            hermes_scheduler.execute_and_record, task, "manual"
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Run failed: {exc}"}, status_code=500)
+    return summary
+
+
+@app.api_route("/api/scheduled-tasks/run-due", methods=["GET", "POST"])
+async def run_due_scheduled_tasks(request: Request, limit: int = 25):
+    """Fire every task whose next_run_at has passed. This is the endpoint a cron
+    hits on an interval — Vercel Cron (which sends a GET), cron-job.org, a GitHub
+    Action, or any external scheduler.
+
+    Auth: when SCHEDULER_SECRET (or Vercel's own CRON_SECRET) is set, the caller
+    must present it as `Authorization: Bearer <secret>` or `?token=<secret>`.
+    Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically. When no
+    secret is configured the endpoint is open (local dev) — set one in production.
+    """
+    secrets = {s for s in (Config.SCHEDULER_SECRET, os.getenv("CRON_SECRET", "").strip()) if s}
+    if secrets:
+        auth = request.headers.get("authorization", "")
+        bearer = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        token = request.query_params.get("token") or bearer
+        if token not in secrets:
+            return JSONResponse({"error": "Unauthorized."}, status_code=401)
+    result = await run_in_threadpool(hermes_scheduler.run_due, max(1, min(limit, 100)))
+    return result
 
 
 if __name__ == "__main__":

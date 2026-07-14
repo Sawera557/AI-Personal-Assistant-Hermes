@@ -10,5 +10,11 @@
   ],
   "routes": [
     { "src": "/(.*)", "dest": "app.py" }
+  ],
+  "crons": [
+    {
+      "path": "/api/scheduled-tasks/run-due",
+      "schedule": "*/15 * * * *"
+    }
   ]
 }

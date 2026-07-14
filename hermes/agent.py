@@ -264,10 +264,21 @@ def _anthropic_turn(
     system: str,
     messages: list[dict[str, Any]],
 ):
-    """Stream one Claude API call. Yields text deltas, then a final
-    {"type": "_final", "content": [...], "stop_reason": "..."} event."""
+    """Stream one Claude API call. Yields text deltas AND, for models that
+    support it, live thinking deltas ({"type": "thinking", "text": "<delta>"})
+    as Claude's real reasoning is generated — not a synthetic status string.
+    Ends with a final {"type": "_final", "content": [...], "stop_reason": "..."}
+    event.
+
+    Uses the SDK's raw event iterator (`for event in stream`) instead of the
+    `.text_stream` convenience helper, since that helper only surfaces text
+    deltas and silently drops thinking deltas — the two can't both be
+    consumed from the same stream (`.text_stream` is itself a generator over
+    the same underlying iterator).
+    """
     # Haiku rejects adaptive thinking outright ("adaptive thinking is not
-    # supported on this model") — only the more capable tiers support it.
+    # supported on this model") — only the more capable tiers support it, so
+    # only those models ever produce a live "thinking" event.
     extra: dict[str, Any] = {}
     if "haiku" not in model_id.lower():
         extra["thinking"] = {"type": "adaptive", "display": "summarized"}
@@ -281,8 +292,11 @@ def _anthropic_turn(
         messages=messages,
         **extra,
     ) as stream:
-        for delta in stream.text_stream:
-            yield {"type": "text", "text": delta}
+        for event in stream:
+            if event.type == "text":
+                yield {"type": "text", "text": event.text}
+            elif event.type == "thinking":
+                yield {"type": "thinking", "text": event.thinking}
         resp = stream.get_final_message()
     yield {"type": "_final", "content": _dump(resp.content), "stop_reason": resp.stop_reason}
 
@@ -360,6 +374,7 @@ def stream_turn(
     user_content: str | list[dict[str, Any]],
     voice: bool = False,
     active_business: str | None = None,
+    allowed_apps: list[str] | None = None,
 ):
     """Generator version of the agent loop — yields incremental events instead
     of blocking until the whole turn (every tool round-trip included) is done.
@@ -380,7 +395,7 @@ def stream_turn(
     """
     model_id = models.active_model()
     provider = models.provider_of(model_id)
-    tools = build_tools(active_business)
+    tools = build_tools(active_business, allowed_apps=allowed_apps)
 
     if isinstance(user_content, str):
         user_content = [{"type": "text", "text": user_content}]
@@ -496,6 +511,7 @@ def run_turn(
     user_content: str | list[dict[str, Any]],
     voice: bool = False,
     active_business: str | None = None,
+    allowed_apps: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run one user turn through the agent loop and return a structured result.
 
@@ -511,7 +527,7 @@ def run_turn(
     final event. Use stream_turn() directly for incremental output.
     """
     result: dict[str, Any] = {}
-    for event in stream_turn(session_id, user_content, voice, active_business):
+    for event in stream_turn(session_id, user_content, voice, active_business, allowed_apps):
         if event["type"] == "done":
             result = event["result"]
     return result

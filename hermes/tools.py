@@ -31,7 +31,10 @@ _MAX_FETCH_BYTES = 25 * 1024 * 1024
 _MAX_MEDIA_INLINE_B64_CHARS = 200_000
 
 
-def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
+def build_tools(
+    active_business: str | None = None,
+    allowed_apps: list[str] | None = None,
+) -> list[dict[str, Any]]:
     """Return the tool list passed to the Messages API.
 
     `active_business` is the business slug locked to this turn/conversation, or
@@ -40,15 +43,30 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
     pick which connected account to use per call — for a locked single-business
     conversation, the parameter is omitted entirely, making it structurally
     impossible for a tool call to reach a different business's data.
+
+    `allowed_apps` restricts which connected apps this run may use — passed by
+    Scheduled Tasks so an unattended run only ever touches the apps the user
+    picked for it. It's a list of Maton app slugs (plus the pseudo-slug "web"
+    for web search/fetch). When given, `maton_request`'s app enum is narrowed to
+    it and every app-gated dedicated tool (send_email, calendar_list_upcoming,
+    the wati_* tools, …) is dropped unless its app is in the list. App-agnostic
+    tools (search_business_knowledge, create_file, worldbank_data) are always
+    kept. An empty/None list means no restriction (normal chat behavior).
     """
     apps = Config.apps()
-    app_hint = ", ".join(apps)
+    restricted = bool(allowed_apps)
+    allowed_set = {a.strip() for a in (allowed_apps or []) if a.strip()}
+    effective_apps = [a for a in apps if a in allowed_set] if restricted else apps
+    app_hint = ", ".join(effective_apps) if effective_apps else ", ".join(apps)
     fan_out = active_business == ALL_BUSINESSES
 
     request_props: dict[str, Any] = {
         "app": {
             "type": "string",
             "description": f"Maton app slug. One of: {app_hint}",
+            # When a Scheduled Task restricts the toolset, hard-narrow the enum so
+            # the model structurally cannot reach an app the user didn't allow.
+            **({"enum": effective_apps} if restricted and effective_apps else {}),
         },
         "method": {
             "type": "string",
@@ -694,7 +712,48 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
         tools.append({"type": "web_search_20260209", "name": "web_search", "allowed_callers": ["direct"]})
         tools.append({"type": "web_fetch_20260209", "name": "web_fetch", "allowed_callers": ["direct"]})
 
+    if restricted:
+        tools = _restrict_tools(tools, allowed_set)
+
     return tools
+
+
+# Which connected app(s) each app-gated dedicated tool needs. A tool survives an
+# `allowed_apps` restriction only if one of its apps is allowed. Tools NOT listed
+# here are app-agnostic (search_business_knowledge, create_file, worldbank_data,
+# maton_request/maton_list_connections/maton_create_connection) and always kept —
+# maton_request is already narrowed by its app enum above.
+_TOOL_REQUIRED_APPS: dict[str, set[str]] = {
+    "drive_read_file": {"google-drive"},
+    "send_email": {"google-mail"},
+    "zoom_send_invite": {"zoom", "zoom-admin"},
+    "zoom_list_meetings": {"zoom", "zoom-admin"},
+    "calendar_list_upcoming": {"google-calendar"},
+    "web_search": {"web"},
+    "web_fetch": {"web"},
+    "wati_list_contacts": {"wati"},
+    "wati_add_contact": {"wati"},
+    "wati_update_contact_attributes": {"wati"},
+    "wati_get_messages": {"wati"},
+    "wati_send_message": {"wati"},
+    "wati_send_file": {"wati"},
+    "wati_assign_operator": {"wati"},
+    "wati_get_media": {"wati"},
+}
+
+
+def _restrict_tools(
+    tools: list[dict[str, Any]], allowed_set: set[str]
+) -> list[dict[str, Any]]:
+    """Drop app-gated tools whose app isn't in `allowed_set` (for Scheduled
+    Tasks). App-agnostic tools are always kept."""
+    out = []
+    for tool in tools:
+        needed = _TOOL_REQUIRED_APPS.get(tool.get("name"))
+        if needed and not (needed & allowed_set):
+            continue
+        out.append(tool)
+    return out
 
 
 WATI_TOOLS = {
