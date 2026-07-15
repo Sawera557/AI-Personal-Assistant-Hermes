@@ -57,7 +57,29 @@ _VOICE_STYLE = (
 )
 
 
-def _system_prompt(voice: bool = False, active_business: str | None = None, memory_block: str = "") -> str:
+def _attachments_block(attachments: list[dict[str, Any]] | None) -> str:
+    """Render the 'files shared in this conversation' ledger so the model can
+    read any of them on any later turn via the read_document tool. Without this,
+    the S3 pointer for a shared WhatsApp doc is invisible after its own turn."""
+    if not attachments:
+        return ""
+    lines = [
+        "\n\nFiles shared in this conversation (read any with the `read_document` "
+        "tool, passing the exact s3_uri):",
+    ]
+    for a in attachments:
+        name = a.get("filename") or "file"
+        uri = a.get("s3_uri") or ""
+        lines.append(f"  - {name}  [{uri}]")
+    return "\n".join(lines)
+
+
+def _system_prompt(
+    voice: bool = False,
+    active_business: str | None = None,
+    memory_block: str = "",
+    attachments: list[dict[str, Any]] | None = None,
+) -> str:
     today = datetime.date.today().isoformat()
     base = (
         "You are Hermes, a capable AI executive assistant. You help the user get "
@@ -112,6 +134,7 @@ def _system_prompt(voice: bool = False, active_business: str | None = None, memo
         )
     if memory_block:
         base += f"\n\nMEMORY (what you already know — preferences, business rules, standing decisions):\n{memory_block}"
+    base += _attachments_block(attachments)
     return base + _VOICE_STYLE if voice else base
 
 
@@ -411,6 +434,12 @@ def stream_turn(
         )
     except Exception:  # noqa: BLE001 — a memory-retrieval failure must never break the turn
         memory_block = ""
+    # Files shared earlier in this chat, so the model can read them on any turn
+    # (see _attachments_block). Tolerate stores without the method / a failure.
+    try:
+        attachments = store.attachments(session_id)
+    except Exception:  # noqa: BLE001
+        attachments = []
 
     tool_trace: list[dict[str, Any]] = []
     reply = ""
@@ -418,7 +447,7 @@ def stream_turn(
     stop_reason = None
 
     for _ in range(Config.MAX_TOOL_ITERATIONS):
-        system_prompt = _system_prompt(voice, active_business, memory_block)
+        system_prompt = _system_prompt(voice, active_business, memory_block, attachments)
         turn = (
             _anthropic_turn(model_id, tools, system_prompt, messages)
             if provider == "anthropic"

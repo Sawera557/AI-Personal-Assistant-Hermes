@@ -70,6 +70,25 @@ class ConversationStore:
         with self._lock:
             self._sessions.pop(key, None)
 
+    def attachments(self, key: str) -> list[dict[str, Any]]:
+        """Files shared into this conversation and stored in S3, newest first.
+
+        Mirrors PostgresConversationStore.attachments: dedupes the `media`
+        pointers recorded on each assistant turn's tool_calls, so a shared file
+        stays referenceable on later turns.
+        """
+        from .db.conversations import _collect_attachments  # shared dedupe logic
+
+        with self._lock:
+            rec = self._sessions.get(key)
+            transcript = list(rec["transcript"]) if rec else []
+        metas = (
+            {"tool_calls": t.get("tool_calls") or []}
+            for t in reversed(transcript)
+            if t.get("role") == "assistant"
+        )
+        return _collect_attachments(metas)
+
     # ---- History API (used by the conversation-history UI) -----------------
     def record_turn(
         self,

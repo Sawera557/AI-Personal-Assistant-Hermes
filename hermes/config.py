@@ -228,6 +228,13 @@ class Config:
     # here pointing at a non-resolving host (api.nuextract.ai), a leftover from
     # a hand-rolled client that never actually reached the real API.
     NUEXTRACT_API_KEY: str = os.getenv("NUEXTRACT_API_KEY", "").strip()
+    NUEXTRACT_BASE_URL: str = os.getenv(
+        "NUEXTRACT_BASE_URL", "https://api.nuextract.ai"
+    ).rstrip("/")
+    # Anthropic vision model used to read documents when NuExtract is unavailable
+    # (billing exhausted, outage, DNS). Must be an Anthropic model — the fallback
+    # calls Claude directly, independent of the switchable agent model.
+    OCR_FALLBACK_MODEL: str = os.getenv("OCR_FALLBACK_MODEL", "claude-sonnet-5")
 
     @classmethod
     def validate(cls) -> list[str]:
