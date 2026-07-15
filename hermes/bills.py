@@ -35,11 +35,13 @@ _BILL_SCHEMA = {
 }
 
 
-def extract_bill(filename: str, raw: bytes, mime: str) -> dict[str, Any]:
-    """Send a file to NuExtract and return normalised bill fields.
+def nuextract(filename: str, raw: bytes, mime: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """POST a file + JSON schema to NuExtract and return the raw JSON response.
 
-    Returns a dict with keys: vendor, amount, invoice_number, due_date,
-    issue_date, currency, category, line_items, raw_extracted.
+    Shared transport used by both bill extraction (`_BILL_SCHEMA`) and generic
+    document text extraction (see `hermes.extract`). Keeps the /api/extract →
+    /v1/extract 404/405 fallback, the Bearer header, and the 60s timeout in one
+    place. Raises RuntimeError with a user-relayable message on failure.
     """
     api_key = Config.NUEXTRACT_API_KEY
     base = Config.NUEXTRACT_BASE_URL
@@ -49,36 +51,41 @@ def extract_bill(filename: str, raw: bytes, mime: str) -> dict[str, Any]:
     import json
 
     headers = {"Authorization": f"Bearer {api_key}"}
+    files = {"file": (filename, raw, mime or "application/octet-stream")}
+    data = {"schema": json.dumps(schema)}
 
     try:
         resp = requests.post(
-            f"{base}/api/extract",
-            headers=headers,
-            files={"file": (filename, raw, mime or "application/octet-stream")},
-            data={"schema": json.dumps(_BILL_SCHEMA)},
+            f"{base}/api/extract", headers=headers, files=files, data=data,
             timeout=_NUEXTRACT_TIMEOUT,
         )
         resp.raise_for_status()
-        raw_result = resp.json()
+        return resp.json()
     except requests.HTTPError as exc:
         if exc.response is not None and exc.response.status_code in (404, 405):
             try:
                 resp2 = requests.post(
-                    f"{base}/v1/extract",
-                    headers=headers,
-                    files={"file": (filename, raw, mime or "application/octet-stream")},
-                    data={"schema": json.dumps(_BILL_SCHEMA)},
+                    f"{base}/v1/extract", headers=headers, files=files, data=data,
                     timeout=_NUEXTRACT_TIMEOUT,
                 )
                 resp2.raise_for_status()
-                raw_result = resp2.json()
+                return resp2.json()
             except Exception as exc2:
                 raise RuntimeError(f"NuExtract extraction failed: {exc2}") from exc2
-        else:
-            raise RuntimeError(f"NuExtract extraction failed ({exc.response.status_code}): {exc}") from exc
+        raise RuntimeError(
+            f"NuExtract extraction failed ({exc.response.status_code}): {exc}"
+        ) from exc
     except requests.RequestException as exc:
         raise RuntimeError(f"NuExtract network error: {exc}") from exc
 
+
+def extract_bill(filename: str, raw: bytes, mime: str) -> dict[str, Any]:
+    """Send a file to NuExtract and return normalised bill fields.
+
+    Returns a dict with keys: vendor, amount, invoice_number, due_date,
+    issue_date, currency, category, line_items, raw_extracted.
+    """
+    raw_result = nuextract(filename, raw, mime, _BILL_SCHEMA)
     return _normalise(raw_result, filename)
 
 

@@ -38,6 +38,31 @@ def _session_id_from_key(key: str) -> str:
     return key.split(":", 1)[1] if ":" in key else key
 
 
+def _collect_attachments(metas) -> list[dict[str, Any]]:
+    """Dedupe `tool_calls[].media` file pointers from an iterable of turn
+    metadata dicts (given newest-first). Returns newest-first, one per s3_uri."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for meta in metas:
+        if not isinstance(meta, dict):
+            continue
+        for tc in meta.get("tool_calls") or []:
+            media = tc.get("media") if isinstance(tc, dict) else None
+            if not isinstance(media, dict):
+                continue
+            uri = media.get("s3_uri")
+            if not uri or uri in seen:
+                continue
+            seen.add(uri)
+            out.append({
+                "filename": media.get("filename") or (uri.rsplit("/", 1)[-1]),
+                "s3_uri": uri,
+                "content_type": media.get("content_type"),
+                "kind": media.get("kind"),
+            })
+    return out
+
+
 def _is_uuid(value: str) -> bool:
     try:
         _uuid.UUID(str(value))
@@ -119,6 +144,31 @@ class PostgresConversationStore:
             {"role": role, "content": [{"type": "text", "text": content or ""}]}
             for role, content in rows
         ]
+
+    def attachments(self, key: str) -> list[dict[str, Any]]:
+        """Files shared into this conversation and stored in S3, newest first.
+
+        Walks the persisted assistant-turn metadata (`tool_calls[].media`, written
+        by record_turn) and returns a deduped `{filename, s3_uri, content_type,
+        kind}` list. This is what makes a WhatsApp doc discoverable on later turns:
+        get() drops the in-turn tool blocks, but the S3 pointer survives here.
+        """
+        session_id = _session_id_from_key(key)
+        if not _is_uuid(session_id):
+            return []
+        try:
+            with cursor(commit=False) as cur:
+                cur.execute(
+                    "SELECT metadata FROM hermes_messages "
+                    "WHERE session_id = %s AND role = 'assistant' "
+                    "AND metadata IS NOT NULL ORDER BY seq DESC;",
+                    (session_id,),
+                )
+                rows = cur.fetchall()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("attachments(%s) failed: %s", session_id, exc)
+            return []
+        return _collect_attachments(meta for (meta,) in rows)
 
     @staticmethod
     def _history_limit() -> int:

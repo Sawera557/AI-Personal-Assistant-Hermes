@@ -10,9 +10,11 @@ from urllib.parse import urlsplit
 
 import requests
 
+from . import extract
 from . import storage
 from . import worldbank
 from .attachments import store as attachment_store
+from .businesses import BUSINESS_TO_ENTITY_SLUG, to_business_slug
 from .config import Config
 from .maton import MatonClient, MatonError
 from .wati import WatiClient
@@ -89,6 +91,15 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
             ),
         },
     }
+    read_document_props: dict[str, Any] = {
+        "s3_uri": {
+            "type": "string",
+            "description": (
+                "The exact `s3://...` URI of the file to read. Use the URI listed under "
+                "'Files shared in this conversation' — copy it verbatim, never invent one."
+            ),
+        },
+    }
     send_email_props: dict[str, Any] = {
         "to": {
             "type": "array", "items": {"type": "string"},
@@ -138,6 +149,7 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
         request_props["business"] = business_param
         connections_props["business"] = business_param
         drive_props["business"] = business_param
+        read_document_props["business"] = business_param
         send_email_props["business"] = business_param
         zoom_invite_props["business"] = business_param
 
@@ -270,6 +282,24 @@ def build_tools(active_business: str | None = None) -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": drive_props,
                 "required": ["file_id"],
+            },
+        },
+        {
+            "name": "read_document",
+            "description": (
+                "Read the text of a document that was previously shared into this "
+                "conversation and stored in the file locker (S3) — e.g. a PDF, photo, or "
+                "invoice a contact sent over WhatsApp. Fetches the file by its `s3_uri`, "
+                "runs OCR on scanned pages and phone photos, and returns the extracted "
+                "text so you can summarize or answer questions about it — with no need for "
+                "the user to download and re-upload anything. The available files and their "
+                "`s3_uri`s are listed under 'Files shared in this conversation' in your "
+                "context. Supports PDF, JPEG/PNG images, DOCX, and plain-text files."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": read_document_props,
+                "required": ["s3_uri"],
             },
         },
         {
@@ -572,7 +602,8 @@ WATI_TOOLS = {
 # Names that Hermes executes locally (everything else is server-side).
 LOCAL_TOOLS = {
     "maton_request", "maton_list_connections", "maton_create_connection",
-    "drive_read_file", "send_email", "zoom_send_invite", "worldbank_data", *WATI_TOOLS,
+    "drive_read_file", "read_document", "send_email", "zoom_send_invite",
+    "worldbank_data", *WATI_TOOLS,
 }
 
 # Drive mime types we can hand to Claude as a native document/image block, and
@@ -628,6 +659,110 @@ def _attachment_scope(tool_input: dict[str, Any], active_business: str | None) -
     if slug:
         return slug
     return active_business if active_business != ALL_BUSINESSES else None
+
+
+# Max bytes to pull back from S3 for reading, and max extracted chars to hand
+# the model (keeps a single huge scan from blowing the context window).
+_MAX_READ_BYTES = _MAX_FETCH_BYTES
+_MAX_EXTRACTED_CHARS = 40_000
+
+
+def _key_business(key: str) -> str | None:
+    """The business slug an S3 key belongs to, by our prefix conventions:
+
+    * ``wati-media/{business}/...`` and ``drive-files/{business}/...`` are keyed
+      by the *business* slug (afk, gak, ...) — see `_wati_get_media`/`_drive_read_file`.
+    * A bare ``{entity}/...`` KB-document key is keyed by the *entity* slug
+      (afro_farm, ...); map it back to its business slug.
+
+    Returns None for anything that doesn't resolve to a known business (the
+    `unsorted/` hole, `bills/gmail/...`, or an unknown tenant) — such keys are
+    not readable through this tool.
+    """
+    parts = [p for p in key.split("/") if p]
+    if not parts:
+        return None
+    if parts[0] in ("wati-media", "drive-files"):
+        seg = parts[1] if len(parts) >= 3 else None
+        return seg if seg in BUSINESS_TO_ENTITY_SLUG else None
+    return to_business_slug(parts[0])
+
+
+def _read_scope_ok(
+    s3_uri: str, active_business: str | None, requested_business: str | None
+) -> tuple[bool, str]:
+    """Enforce entity-prefix scoping on an S3 read. Returns (ok, reason).
+
+    The key must belong to the business this turn is scoped to, so one business's
+    conversation can never read another's files. In "All Businesses" mode with no
+    explicit `business`, the target business is derived from the key itself and
+    only needs to be a known business.
+    """
+    key = storage.key_of(s3_uri)
+    if not key:
+        return False, "That isn't a valid file URI in the configured storage bucket."
+    if any(seg in ("", "..", ".") for seg in key.split("/")):
+        return False, "That file path isn't allowed."
+
+    key_biz = _key_business(key)
+    if not key_biz:
+        return False, "That file isn't in a readable per-business location."
+
+    allowed = requested_business or (
+        active_business if active_business != ALL_BUSINESSES else None
+    )
+    if allowed and key_biz != allowed:
+        return (
+            False,
+            f"That file belongs to a different business ('{key_biz}') than this "
+            f"conversation ('{allowed}'). I can't read another business's files.",
+        )
+    return True, ""
+
+
+def _read_document(
+    tool_input: dict[str, Any], active_business: str | None
+) -> dict[str, Any]:
+    """Fetch a stored file by its s3_uri, extract its text, and return it so the
+    model can read the document directly — scoped to the active business."""
+    if not storage.enabled():
+        return {
+            "status": 400, "ok": False,
+            "data": {"error": "File storage (S3) isn't configured, so documents can't be read back."},
+        }
+    s3_uri = (tool_input.get("s3_uri") or "").strip()
+    if not s3_uri:
+        return {"status": 400, "ok": False,
+                "data": {"error": "Provide the `s3_uri` of the file to read."}}
+
+    ok, reason = _read_scope_ok(s3_uri, active_business, tool_input.get("business"))
+    if not ok:
+        return {"status": 403, "ok": False, "data": {"error": reason}}
+
+    filename = (storage.key_of(s3_uri) or "file").rsplit("/", 1)[-1]
+    try:
+        raw, mime = storage.get_bytes(s3_uri, max_bytes=_MAX_READ_BYTES)
+    except Exception as exc:  # noqa: BLE001 — surface a readable error to the model
+        return {"status": 404, "ok": False,
+                "data": {"error": f"Couldn't fetch the file: {exc}"}}
+
+    try:
+        text = extract.extract_text(filename, raw, mime or "")
+    except extract.ExtractionError as exc:
+        return {"status": 422, "ok": False, "data": {"error": str(exc)}}
+
+    truncated = len(text) > _MAX_EXTRACTED_CHARS
+    if truncated:
+        text = text[:_MAX_EXTRACTED_CHARS]
+    return {
+        "status": 200, "ok": True,
+        "data": {
+            "filename": filename,
+            "content_type": mime,
+            "truncated": truncated,
+            "text": text,
+        },
+    }
 
 
 def _fetch_url_bytes(url: str) -> tuple[bytes, str, str]:
@@ -937,6 +1072,10 @@ def dispatch(
                     most_recent=tool_input.get("most_recent"),
                 ),
             }
+        elif name == "read_document":
+            # Reads bytes straight from the S3 locker — no Maton client needed.
+            # Business scoping is enforced inside via _read_scope_ok.
+            result = _read_document(tool_input, active_business)
         elif name == "maton_create_connection":
             # Connection provisioning is interactive/rare — keep it scoped to a
             # single locked business, never fan out or guess in "all" mode.

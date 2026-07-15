@@ -56,7 +56,28 @@ _VOICE_STYLE = (
 )
 
 
-def _system_prompt(voice: bool = False, active_business: str | None = None) -> str:
+def _attachments_block(attachments: list[dict[str, Any]] | None) -> str:
+    """Render the 'files shared in this conversation' ledger so the model can
+    read any of them on any later turn via the read_document tool. Without this,
+    the S3 pointer for a shared WhatsApp doc is invisible after its own turn."""
+    if not attachments:
+        return ""
+    lines = [
+        "\n\nFiles shared in this conversation (read any with the `read_document` "
+        "tool, passing the exact s3_uri):",
+    ]
+    for a in attachments:
+        name = a.get("filename") or "file"
+        uri = a.get("s3_uri") or ""
+        lines.append(f"  - {name}  [{uri}]")
+    return "\n".join(lines)
+
+
+def _system_prompt(
+    voice: bool = False,
+    active_business: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+) -> str:
     today = datetime.date.today().isoformat()
     base = (
         "You are Hermes, a capable AI executive assistant. You help the user get "
@@ -97,6 +118,7 @@ def _system_prompt(voice: bool = False, active_business: str | None = None) -> s
             f"\n\nBusiness scope: this conversation is locked to business '{active_business}'. "
             "All Maton tool calls automatically use that business's connected account."
         )
+    base += _attachments_block(attachments)
     return base + _VOICE_STYLE if voice else base
 
 
@@ -373,13 +395,20 @@ def stream_turn(
     messages = store.get(session_id)
     messages.append({"role": "user", "content": user_content})
 
+    # Files shared earlier in this chat, so the model can read them on any turn
+    # (see _attachments_block). Tolerate stores without the method / a failure.
+    try:
+        attachments = store.attachments(session_id)
+    except Exception:  # noqa: BLE001
+        attachments = []
+
     tool_trace: list[dict[str, Any]] = []
     reply = ""
     thinking_summary = ""
     stop_reason = None
 
     for _ in range(Config.MAX_TOOL_ITERATIONS):
-        system_prompt = _system_prompt(voice, active_business)
+        system_prompt = _system_prompt(voice, active_business, attachments)
         turn = (
             _anthropic_turn(model_id, tools, system_prompt, messages)
             if provider == "anthropic"
