@@ -765,10 +765,11 @@ def build_tools(
         tools.append({
             "name": "list_scheduled_tasks",
             "description": (
-                "List the user's existing Scheduled Tasks (name, schedule, business, autonomy, "
-                "enabled, next run, last status). Use to answer 'what do I have scheduled?' or "
-                "before creating a similar task. Optional `business` slug (afk/gak/…/per or 'all') "
-                "scopes the list; omit to use the conversation's current business."
+                "List the user's existing Scheduled Tasks (task_id, name, schedule, business, "
+                "autonomy, enabled, next run, last status). Use to answer 'what do I have "
+                "scheduled?', or to find a task's `task_id` before editing/pausing/deleting it. "
+                "Optional `business` slug (afk/gak/…/per or 'all') scopes the list; omit to use "
+                "the conversation's current business."
             ),
             "input_schema": {
                 "type": "object",
@@ -776,6 +777,51 @@ def build_tools(
                     "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per | all"},
                 },
                 "required": [],
+            },
+        })
+        tools.append({
+            "name": "update_scheduled_task",
+            "description": (
+                "Edit an existing Scheduled Task — including pausing or resuming it. First get the "
+                "`task_id` from `list_scheduled_tasks`. Only the fields you pass change; everything "
+                "else stays. Set `enabled` false to PAUSE (it stops firing but is kept) or true to "
+                "resume — prefer this over deleting when the user just wants it to stop. To change "
+                "the schedule, pass the full new `frequency`/`times`/`days_of_week`. Changing "
+                "schedule, timezone, or enabled recomputes the next run. Same field meanings as "
+                "create_scheduled_task."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The task to edit (from list_scheduled_tasks)."},
+                    "name": {"type": "string"},
+                    "prompt": {"type": "string"},
+                    "frequency": {"type": "string", "enum": ["daily", "weekdays", "weekly", "hourly"]},
+                    "times": {"type": "array", "items": {"type": "string"}},
+                    "days_of_week": {"type": "array", "items": {"type": "integer"}, "description": "0=Mon … 6=Sun"},
+                    "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per | all"},
+                    "allowed_apps": {"type": "array", "items": {"type": "string"}},
+                    "autonomy": {"type": "string", "enum": ["readonly", "draft", "full"]},
+                    "timezone": {"type": "string"},
+                    "enabled": {"type": "boolean", "description": "false = pause, true = resume."},
+                },
+                "required": ["task_id"],
+            },
+        })
+        tools.append({
+            "name": "delete_scheduled_task",
+            "description": (
+                "Permanently delete a Scheduled Task and its run history. Get the `task_id` from "
+                "list_scheduled_tasks first. This is IRREVERSIBLE — confirm with the user (name the "
+                "task) before calling, and if they only want it to stop, pause it with "
+                "update_scheduled_task(enabled=false) instead."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The task to delete (from list_scheduled_tasks)."},
+                },
+                "required": ["task_id"],
             },
         })
 
@@ -840,6 +886,7 @@ LOCAL_TOOLS = {
     "drive_read_file", "send_email", "zoom_send_invite", "search_business_knowledge",
     "create_file", "worldbank_data", "calendar_list_upcoming", "zoom_list_meetings",
     "create_scheduled_task", "list_scheduled_tasks",
+    "update_scheduled_task", "delete_scheduled_task",
     *WATI_TOOLS,
 }
 
@@ -1459,6 +1506,108 @@ def _list_scheduled_tasks(tool_input: dict[str, Any], active_business: str | Non
     return {"ok": True, "status": 200, "count": len(tasks), "tasks": tasks}
 
 
+def _update_scheduled_task(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Edit / pause / resume an existing Scheduled Task. Mirrors the
+    PATCH /api/scheduled-tasks/{id} logic (only sent fields change; a
+    schedule/timezone/enabled change recomputes next_run_at)."""
+    from . import scheduler as sched
+    from .db import scheduled_tasks as tasks_db
+
+    task_id = (tool_input.get("task_id") or "").strip()
+    existing = tasks_db.get_task(task_id)
+    if not existing:
+        return {"ok": False, "status": 404,
+                "error": "No task with that task_id — call list_scheduled_tasks to find it."}
+
+    kwargs: dict[str, Any] = {}
+    if tool_input.get("name") and tool_input["name"].strip():
+        kwargs["name"] = tool_input["name"].strip()
+    if tool_input.get("prompt") and tool_input["prompt"].strip():
+        kwargs["prompt"] = tool_input["prompt"].strip()
+    if tool_input.get("autonomy"):
+        if tool_input["autonomy"] not in sched.VALID_AUTONOMY:
+            return {"ok": False, "status": 400, "error": f"autonomy must be one of {sorted(sched.VALID_AUTONOMY)}."}
+        kwargs["autonomy"] = tool_input["autonomy"]
+    if "allowed_apps" in tool_input:
+        kwargs["allowed_apps"] = [a.strip() for a in (tool_input.get("allowed_apps") or []) if isinstance(a, str) and a.strip()]
+    if tool_input.get("timezone"):
+        kwargs["timezone_name"] = tool_input["timezone"].strip()
+    if "enabled" in tool_input:
+        en = tool_input["enabled"]
+        kwargs["enabled"] = en if isinstance(en, bool) else str(en).strip().lower() not in ("false", "0", "no", "off", "")
+    if "business" in tool_input:
+        b = (tool_input.get("business") or "").strip().lower()
+        if not b or b == "all":
+            kwargs["entity_slug"] = None
+        else:
+            es = to_entity_slug(b)
+            if not es:
+                return {"ok": False, "status": 400, "error": f"Unknown business '{b}'."}
+            kwargs["entity_slug"] = es
+        kwargs["entity_slug_set"] = True
+
+    # Schedule edit: merge provided frequency/times/days with the existing schedule.
+    if any(k in tool_input for k in ("frequency", "times", "days_of_week")):
+        cur = existing.get("schedule") or {}
+        freq = (tool_input.get("frequency") or cur.get("frequency") or "daily")
+        if freq not in sched.VALID_FREQUENCIES:
+            return {"ok": False, "status": 400, "error": f"frequency must be one of {sorted(sched.VALID_FREQUENCIES)}."}
+        raw_times = tool_input.get("times") if "times" in tool_input else cur.get("times")
+        times = [t.strip() for t in (raw_times or []) if isinstance(t, str) and t.strip()] or ["09:00"]
+        raw_days = tool_input.get("days_of_week") if "days_of_week" in tool_input else cur.get("days_of_week")
+        days = []
+        for d in raw_days or []:
+            try:
+                di = int(d)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= di <= 6:
+                days.append(di)
+        if freq == "weekly" and not days:
+            return {"ok": False, "status": 400, "error": "A weekly task needs at least one weekday (0=Mon … 6=Sun)."}
+        kwargs["schedule"] = {"frequency": freq, "times": times, "days_of_week": days}
+
+    if not kwargs:
+        return {"ok": False, "status": 400, "error": "Nothing to change — pass at least one field to update."}
+
+    # Recompute next_run_at when a timing-relevant field changed.
+    if {"schedule", "timezone_name", "enabled"} & kwargs.keys():
+        tz = kwargs.get("timezone_name", existing.get("timezone"))
+        enabled = kwargs.get("enabled", existing.get("enabled"))
+        schedule_final = kwargs.get("schedule", existing.get("schedule") or {})
+        kwargs["next_run_at"] = sched.compute_next_run(schedule_final, tz) if enabled else None
+        kwargs["next_run_set"] = True
+
+    if not tasks_db.update_task(task_id, **kwargs):
+        return {"ok": False, "status": 500, "error": "Update failed."}
+    t = tasks_db.get_task(task_id)
+    return {
+        "ok": True, "status": 200, "task_id": task_id, "name": t.get("name"),
+        "schedule": sched.describe_schedule(t.get("schedule") or {}, t.get("timezone")),
+        "business": t.get("business") or "all", "autonomy": t.get("autonomy"),
+        "enabled": t.get("enabled"), "timezone": t.get("timezone"),
+        "next_run_at": t.get("next_run_at"),
+        "message": ("Task paused — it won't fire until re-enabled." if t.get("enabled") is False
+                    else "Task updated."),
+    }
+
+
+def _delete_scheduled_task(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Permanently delete a Scheduled Task and its runs (the agent is instructed
+    to confirm with the user first — deletion cascades and is irreversible)."""
+    from .db import scheduled_tasks as tasks_db
+
+    task_id = (tool_input.get("task_id") or "").strip()
+    existing = tasks_db.get_task(task_id)
+    if not existing:
+        return {"ok": False, "status": 404,
+                "error": "No task with that task_id — call list_scheduled_tasks to find it."}
+    if not tasks_db.delete_task(task_id):
+        return {"ok": False, "status": 500, "error": "Delete failed."}
+    return {"ok": True, "status": 200, "deleted": task_id, "name": existing.get("name"),
+            "message": f"Deleted '{existing.get('name')}' and its run history."}
+
+
 def dispatch(
     name: str,
     tool_input: dict[str, Any],
@@ -1499,6 +1648,10 @@ def dispatch(
             result = _create_scheduled_task(tool_input, active_business)
         elif name == "list_scheduled_tasks":
             result = _list_scheduled_tasks(tool_input, active_business)
+        elif name == "update_scheduled_task":
+            result = _update_scheduled_task(tool_input, active_business)
+        elif name == "delete_scheduled_task":
+            result = _delete_scheduled_task(tool_input, active_business)
         elif name == "calendar_list_upcoming":
             # hermes.calendar resolves its own per-business Maton key internally.
             result = _calendar_list_upcoming(tool_input, active_business)
@@ -1620,6 +1773,8 @@ _TOOL_STATUS: dict[str, str] = {
     "worldbank_data": "🌍 Pulling stats from the World Bank…",
     "create_scheduled_task": "🗓️ Setting up your scheduled task…",
     "list_scheduled_tasks": "🗓️ Checking your scheduled tasks…",
+    "update_scheduled_task": "🗓️ Updating your scheduled task…",
+    "delete_scheduled_task": "🗓️ Removing that scheduled task…",
     "wati_list_contacts": "💬 Looking up WhatsApp contacts…",
     "wati_add_contact": "💬 Adding a WhatsApp contact…",
     "wati_update_contact_attributes": "💬 Updating contact info…",
