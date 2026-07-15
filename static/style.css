@@ -1524,6 +1524,16 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 /* Task cards */
 .tasks-list { flex: 1; overflow-y: auto; padding-bottom: 24px; display: grid; gap: 12px; align-content: start;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+
+/* Per-business section heading (All Businesses view) — spans the full grid row */
+.tk-group-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px;
+  margin: 10px 2px 0; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-dim); }
+.tk-group-head:first-child { margin-top: 0; }
+.tk-group-count { display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--bg-3);
+  color: var(--text-dim); font-size: 11px; font-weight: 600; letter-spacing: 0; }
 .tk-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
   transition: border-color .15s, background .15s, transform .12s;

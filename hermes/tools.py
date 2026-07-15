@@ -712,6 +712,73 @@ def build_tools(
         tools.append({"type": "web_search_20260209", "name": "web_search", "allowed_callers": ["direct"]})
         tools.append({"type": "web_fetch_20260209", "name": "web_fetch", "allowed_callers": ["direct"]})
 
+    # Scheduled-task authoring from chat. Deliberately NOT offered on a restricted
+    # (scheduled/unattended) run — only a live chat turn, where the user is present
+    # to command it, may create standing recurring tasks. So an unattended run can
+    # never spawn more tasks. See SCHEDULED_TASKS.md.
+    if not restricted:
+        tools.append({
+            "name": "create_scheduled_task",
+            "description": (
+                "Create a recurring Scheduled Task in the dashboard from the user's request, so "
+                "Hermes runs a job automatically on a schedule (it appears in the Tasks tab and "
+                "fires unattended). Use this whenever the user asks to schedule / automate / "
+                "'every day/week' / 'remind me to run' something — e.g. 'every morning at 7 give "
+                "me a farm briefing', 'each Monday pull the rent arrears'. "
+                "Write `prompt` as a complete standalone instruction the agent will run each time "
+                "(as if the user typed it in chat), not a paraphrase. "
+                "`frequency`: daily (every day at each time), weekdays (Mon–Fri), weekly (only the "
+                "`days_of_week`), or hourly (every hour at the minute of the first time). "
+                "`days_of_week` uses 0=Mon … 6=Sun and is required for weekly. "
+                "`times` are 24h \"HH:MM\" wall-clock in `timezone`. "
+                "`business` scopes it to one entity — one of: afk (Afro Farm), gak (GAK "
+                "Properties), gif (GIF Properties), gakc (GAK Commodities), nh (Nour Hammam), per "
+                "(Personal & Family) — or 'all' for cross-business; default is the conversation's "
+                "current business. "
+                "`allowed_apps` optionally limits which connected apps the task may use (Maton "
+                "slugs like google-mail, google-calendar, quickbooks, google-drive; empty = all). "
+                "`autonomy` is the safety ceiling for the UNATTENDED run: 'readonly' (default — "
+                "read/analyze/report only), 'draft' (may also create Gmail drafts, never send), or "
+                "'full' (may actually send/modify — a standing authorization; only pick this if "
+                "the user clearly said to act/send automatically, and confirm first). "
+                "If the schedule, business, or autonomy is ambiguous, ask the user a quick "
+                "clarifying question before creating; otherwise create it and report back the "
+                "resulting schedule and next run."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short display name for the task."},
+                    "prompt": {"type": "string", "description": "The full instruction the task runs each time, written as if asked in chat."},
+                    "frequency": {"type": "string", "enum": ["daily", "weekdays", "weekly", "hourly"]},
+                    "times": {"type": "array", "items": {"type": "string"}, "description": "24h wall-clock times, e.g. [\"07:00\",\"13:00\"]. Defaults to [\"09:00\"]."},
+                    "days_of_week": {"type": "array", "items": {"type": "integer"}, "description": "For weekly: 0=Mon … 6=Sun."},
+                    "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per | all"},
+                    "allowed_apps": {"type": "array", "items": {"type": "string"}, "description": "Optional Maton app slugs the task may use; empty = all."},
+                    "autonomy": {"type": "string", "enum": ["readonly", "draft", "full"]},
+                    "timezone": {"type": "string", "description": "IANA tz, e.g. America/Chicago or Africa/Nairobi. Defaults to the app default."},
+                    "enabled": {"type": "boolean", "description": "Whether it starts active (fires on schedule). Default true."},
+                },
+                "required": ["name", "prompt", "frequency"],
+            },
+        })
+        tools.append({
+            "name": "list_scheduled_tasks",
+            "description": (
+                "List the user's existing Scheduled Tasks (name, schedule, business, autonomy, "
+                "enabled, next run, last status). Use to answer 'what do I have scheduled?' or "
+                "before creating a similar task. Optional `business` slug (afk/gak/…/per or 'all') "
+                "scopes the list; omit to use the conversation's current business."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per | all"},
+                },
+                "required": [],
+            },
+        })
+
     if restricted:
         tools = _restrict_tools(tools, allowed_set)
 
@@ -772,6 +839,7 @@ LOCAL_TOOLS = {
     "maton_request", "maton_list_connections", "maton_create_connection",
     "drive_read_file", "send_email", "zoom_send_invite", "search_business_knowledge",
     "create_file", "worldbank_data", "calendar_list_upcoming", "zoom_list_meetings",
+    "create_scheduled_task", "list_scheduled_tasks",
     *WATI_TOOLS,
 }
 
@@ -1299,6 +1367,98 @@ def _wati_get_media(
     return {"status": dl["status"], "ok": True, "data": data}, None
 
 
+def _create_scheduled_task(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Create a recurring Scheduled Task from a chat request. Mirrors the
+    validation/resolution the POST /api/scheduled-tasks endpoint does, so a
+    task the agent makes is identical to one made in the UI."""
+    from . import scheduler as sched
+    from .db import scheduled_tasks as tasks_db
+
+    name = (tool_input.get("name") or "").strip()
+    prompt = (tool_input.get("prompt") or "").strip()
+    if not name:
+        return {"ok": False, "status": 400, "error": "A task name is required."}
+    if not prompt:
+        return {"ok": False, "status": 400, "error": "A task prompt is required."}
+
+    frequency = (tool_input.get("frequency") or "daily").strip()
+    if frequency not in sched.VALID_FREQUENCIES:
+        return {"ok": False, "status": 400, "error": f"frequency must be one of {sorted(sched.VALID_FREQUENCIES)}."}
+    autonomy = (tool_input.get("autonomy") or "readonly").strip()
+    if autonomy not in sched.VALID_AUTONOMY:
+        return {"ok": False, "status": 400, "error": f"autonomy must be one of {sorted(sched.VALID_AUTONOMY)}."}
+
+    times = [t.strip() for t in (tool_input.get("times") or []) if isinstance(t, str) and t.strip()]
+    days = []
+    for d in tool_input.get("days_of_week") or []:
+        try:
+            di = int(d)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= di <= 6:
+            days.append(di)
+    schedule = {"frequency": frequency, "times": times or ["09:00"], "days_of_week": days}
+    if frequency == "weekly" and not days:
+        return {"ok": False, "status": 400, "error": "A weekly task needs at least one weekday in days_of_week (0=Mon … 6=Sun)."}
+
+    business = (tool_input.get("business") or "").strip().lower()
+    if not business:
+        business = active_business if (active_business and active_business != ALL_BUSINESSES) else "all"
+    entity_slug = None
+    if business and business != "all":
+        entity_slug = to_entity_slug(business)
+        if not entity_slug:
+            return {"ok": False, "status": 400,
+                    "error": f"Unknown business '{business}'. Valid: {sorted(BUSINESS_TO_ENTITY_SLUG)} or 'all'."}
+
+    tz = (tool_input.get("timezone") or Config.SCHEDULER_DEFAULT_TZ).strip() or Config.SCHEDULER_DEFAULT_TZ
+    enabled = tool_input.get("enabled", True)
+    if not isinstance(enabled, bool):
+        enabled = str(enabled).strip().lower() not in ("false", "0", "no", "off", "")
+    allowed_apps = [a.strip() for a in (tool_input.get("allowed_apps") or []) if isinstance(a, str) and a.strip()]
+
+    next_run = sched.compute_next_run(schedule, tz) if enabled else None
+    task_id = tasks_db.create_task(
+        entity_slug=entity_slug, name=name, prompt=prompt, schedule=schedule,
+        timezone_name=tz, allowed_apps=allowed_apps, autonomy=autonomy,
+        enabled=enabled, next_run_at=next_run,
+    )
+    if not task_id:
+        return {"ok": False, "status": 500, "error": "Could not create the task (storage error)."}
+    return {
+        "ok": True, "status": 200, "task_id": task_id, "name": name,
+        "schedule": sched.describe_schedule(schedule, tz), "business": business,
+        "allowed_apps": allowed_apps or "all connected apps", "autonomy": autonomy,
+        "timezone": tz, "enabled": enabled,
+        "next_run_at": next_run.isoformat() if next_run else None,
+        "message": (f"Scheduled task '{name}' created — visible in the Tasks tab. "
+                    + ("It will run " + sched.describe_schedule(schedule, tz) + f" ({tz})."
+                       if enabled else "It is paused; enable it in the Tasks tab to start it.")),
+    }
+
+
+def _list_scheduled_tasks(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """List existing Scheduled Tasks, optionally scoped to a business."""
+    from . import scheduler as sched
+    from .db import scheduled_tasks as tasks_db
+
+    business = (tool_input.get("business") or "").strip().lower()
+    scope: str | None = None
+    if business and business != "all":
+        scope = to_entity_slug(business) or business
+    elif active_business and active_business != ALL_BUSINESSES:
+        scope = to_entity_slug(active_business) or active_business
+    rows = tasks_db.list_tasks(scope)
+    tasks = [{
+        "task_id": t.get("task_id"), "name": t.get("name"),
+        "business": t.get("business") or "all",
+        "schedule": sched.describe_schedule(t.get("schedule") or {}, t.get("timezone")),
+        "autonomy": t.get("autonomy"), "enabled": t.get("enabled"),
+        "next_run_at": t.get("next_run_at"), "last_status": t.get("last_status"),
+    } for t in rows]
+    return {"ok": True, "status": 200, "count": len(tasks), "tasks": tasks}
+
+
 def dispatch(
     name: str,
     tool_input: dict[str, Any],
@@ -1334,6 +1494,11 @@ def dispatch(
         elif name == "create_file":
             # No Maton client involved at all — pure S3 write.
             result = _create_file(tool_input, active_business)
+        elif name == "create_scheduled_task":
+            # No Maton client — writes a row via the scheduled-tasks store.
+            result = _create_scheduled_task(tool_input, active_business)
+        elif name == "list_scheduled_tasks":
+            result = _list_scheduled_tasks(tool_input, active_business)
         elif name == "calendar_list_upcoming":
             # hermes.calendar resolves its own per-business Maton key internally.
             result = _calendar_list_upcoming(tool_input, active_business)
@@ -1453,6 +1618,8 @@ _TOOL_STATUS: dict[str, str] = {
     "search_business_knowledge": "🔎 Searching your knowledge base…",
     "create_file": "📝 Putting your file together…",
     "worldbank_data": "🌍 Pulling stats from the World Bank…",
+    "create_scheduled_task": "🗓️ Setting up your scheduled task…",
+    "list_scheduled_tasks": "🗓️ Checking your scheduled tasks…",
     "wati_list_contacts": "💬 Looking up WhatsApp contacts…",
     "wati_add_contact": "💬 Adding a WhatsApp contact…",
     "wati_update_contact_attributes": "💬 Updating contact info…",

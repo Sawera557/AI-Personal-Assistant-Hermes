@@ -132,7 +132,39 @@
       return;
     }
     if (emptyEl) emptyEl.hidden = true;
-    listEl.innerHTML = tasks.map(taskCard).join("");
+    // In the "All Businesses" view, separate tasks under a heading per business
+    // (with an "All businesses" section for cross-business, unscoped tasks). When
+    // a single business is selected the list is already scoped, so render flat.
+    listEl.innerHTML = HermesBiz.current === "all"
+      ? groupedTasksHtml(tasks)
+      : tasks.map(taskCard).join("");
+  }
+
+  // Group tasks by business into labelled sections. Unscoped tasks (business
+  // === null, i.e. "run across all businesses") get their own "All businesses"
+  // section. Sections follow the business-selector order; the count is shown.
+  function groupedTasksHtml(tasks) {
+    const byBiz = new Map();
+    for (const t of tasks) {
+      const key = t.business || "all";
+      if (!byBiz.has(key)) byBiz.set(key, []);
+      byBiz.get(key).push(t);
+    }
+    const order = HermesBiz.list.map((b) => b.slug);
+    const rank = (k) => { const i = order.indexOf(k); return i < 0 ? 999 : i; };
+    return [...byBiz.keys()]
+      .sort((a, b) => rank(a) - rank(b))
+      .map((key) => {
+        const b = key === "all" ? null : HermesBiz.find(key);
+        const label = key === "all"
+          ? "🏢 All businesses"
+          : `${(b && b.emoji) || "🏢"} ${esc((b && b.name) || key)}`;
+        const group = byBiz.get(key);
+        return `<div class="tk-group-head">${label}` +
+               `<span class="tk-group-count">${group.length}</span></div>` +
+               group.map(taskCard).join("");
+      })
+      .join("");
   }
 
   function bizChip(slug) {
