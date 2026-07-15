@@ -1139,6 +1139,9 @@ def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dic
         "business": scope if scope != "general" else None,
         "download_url": download_url,
         "expires_in_hours": _CREATED_FILE_LINK_EXPIRES // 3600,
+        # s3_uri lets you read this file back later with `read_document` (e.g. to
+        # quote or re-check what you generated); share download_url with the user.
+        "s3_uri": s3_uri,
     }
 
 
