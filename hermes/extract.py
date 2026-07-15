@@ -3,6 +3,8 @@
 Turns raw file bytes into plain text the agent can read in-conversation:
 
 * DOCX               -> python-docx (paragraphs + table cells)
+* XLSX / XLSM        -> openpyxl (every sheet, row cells joined)
+* PPTX               -> python-pptx (slide text + tables)
 * PDF / image/*      -> NuExtract OCR (handles scanned docs and phone photos)
 * text/json/csv/...  -> decode UTF-8 directly
 
@@ -20,6 +22,8 @@ from typing import Any
 log = logging.getLogger("hermes.extract")
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 # Text-like MIME hints we can decode without OCR (mirrors ingest._extract_text).
 _TEXT_HINTS = ("text/", "json", "csv", "xml", "markdown", "yaml", "html")
@@ -47,6 +51,12 @@ def extract_text(filename: str, raw: bytes, mime: str) -> str:
 
     if mime == DOCX_MIME or name.endswith(".docx"):
         return _extract_docx(raw)
+
+    if mime == XLSX_MIME or name.endswith((".xlsx", ".xlsm")):
+        return _extract_xlsx(raw)
+
+    if mime == PPTX_MIME or name.endswith(".pptx"):
+        return _extract_pptx(raw)
 
     # HEIC/HEIF has no decoder in-repo and NuExtract doesn't reliably handle it;
     # reject with a clear message rather than a confusing upstream error. (WhatsApp
@@ -76,7 +86,8 @@ def extract_text(filename: str, raw: bytes, mime: str) -> str:
     # HEIC decoder in-repo; WhatsApp normally delivers JPEG, so this is rare.
     raise ExtractionError(
         f"Unsupported document type for '{filename}' ({mime}). Supported: PDF, "
-        "JPEG/PNG images, DOCX, and plain-text files."
+        "JPEG/PNG images, Word (.docx), Excel (.xlsx), PowerPoint (.pptx), and "
+        "text/CSV/JSON files."
     )
 
 
@@ -102,6 +113,81 @@ def _extract_docx(raw: bytes) -> str:
     text = "\n".join(parts).strip()
     if not text:
         raise ExtractionError("The DOCX file contained no readable text.")
+    return text
+
+
+def _extract_xlsx(raw: bytes) -> str:
+    """Every sheet of an .xlsx/.xlsm workbook as text — one line per non-empty
+    row, cells joined by ' | ', prefixed by a '# Sheet: <name>' header. Uses
+    computed cell values (data_only) so formulas come through as their result."""
+    import io
+
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise ExtractionError("Excel (.xlsx) support requires the openpyxl package.") from exc
+
+    try:
+        wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception as exc:
+        raise ExtractionError(f"Couldn't open the Excel file: {exc}") from exc
+
+    parts: list[str] = []
+    try:
+        for ws in wb.worksheets:
+            rows: list[str] = []
+            for row in ws.iter_rows(values_only=True):
+                cells = [str(c) for c in row if c is not None and str(c).strip()]
+                if cells:
+                    rows.append(" | ".join(cells))
+            if rows:
+                parts.append(f"# Sheet: {ws.title}")
+                parts.extend(rows)
+    finally:
+        wb.close()
+
+    text = "\n".join(parts).strip()
+    if not text:
+        raise ExtractionError("The Excel file contained no readable cells.")
+    return text
+
+
+def _extract_pptx(raw: bytes) -> str:
+    """Text of every slide in a .pptx — shape text frames and table cells,
+    grouped under a '# Slide N' header."""
+    import io
+
+    try:
+        from pptx import Presentation
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise ExtractionError("PowerPoint (.pptx) support requires the python-pptx package.") from exc
+
+    try:
+        prs = Presentation(io.BytesIO(raw))
+    except Exception as exc:
+        raise ExtractionError(f"Couldn't open the PowerPoint file: {exc}") from exc
+
+    parts: list[str] = []
+    for i, slide in enumerate(prs.slides, start=1):
+        slide_lines: list[str] = []
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    line = "".join(run.text for run in para.runs).strip()
+                    if line:
+                        slide_lines.append(line)
+            if getattr(shape, "has_table", False):
+                for row in shape.table.rows:
+                    cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
+                    if cells:
+                        slide_lines.append(" | ".join(cells))
+        if slide_lines:
+            parts.append(f"# Slide {i}")
+            parts.extend(slide_lines)
+
+    text = "\n".join(parts).strip()
+    if not text:
+        raise ExtractionError("The PowerPoint file contained no readable text.")
     return text
 
 

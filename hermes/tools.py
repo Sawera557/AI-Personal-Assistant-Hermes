@@ -378,9 +378,11 @@ def build_tools(
                 "invoice a contact sent over WhatsApp. Fetches the file by its `s3_uri`, "
                 "runs OCR on scanned pages and phone photos, and returns the extracted "
                 "text so you can summarize or answer questions about it — with no need for "
-                "the user to download and re-upload anything. The available files and their "
-                "`s3_uri`s are listed under 'Files shared in this conversation' in your "
-                "context. Supports PDF, JPEG/PNG images, DOCX, and plain-text files."
+                "the user to download and re-upload anything — including files you created "
+                "yourself with `create_file` (pass the `s3_uri` it returned). The available "
+                "files and their `s3_uri`s are listed under 'Files shared in this "
+                "conversation' in your context. Supports PDF, JPEG/PNG images, Word (.docx), "
+                "Excel (.xlsx), PowerPoint (.pptx), and text/CSV/JSON files."
             ),
             "input_schema": {
                 "type": "object",
