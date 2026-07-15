@@ -1656,6 +1656,32 @@ async def create_scheduled_task(body: TaskCreateBody):
     return {"task": _enrich_task(task)}
 
 
+# NOTE: this route MUST be declared before the "/{task_id}" routes below —
+# FastAPI matches in definition order, and a parameterized "/{task_id}" would
+# otherwise capture "run-due" as a task id (a GET would 404 as "task not found",
+# silently breaking the Vercel Cron path, which fires run-due with a GET).
+@app.api_route("/api/scheduled-tasks/run-due", methods=["GET", "POST"])
+async def run_due_scheduled_tasks(request: Request, limit: int = 25):
+    """Fire every task whose next_run_at has passed. This is the endpoint a cron
+    hits on an interval — Vercel Cron (which sends a GET), cron-job.org, a GitHub
+    Action, or any external scheduler.
+
+    Auth: when SCHEDULER_SECRET (or Vercel's own CRON_SECRET) is set, the caller
+    must present it as `Authorization: Bearer <secret>` or `?token=<secret>`.
+    Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically. When no
+    secret is configured the endpoint is open (local dev) — set one in production.
+    """
+    secrets = {s for s in (Config.SCHEDULER_SECRET, os.getenv("CRON_SECRET", "").strip()) if s}
+    if secrets:
+        auth = request.headers.get("authorization", "")
+        bearer = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        token = request.query_params.get("token") or bearer
+        if token not in secrets:
+            return JSONResponse({"error": "Unauthorized."}, status_code=401)
+    result = await run_in_threadpool(hermes_scheduler.run_due, max(1, min(limit, 100)))
+    return result
+
+
 @app.get("/api/scheduled-tasks/{task_id}")
 async def get_scheduled_task(task_id: str):
     """One task plus its recent run history (for the detail panel)."""
@@ -1766,28 +1792,6 @@ async def run_scheduled_task_now(task_id: str):
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": f"Run failed: {exc}"}, status_code=500)
     return summary
-
-
-@app.api_route("/api/scheduled-tasks/run-due", methods=["GET", "POST"])
-async def run_due_scheduled_tasks(request: Request, limit: int = 25):
-    """Fire every task whose next_run_at has passed. This is the endpoint a cron
-    hits on an interval — Vercel Cron (which sends a GET), cron-job.org, a GitHub
-    Action, or any external scheduler.
-
-    Auth: when SCHEDULER_SECRET (or Vercel's own CRON_SECRET) is set, the caller
-    must present it as `Authorization: Bearer <secret>` or `?token=<secret>`.
-    Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically. When no
-    secret is configured the endpoint is open (local dev) — set one in production.
-    """
-    secrets = {s for s in (Config.SCHEDULER_SECRET, os.getenv("CRON_SECRET", "").strip()) if s}
-    if secrets:
-        auth = request.headers.get("authorization", "")
-        bearer = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-        token = request.query_params.get("token") or bearer
-        if token not in secrets:
-            return JSONResponse({"error": "Unauthorized."}, status_code=401)
-    result = await run_in_threadpool(hermes_scheduler.run_due, max(1, min(limit, 100)))
-    return result
 
 
 if __name__ == "__main__":
