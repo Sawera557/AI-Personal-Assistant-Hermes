@@ -143,6 +143,34 @@ class MatonClient:
             "raw": resp.content,
         }
 
+    def upload_binary(
+        self,
+        app: str,
+        method: str,
+        path: str,
+        data: bytes,
+        content_type: str,
+        query: dict[str, Any] | None = None,
+        connection_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Send a raw binary request body (e.g. a Google Drive simple media
+        upload to `upload/drive/v3/files?uploadType=media`). `data` is forwarded
+        verbatim as the body with the given `content_type` — no JSON wrapping,
+        no multipart boundary. Returns `{status, ok, data}` like `request()`.
+        """
+        method = method.upper()
+        url = f"{self.base_url}/{app.strip('/')}/{path.lstrip('/')}"
+        headers = self._headers(connection_id)
+        headers["Content-Type"] = content_type or "application/octet-stream"
+        try:
+            resp = requests.request(
+                method, url, headers=headers, params=query or None,
+                data=data, timeout=_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            raise MatonError(f"Network error calling Maton: {exc}") from exc
+        return {"status": resp.status_code, "ok": resp.ok, "data": _parse_body(resp)}
+
     # ---- Connection management --------------------------------------------
 
     def list_connections(

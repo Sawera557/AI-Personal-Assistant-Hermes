@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 import requests
 
 from . import calendar as hermes_calendar
+from . import documents
+from . import email_attachments
 from . import extract
 from . import storage
 from . import worldbank
@@ -131,6 +133,52 @@ def build_tools(
         "subject": {"type": "string"},
         "body": {"type": "string", "description": "Plain-text email body."},
     }
+    email_attachment_props: dict[str, Any] = {
+        "to": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Recipient email address(es).",
+        },
+        "cc": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Optional CC address(es).",
+        },
+        "subject": {"type": "string"},
+        "body": {"type": "string", "description": "Plain-text email body."},
+        "attachments": {
+            "type": "array",
+            "description": (
+                "Files to attach. Each item is ONE of three shapes:\n"
+                "  • Generate a file: {\"filename\": \"renewal_letter.pdf\", \"content\": \"<full "
+                "text you write>\"} — a .pdf/.docx/.xlsx filename is rendered into a real office "
+                "file (.xlsx content is parsed as CSV rows); any other extension is saved as text.\n"
+                "  • Attach a file already uploaded in this chat: {\"attachment_id\": \"<id>\"}.\n"
+                "  • Attach a file you previously created/stored: {\"s3_uri\": \"s3://...\"}."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": "File name with extension (for a generated file)."},
+                    "content": {"type": "string", "description": "Full text content to render into the generated file."},
+                    "content_type": {"type": "string", "description": "Optional MIME override for a non-office generated file."},
+                    "attachment_id": {"type": "string", "description": "Id of a file already uploaded in this chat."},
+                    "s3_uri": {"type": "string", "description": "s3:// URI of a previously created/stored file."},
+                },
+            },
+        },
+        "confirm": {
+            "type": "boolean",
+            "description": (
+                "Leave FALSE/omitted to PREPARE: generate the attachment(s) and hold the "
+                "email as a Gmail draft for the user to review — this does NOT send. After "
+                "the user explicitly approves, call again with confirm=true AND the "
+                "draft_id returned by the prepare step to send exactly what was reviewed."
+            ),
+        },
+        "draft_id": {
+            "type": "string",
+            "description": "The draft id from the prepare step. Pass it together with confirm=true to send.",
+        },
+    }
     zoom_invite_props: dict[str, Any] = {
         "meeting_id": {
             "type": "string",
@@ -215,6 +263,7 @@ def build_tools(
         drive_props["business"] = business_param
         read_document_props["business"] = business_param
         send_email_props["business"] = business_param
+        email_attachment_props["business"] = business_param
         # Knowledge search isn't gated by a Maton connection — any business with
         # uploaded context is searchable, whether or not it has an app connected.
         knowledge_props["business"] = {
@@ -402,6 +451,32 @@ def build_tools(
             "input_schema": {
                 "type": "object",
                 "properties": send_email_props,
+                "required": ["to", "subject", "body"],
+            },
+        },
+        {
+            "name": "email_with_attachment",
+            "description": (
+                "Send an email WITH one or more file attachments through the connected Gmail "
+                "account, following a fixed prepare-then-send flow so a review always happens "
+                "before anything leaves the outbox. Use this — not send_email or maton_request "
+                "— whenever the user wants a file emailed, whether they supplied it or asked you "
+                "to generate one (e.g. 'send Amal the renewal letter as a PDF'). You can attach "
+                "files you generate on the fly (PDF/DOCX/XLSX or plain text — you write the "
+                "content), files uploaded earlier in this chat (by attachment_id), or files you "
+                "previously created (by s3_uri).\n"
+                "STEP 1 — PREPARE (confirm omitted): generates the attachment(s), builds the "
+                "email, and saves it as a Gmail DRAFT. It does NOT send. Returns a draft_id and "
+                "a preview; show the user what will go out and ask them to approve.\n"
+                "STEP 2 — SEND (confirm=true + the returned draft_id): sends exactly that "
+                "reviewed draft. Only do this after the user explicitly approves.\n"
+                "Any single attachment larger than ~25 MB is automatically uploaded to Google "
+                "Drive and linked in the email body instead of attached, so the send never fails "
+                "on size."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": email_attachment_props,
                 "required": ["to", "subject", "body"],
             },
         },
@@ -870,6 +945,9 @@ def build_tools(
 _TOOL_REQUIRED_APPS: dict[str, set[str]] = {
     "drive_read_file": {"google-drive"},
     "send_email": {"google-mail"},
+    # Gated on Gmail; the >25MB Drive fallback is best-effort and only kicks in
+    # for oversized files, so it doesn't gate the tool's availability.
+    "email_with_attachment": {"google-mail"},
     "zoom_send_invite": {"zoom", "zoom-admin"},
     "zoom_list_meetings": {"zoom", "zoom-admin"},
     "calendar_list_upcoming": {"google-calendar"},
@@ -914,7 +992,8 @@ WATI_TOOLS = {
 # Names that Hermes executes locally (everything else is server-side).
 LOCAL_TOOLS = {
     "maton_request", "maton_list_connections", "maton_create_connection",
-    "drive_read_file", "read_document", "send_email", "zoom_send_invite", "search_business_knowledge",
+    "drive_read_file", "read_document", "send_email", "email_with_attachment",
+    "zoom_send_invite", "search_business_knowledge",
     "create_file", "worldbank_data", "calendar_list_upcoming", "zoom_list_meetings",
     "create_scheduled_task", "list_scheduled_tasks",
     "update_scheduled_task", "delete_scheduled_task",
@@ -1059,40 +1138,6 @@ def _search_business_knowledge(tool_input: dict[str, Any], active_business: str 
 _CREATED_FILE_LINK_EXPIRES = 24 * 60 * 60
 
 
-def _render_text_as_pdf(content: str) -> bytes:
-    """Render plain text into a REAL, valid PDF — a .pdf filename with raw
-    UTF-8 text bytes dumped into it (the naive approach) isn't a valid PDF and
-    fails to open in any viewer. Uses fpdf2 (pure Python, no system/native
-    dependencies — safe on serverless). Markdown syntax (#, **, etc.) is not
-    interpreted, just shown as literal characters — plain text only, for now.
-
-    fpdf2's built-in core font is Latin-1 only, so common "smart" punctuation
-    is normalized to its ASCII equivalent first; anything else outside Latin-1
-    is replaced rather than crashing the render.
-    """
-    from fpdf import FPDF
-
-    normalized = (
-        content.replace("‘", "'").replace("’", "'")
-        .replace("“", '"').replace("”", '"')
-        .replace("–", "-").replace("—", "-")
-        .replace("…", "...")
-    )
-    safe = normalized.encode("latin-1", errors="replace").decode("latin-1")
-
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Helvetica", size=11)
-    for line in safe.split("\n"):
-        # multi_cell(w=0, ...) leaves the cursor at the right edge afterward
-        # rather than resetting to the left margin — without this, the next
-        # call computes an ~empty width and raises FPDFException.
-        pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(0, 6, line or " ")
-    return bytes(pdf.output())
-
-
 def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
     """Write model-authored text content to S3 and return a download link. No
     Maton client involved — pure storage.py, same as _search_business_knowledge."""
@@ -1109,21 +1154,15 @@ def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dic
     if not content:
         raise MatonError("`content` is required.")
 
-    if filename.lower().endswith(".pdf"):
-        # A .pdf filename with plain UTF-8 text bytes isn't a valid PDF — render
-        # a real one instead of just labeling text as application/pdf.
-        try:
-            raw = _render_text_as_pdf(content)
-        except Exception as exc:  # noqa: BLE001 — surface as a clean tool error
-            raise MatonError(f"Could not render this content as a PDF: {exc}") from exc
-        content_type = "application/pdf"
-    else:
-        import mimetypes
-
-        content_type = (tool_input.get("content_type") or "").strip() or (
-            mimetypes.guess_type(filename)[0] or "text/plain"
+    # .pdf/.docx/.xlsx are rendered into real office files; anything else is
+    # written as UTF-8 text (a .pdf filename with plain text bytes isn't a valid
+    # PDF and won't open). Shared with email_with_attachment via documents.py.
+    try:
+        raw, content_type = documents.generate_document(
+            filename, content, tool_input.get("content_type")
         )
-        raw = content.encode("utf-8")
+    except Exception as exc:  # noqa: BLE001 — surface as a clean tool error
+        raise MatonError(f"Could not render this content as {filename!r}: {exc}") from exc
 
     scope = _attachment_scope(tool_input, active_business) or "general"
     key = f"generated/{scope}/{uuid.uuid4().hex}/{filename}"
@@ -1831,6 +1870,8 @@ def dispatch(
                 result, media, blocks = _drive_read_file(client, tool_input, active_business)
             elif name == "send_email":
                 result = _send_email(client, tool_input)
+            elif name == "email_with_attachment":
+                result = email_attachments.run(client, tool_input, active_business)
             elif name == "zoom_send_invite":
                 result = _zoom_send_invite(client, tool_input)
             elif name == "zoom_list_meetings":
@@ -1909,6 +1950,7 @@ _TOOL_STATUS: dict[str, str] = {
     "maton_create_connection": "🔌 Setting up a new connection…",
     "drive_read_file": "📁 Opening that file from Drive…",
     "send_email": "📧 Sending your email…",
+    "email_with_attachment": "📎 Getting your email and attachment ready…",
     "zoom_send_invite": "🎥 Sending your Zoom invite…",
     "zoom_list_meetings": "🎥 Checking your Zoom meetings…",
     "calendar_list_upcoming": "📅 Peeking at your calendar…",
@@ -1954,4 +1996,6 @@ def tool_status(name: str, tool_input: dict[str, Any]) -> str:
     if name == "maton_request":
         app = (tool_input or {}).get("app") or ""
         return _MATON_APP_STATUS.get(app, f"🔌 Connecting to {app or 'a connected app'}…")
+    if name == "email_with_attachment" and (tool_input or {}).get("confirm"):
+        return "📧 Sending your email…"
     return _TOOL_STATUS.get(name, f"⚙️ Running {name.replace('_', ' ')}…")
