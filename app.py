@@ -64,6 +64,7 @@ from hermes import calendar as hermes_calendar
 from hermes.config import Config
 from hermes.fathom import find_recording_link as find_fathom_link
 from hermes import storage as s3
+from hermes import files_tree
 from hermes.db.bills import (
     _BILL_NOT_FOUND,
     cleanup_old_drive_bills,
@@ -228,7 +229,7 @@ def _asset_version() -> int:
     """A version stamp that changes whenever a static asset changes, so browsers
     fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
     latest = 0.0
-    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js", "tasks.js"):
+    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js", "tasks.js", "context.js", "model.js", "files.js"):
         try:
             latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
         except OSError:
@@ -728,6 +729,23 @@ async def list_documents_endpoint(entity_id: str, source_system: str | None = No
     if all_mode:
         docs = _tag_business_slug(docs)
     return {"entity_id": entity_id, "documents": docs}
+
+
+@app.get("/api/files/tree")
+async def list_files_tree(entity_id: str):
+    """List raw S3 objects for the Files explorer, scoped to one business.
+
+    `entity_id` is the BUSINESS slug (same convention as /api/chat), or "all" to
+    list across every business (each file tagged with its `business_slug`, or
+    null when unattributable). Each item carries `key`, `s3_uri`, `size`,
+    `last_modified`, and `business_slug`; the frontend builds the folder tree and
+    fetches a download link per file via /api/media/presign. Returns an empty
+    list (not an error) when S3 isn't configured, so the UI degrades gracefully.
+    """
+    if not entity_id:
+        return JSONResponse({"error": "entity_id is required."}, status_code=400)
+    files = await run_in_threadpool(files_tree.list_business_files, entity_id)
+    return {"entity_id": entity_id, "files": files}
 
 
 @app.delete("/api/documents/{document_id}")

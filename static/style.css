@@ -529,11 +529,13 @@ body {
 .meeting-view { display: none; }
 .context-view { display: none; }
 .tasks-view   { display: none; }
+.files-view   { display: none; }
 .app[data-view="agent"]   .chat         { display: flex; }
 .app[data-view="bills"]   .bills-view   { display: flex; }
 .app[data-view="meeting"] .meeting-view { display: flex; }
 .app[data-view="context"] .context-view { display: flex; }
 .app[data-view="tasks"]   .tasks-view   { display: flex; }
+.app[data-view="files"]   .files-view   { display: flex; }
 
 /* ═══════════════════════════════════════════════════════════
    Chat column
@@ -1730,4 +1732,119 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
   .tk-modal { max-width: 100%; max-height: 100vh; height: 100%; border-radius: 0; border: none; }
   .tk-templates-grid { grid-template-columns: repeat(2, 1fr); }
   .tk-row { flex-direction: column; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   File Explorer — two-pane (left folder tree + right contents)
+   ═══════════════════════════════════════════════════════════ */
+.files-view { flex: 1; flex-direction: column; min-width: 0; position: relative; overflow: hidden; }
+.files-page { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 18px 24px 0; }
+
+/* ---- Left: folder tree (in the sidebar panel) ---- */
+.files-tree-panel { display: flex; flex-direction: column; min-height: 0; }
+.files-folder-tree { max-height: 56vh; overflow: auto; margin-top: 6px; }
+
+.ftree-children { display: none; }
+.ftree-node.open > .ftree-children { display: block; }
+
+.ftree-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px 5px calc(8px + var(--depth, 0) * 16px);
+  border-radius: 8px; cursor: pointer; user-select: none;
+  font-size: 13px; color: var(--text); min-width: 0;
+}
+.ftree-row:hover { background: var(--surface); }
+.ftree-folder.selected { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.ftree-folder.selected .ftree-name { color: var(--text); }
+
+.ftree-chevron { flex-shrink: 0; color: var(--muted); transition: transform .12s ease; }
+.ftree-node.open > .ftree-folder > .ftree-chevron { transform: rotate(90deg); }
+.ftree-chevron-spacer { width: 14px; flex-shrink: 0; }
+
+.ftree-icon { flex-shrink: 0; color: var(--accent); }
+.ftree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.ftree-meta { flex-shrink: 0; color: var(--muted); font-size: 11px; }
+
+/* ---- Right toolbar: breadcrumb + view toggle ---- */
+.files-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-shrink: 0; margin-bottom: 14px;
+}
+.files-breadcrumb {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; font-size: 13px;
+}
+.crumb {
+  background: none; border: none; font: inherit; color: var(--muted); cursor: pointer;
+  padding: 3px 6px; border-radius: 6px; max-width: 220px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.crumb:hover { background: var(--surface); color: var(--text); }
+.crumb:last-child { color: var(--text); font-weight: 600; }
+.crumb-sep { color: var(--muted); opacity: .6; }
+
+.files-view-toggle { display: inline-flex; flex-shrink: 0; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+.files-view-toggle button {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; color: var(--muted); cursor: pointer; padding: 6px 10px;
+}
+.files-view-toggle button:hover { background: var(--surface); color: var(--text); }
+.files-view-toggle button.active { background: var(--accent); color: #fff; }
+
+/* ---- Right content: tiles or list ---- */
+.files-content { flex: 1; overflow: auto; padding-bottom: 24px; }
+.files-content.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; align-content: start; }
+.files-content.list { display: flex; flex-direction: column; gap: 2px; }
+
+.file-item {
+  display: flex; background: none; border: 1px solid transparent; border-radius: 10px;
+  font: inherit; color: var(--text); cursor: pointer; text-align: left; width: 100%; min-width: 0;
+}
+.file-item:hover { background: var(--surface); border-color: var(--border); }
+.file-item.loading { opacity: .55; cursor: progress; }
+.file-item-body { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.file-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.file-item-meta { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Tiles */
+.files-content.tiles .file-item { flex-direction: column; align-items: center; text-align: center; padding: 16px 10px; gap: 8px; }
+.files-content.tiles .file-item-icon svg { width: 40px; height: 40px; }
+.files-content.tiles .file-item-body { align-items: center; width: 100%; }
+
+/* List */
+.files-content.list .file-item { flex-direction: row; align-items: center; gap: 10px; padding: 7px 10px; }
+.files-content.list .file-item-icon { flex-shrink: 0; display: inline-flex; }
+.files-content.list .file-item-icon svg { width: 20px; height: 20px; }
+.files-content.list .file-item-body { flex: 1; flex-direction: row; align-items: center; gap: 10px; }
+.files-content.list .file-item-name { flex: 1; }
+.files-content.list .file-item-meta { margin-left: auto; flex-shrink: 0; }
+
+/* Typed icon colors */
+.file-icon { color: var(--muted); }
+.file-icon[data-type="folder"]  { color: var(--accent); }
+.file-icon[data-type="image"]   { color: #34d399; }
+.file-icon[data-type="pdf"]     { color: #f87171; }
+.file-icon[data-type="doc"]     { color: #60a5fa; }
+.file-icon[data-type="sheet"]   { color: #10b981; }
+.file-icon[data-type="slides"]  { color: #fb923c; }
+.file-icon[data-type="video"]   { color: #a78bfa; }
+.file-icon[data-type="audio"]   { color: #f472b6; }
+.file-icon[data-type="archive"] { color: #fbbf24; }
+
+.files-empty { text-align: center; margin: 40px auto; max-width: 440px; padding: 24px; }
+.files-empty-icon { font-size: 40px; }
+.files-empty h3 { margin: 12px 0 6px; font-size: 17px; }
+
+/* Loading spinner (shown in both panes while the tree is fetched) */
+.files-spinner-wrap { display: flex; justify-content: center; padding: 30px 0; }
+.files-spinner {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2.5px solid var(--border); border-top-color: var(--accent);
+  animation: files-spin .7s linear infinite;
+}
+@keyframes files-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 720px) {
+  .files-page { padding: 14px 14px 0; }
+  .files-content.tiles { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  .files-folder-tree { max-height: none; }
 }

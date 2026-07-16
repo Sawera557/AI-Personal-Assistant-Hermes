@@ -15,7 +15,11 @@ from . import extract
 from . import storage
 from . import worldbank
 from .attachments import store as attachment_store
-from .businesses import BUSINESS_TO_ENTITY_SLUG, to_business_slug, to_entity_slug
+from .businesses import (
+    BUSINESS_TO_ENTITY_SLUG,
+    key_business as _key_business,
+    to_entity_slug,
+)
 from .config import Config
 from .maton import MatonClient, MatonError
 from .wati import WatiClient
@@ -1151,29 +1155,6 @@ def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dic
 # the model (keeps a single huge scan from blowing the context window).
 _MAX_READ_BYTES = _MAX_FETCH_BYTES
 _MAX_EXTRACTED_CHARS = 40_000
-
-
-def _key_business(key: str) -> str | None:
-    """The business slug an S3 key belongs to, by our prefix conventions:
-
-    * ``wati-media/{business}/...``, ``drive-files/{business}/...`` and
-      ``generated/{business}/...`` are keyed by the *business* slug (afk, gak, ...)
-      — see `_wati_get_media`/`_drive_read_file`/`_create_file`. The `generated/`
-      case is what lets Hermes read back a file it created with `create_file`.
-    * A bare ``{entity}/...`` KB-document key is keyed by the *entity* slug
-      (afro_farm, ...); map it back to its business slug.
-
-    Returns None for anything that doesn't resolve to a known business (the
-    `unsorted/` hole, `bills/gmail/...`, `generated/general/...`, or an unknown
-    tenant) — such keys are not readable through this tool.
-    """
-    parts = [p for p in key.split("/") if p]
-    if not parts:
-        return None
-    if parts[0] in ("wati-media", "drive-files", "generated"):
-        seg = parts[1] if len(parts) >= 3 else None
-        return seg if seg in BUSINESS_TO_ENTITY_SLUG else None
-    return to_business_slug(parts[0])
 
 
 def _read_scope_ok(

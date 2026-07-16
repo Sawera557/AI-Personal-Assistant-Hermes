@@ -95,6 +95,29 @@ def get_bytes(s3_uri: str, max_bytes: int | None = None) -> tuple[bytes, str | N
     return body, obj.get("ContentType")
 
 
+def list_objects(prefix: str = "") -> list[dict]:
+    """List every object under ``prefix`` in the configured bucket.
+
+    Returns a list of ``{"key", "size", "last_modified"}`` (last_modified as an
+    ISO-8601 string), paging through all results. Returns ``[]`` when storage is
+    disabled. Callers are responsible for tenant/prefix scoping — this is a dumb
+    listing primitive over whatever prefix it's given.
+    """
+    if not enabled():
+        return []
+    out: list[dict] = []
+    paginator = _client().get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket(), Prefix=prefix):
+        for obj in page.get("Contents", []) or []:
+            lm = obj.get("LastModified")
+            out.append({
+                "key": obj["Key"],
+                "size": obj.get("Size", 0),
+                "last_modified": lm.isoformat() if lm else None,
+            })
+    return out
+
+
 def presign(s3_uri: str, expires: int = 900) -> str | None:
     """Return a short-lived GET URL for an ``s3://bucket/key`` URI.
 
