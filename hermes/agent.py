@@ -486,6 +486,21 @@ def stream_turn(
                 }
                 if media:
                     trace_entry["media"] = media
+                # Capture files this run produced (create_file) so the UI can offer
+                # them as downloads later. We store the s3_uri (stable) rather than
+                # the presigned download_url (which expires); callers re-presign it.
+                if not is_error and name == "create_file":
+                    try:
+                        _fr = json.loads(content_str)
+                        if isinstance(_fr, dict) and _fr.get("s3_uri"):
+                            trace_entry["file"] = {
+                                "filename": _fr.get("filename"),
+                                "s3_uri": _fr.get("s3_uri"),
+                                "content_type": _fr.get("content_type"),
+                                "size_bytes": _fr.get("size_bytes"),
+                            }
+                    except (ValueError, TypeError):
+                        pass
                 tool_trace.append(trace_entry)
                 tool_results.append(
                     {

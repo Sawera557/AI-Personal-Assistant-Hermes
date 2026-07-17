@@ -29,7 +29,8 @@ log = logging.getLogger("hermes.db.scheduled_tasks")
 _TASK_COLS = (
     "t.task_id, t.name, t.prompt, t.allowed_apps, t.autonomy, t.schedule, "
     "t.timezone, t.enabled, e.slug, "
-    "t.next_run_at, t.last_run_at, t.last_status, t.created_at, t.updated_at"
+    "t.next_run_at, t.last_run_at, t.last_status, t.created_at, t.updated_at, "
+    "t.window_start, t.window_end, t.window_cursor, t.window_step, t.window_pace"
 )
 
 
@@ -75,11 +76,17 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat()
 
 
+def _iso_date(d: Any) -> str | None:
+    """A date column as 'YYYY-MM-DD' (window_* are DATEs, not timestamps)."""
+    return d.isoformat() if d is not None else None
+
+
 def _task_row_to_dict(row: tuple) -> dict[str, Any]:
     from ..businesses import to_business_slug  # local import: avoid a cycle
 
     (task_id, name, prompt, allowed_apps, autonomy, schedule, tz, enabled,
-     entity_slug, next_run_at, last_run_at, last_status, created, updated) = row
+     entity_slug, next_run_at, last_run_at, last_status, created, updated,
+     win_start, win_end, win_cursor, win_step, win_pace) = row
     return {
         "task_id": str(task_id),
         "name": name,
@@ -95,6 +102,13 @@ def _task_row_to_dict(row: tuple) -> dict[str, Any]:
         "last_status": last_status,
         "created_at": _iso(created),
         "updated_at": _iso(updated),
+        # Optional date-window (backfill) fields; window_pace is None for an
+        # ordinary recurring task.
+        "window_start": _iso_date(win_start),
+        "window_end": _iso_date(win_end),
+        "window_cursor": _iso_date(win_cursor),
+        "window_step": win_step,
+        "window_pace": win_pace,
     }
 
 
@@ -109,11 +123,19 @@ def create_task(
     autonomy: str = "readonly",
     enabled: bool = True,
     next_run_at: datetime | None = None,
+    window_start: str | None = None,
+    window_end: str | None = None,
+    window_step: int = 1,
+    window_pace: str | None = None,
 ) -> str | None:
     """Insert a task and return its task_id (or None on failure).
 
     `entity_slug` None == "All Businesses" scope. `next_run_at` is the resolved
-    UTC instant computed by the scheduler; NULL when disabled."""
+    UTC instant computed by the scheduler; NULL when disabled.
+
+    For a date-window (backfill) task, pass `window_pace` ('catchup'|'scheduled')
+    plus `window_start`/`window_end` ('YYYY-MM-DD'). The cursor starts at
+    `window_start`; validation/next_run are the caller's job."""
     try:
         with cursor() as cur:
             owner = _owner(cur)
@@ -121,14 +143,19 @@ def create_task(
             cur.execute(
                 """INSERT INTO scheduled_tasks
                        (user_id, entity_id, name, prompt, allowed_apps, autonomy,
-                        schedule, timezone, enabled, next_run_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        schedule, timezone, enabled, next_run_at,
+                        window_start, window_end, window_cursor, window_step, window_pace)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           %s, %s, %s, %s, %s)
                    RETURNING task_id;""",
                 (
                     owner, ent, name, prompt,
                     json.dumps(allowed_apps or []), autonomy,
                     json.dumps(schedule or {}), timezone_name, enabled,
                     next_run_at if enabled else None,
+                    window_start, window_end,
+                    window_start if window_pace else None,  # cursor starts at start
+                    max(1, int(window_step or 1)), window_pace,
                 ),
             )
             return str(cur.fetchone()[0])
@@ -196,10 +223,20 @@ def update_task(
     entity_slug_set: bool = False,
     next_run_at: datetime | None = None,
     next_run_set: bool = False,
+    window_start: str | None = None,
+    window_end: str | None = None,
+    window_step: int | None = None,
+    window_pace: str | None = None,
+    window_set: bool = False,
 ) -> bool:
     """Patch a task. Only the fields passed (non-None) are written. `entity_slug`
     and `next_run_at` are nullable columns, so they use explicit *_set flags to
-    tell "clear it to NULL" apart from "don't touch it"."""
+    tell "clear it to NULL" apart from "don't touch it".
+
+    `window_set` rewrites the whole date window at once: it sets pace/start/end/
+    step and RESETS the cursor to `window_start` (so editing the window restarts
+    the backfill). Passing `window_pace=None` with `window_set=True` clears the
+    window, turning it back into an ordinary recurring task."""
     if not _is_uuid(task_id):
         return False
     sets: list[str] = []
@@ -220,6 +257,13 @@ def update_task(
         sets.append("enabled = %s"); params.append(enabled)
     if next_run_set:
         sets.append("next_run_at = %s"); params.append(next_run_at)
+    if window_set:
+        sets.append("window_pace = %s"); params.append(window_pace)
+        sets.append("window_start = %s"); params.append(window_start if window_pace else None)
+        sets.append("window_end = %s"); params.append(window_end if window_pace else None)
+        sets.append("window_step = %s"); params.append(max(1, int(window_step or 1)))
+        # Reset the cursor to the (new) start so an edited window restarts cleanly.
+        sets.append("window_cursor = %s"); params.append(window_start if window_pace else None)
     if not sets and not entity_slug_set:
         return False
     try:
@@ -305,6 +349,60 @@ def claim_due(task_id: str, next_run_at: datetime | None, now: datetime | None =
     except Exception as exc:  # noqa: BLE001
         log.warning("claim_due(%s) failed: %s", task_id, exc)
         return False
+
+
+def claim_due_window(task_id: str, scheduled_next: datetime | None, now: datetime | None = None):
+    """Atomically claim one day of a DATE-WINDOW task and advance its cursor.
+
+    Same multi-fire guard as `claim_due`, but for windowed tasks: inside one
+    transaction it locks the row (``FOR UPDATE``), re-checks it's still enabled and
+    due, reads the current cursor (the day to process), then advances the cursor by
+    the step and moves next_run_at per the window pace (now for 'catchup', the
+    scheduled slot for 'scheduled', or NULL when the range is exhausted). The
+    per-run decision lives in `scheduler.advance_window` so this stays pure storage.
+
+    Returns the claimed day (``datetime.date``) if THIS caller won the claim — the
+    single day the run should process — else None (another poll took it, it's no
+    longer due, or the backfill is complete)."""
+    if not _is_uuid(task_id):
+        return None
+    from ..scheduler import advance_window  # local import: avoid an import cycle
+
+    now = now or datetime.now(timezone.utc)
+    try:
+        with cursor() as cur:
+            cur.execute(
+                """SELECT window_cursor, window_end, window_step, window_pace,
+                          enabled, next_run_at
+                   FROM scheduled_tasks WHERE task_id = %s FOR UPDATE;""",
+                (task_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            win_cursor, win_end, win_step, win_pace, enabled, next_run_at = row
+            # Re-check the due predicate under the row lock: if a concurrent poll
+            # already claimed it, next_run_at is now in the future (or NULL).
+            if not enabled or next_run_at is None or next_run_at > now:
+                return None
+
+            claimed_day, new_cursor, new_next = advance_window(
+                win_cursor, win_end, win_step, win_pace, now, scheduled_next
+            )
+            if claimed_day is None:  # no valid cursor — nothing to process
+                return None
+
+            cur.execute(
+                """UPDATE scheduled_tasks
+                       SET window_cursor = %s, next_run_at = %s,
+                           last_status = 'running', updated_at = now()
+                   WHERE task_id = %s;""",
+                (new_cursor, new_next, task_id),
+            )
+            return claimed_day
+    except Exception as exc:  # noqa: BLE001
+        log.warning("claim_due_window(%s) failed: %s", task_id, exc)
+        return None
 
 
 def reap_stale_runs(older_than_minutes: int = 15) -> int:
