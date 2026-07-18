@@ -529,11 +529,13 @@ body {
 .meeting-view { display: none; }
 .context-view { display: none; }
 .tasks-view   { display: none; }
+.jobs-view    { display: none; }
 .app[data-view="agent"]   .chat         { display: flex; }
 .app[data-view="bills"]   .bills-view   { display: flex; }
 .app[data-view="meeting"] .meeting-view { display: flex; }
 .app[data-view="context"] .context-view { display: flex; }
 .app[data-view="tasks"]   .tasks-view   { display: flex; }
+.app[data-view="jobs"]    .jobs-view    { display: flex; }
 
 /* ═══════════════════════════════════════════════════════════
    Chat column
@@ -1502,7 +1504,7 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
    ═══════════════════════════════════════════════════════════ */
 :root { --tk: #8b5cf6; --tk-2: #a78bfa; }
 
-.tasks-view { flex: 1; flex-direction: column; min-width: 0; position: relative; overflow: hidden; }
+.tasks-view, .jobs-view { flex: 1; flex-direction: column; min-width: 0; position: relative; overflow: hidden; }
 .tasks-page { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 22px 24px 0; }
 
 .tasks-pg-header {
@@ -1710,6 +1712,15 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 .tk-run-badge.success { background: rgba(52,211,153,.16); color: #34d399; }
 .tk-run-badge.error { background: rgba(248,113,113,.16); color: #f87171; }
 .tk-run-badge.running { background: rgba(245,166,35,.16); color: var(--accent); }
+.tk-run-badge.cancelled { background: rgba(148,163,184,.16); color: #94a3b8; }
+/* Jobs: a small result summary line under a run + a stats grid on the card. */
+.jb-run-summary { font-size: 12px; color: var(--muted); padding: 4px 13px 10px; line-height: 1.5; }
+.jb-run-summary code { font-size: 11px; }
+.jb-counts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.jb-count-chip { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); }
+.jb-report-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; font-weight: 600;
+  color: var(--accent); text-decoration: none; padding: 5px 11px; border: 1px solid var(--accent); border-radius: 8px; }
+.jb-report-link:hover { background: rgba(245,166,35,.12); }
 .tk-run-trig { color: var(--muted); font-weight: 600; }
 .tk-run-time { margin-left: auto; color: var(--muted); }
 .tk-run-chev { color: var(--muted); }

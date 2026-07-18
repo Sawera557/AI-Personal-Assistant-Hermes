@@ -181,6 +181,20 @@ class Config:
             return False
         return not os.getenv("VERCEL")  # Vercel sets VERCEL=1 in its runtime
 
+    # ---- Jobs (code-driven cron jobs — the Jobs tab) -----------------------
+    # A registry of Python job functions (hermes/job_runner.py) fired by the same
+    # pull-based cron pattern as Scheduled Tasks (POST /api/jobs/run-due). The
+    # first job is the Google-reviews scraper (hermes/reviews_scraper.py).
+    #
+    # SerpAPI is the pluggable review provider. The free tier is 100 searches/mo
+    # (~3/day), so the scraper defaults to ONE bucket per day on rotation at a
+    # small per-run search budget — swap the key / raise the budget when you
+    # upgrade. Reuses SCHEDULER_SECRET for the /api/jobs/run-due cron auth.
+    SERPAPI_API_KEY: str = os.getenv("SERPAPI_API_KEY", "").strip()
+    SERPAPI_BASE_URL: str = os.getenv("SERPAPI_BASE_URL", "https://serpapi.com/search").rstrip("/")
+    # S3 key prefix the daily reviews CSV lands under: <prefix>/<YYYY-MM-DD>.csv
+    REVIEWS_S3_PREFIX: str = os.getenv("REVIEWS_S3_PREFIX", "google-reviews").strip("/") or "google-reviews"
+
     @classmethod
     def cors_origins(cls) -> list[str] | str:
         """Allowed origins for the API. Comma-separated CORS_ORIGINS, or "*"."""
