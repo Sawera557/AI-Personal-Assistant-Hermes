@@ -613,7 +613,7 @@ const openMobileNav  = () => appEl.classList.add("mobile-open");
 const closeMobileNav = () => appEl.classList.remove("mobile-open");
 
 // Wire up every hamburger button (chat topbar + bills topbar)
-["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context", "menu-btn-tasks", "menu-btn-files"].forEach((id) => {
+["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context", "menu-btn-tasks", "menu-btn-files", "menu-btn-jobs"].forEach((id) => {
   document.getElementById(id)?.addEventListener("click", openMobileNav);
 });
 
@@ -658,6 +658,10 @@ function setView(view) {
   // Lazy-init file explorer on first open
   if (view === "files" && typeof window._filesInit === "function") {
     window._filesInit();
+  }
+  // Lazy-init jobs on first open
+  if (view === "jobs" && typeof window._jobsInit === "function") {
+    window._jobsInit();
   }
 }
 

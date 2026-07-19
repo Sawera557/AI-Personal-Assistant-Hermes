@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from contextlib import contextmanager
 
@@ -137,14 +138,68 @@ def connect() -> psycopg.Connection:
     raise last_exc  # type: ignore[misc]
 
 
+# ── Connection pool ──────────────────────────────────────────────────────────
+# Opening a fresh RDS connection is EXPENSIVE (~2s: TLS + IAM auth + pgvector
+# type registration + first-statement warmup), and the app opened one per query.
+# This is a small thread-safe pool of reusable connections so that cost is paid
+# once and amortised. Idle connections older than DB_POOL_IDLE are recycled
+# (guards against the server dropping a long-idle socket). Disable with DB_POOL=0.
+_pool: list[tuple[psycopg.Connection, float]] = []   # (conn, released_at monotonic)
+_pool_lock = threading.Lock()
+_POOL_MAX = int(os.getenv("DB_POOL_MAX", "8"))
+_POOL_IDLE = float(os.getenv("DB_POOL_IDLE", "280"))  # seconds; under typical server idle timeouts
+_POOL_ENABLED = os.getenv("DB_POOL", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _pool_acquire() -> psycopg.Connection:
+    """A live connection — reused from the pool if one is available and fresh,
+    otherwise newly opened. Recycles closed / long-idle connections."""
+    if _POOL_ENABLED:
+        now = time.monotonic()
+        with _pool_lock:
+            while _pool:
+                conn, released_at = _pool.pop()
+                if conn.closed or (now - released_at) > _POOL_IDLE:
+                    try:
+                        conn.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    continue
+                return conn
+    return connect()
+
+
+def _pool_release(conn: psycopg.Connection, reusable: bool) -> None:
+    """Return a clean connection to the pool, or close it (on error / full pool /
+    pooling disabled). A connection that errored is never reused — its transaction
+    state is unknown."""
+    if not _POOL_ENABLED or not reusable or conn.closed:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    with _pool_lock:
+        if len(_pool) < _POOL_MAX:
+            _pool.append((conn, time.monotonic()))
+            return
+    try:
+        conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @contextmanager
 def cursor(commit: bool = True):
-    """Context manager yielding a cursor over a fresh connection.
+    """Context manager yielding a cursor over a POOLED connection.
 
-    Commits on clean exit (unless commit=False), rolls back on error, always
-    closes. Fine for scripts and request-scoped work; swap for a pool under load.
+    Commits on clean exit (unless commit=False), rolls back on error. On success
+    the connection is returned to the pool for reuse; on error it's rolled back
+    and discarded (never reused with an unknown transaction state). Set DB_POOL=0
+    to fall back to a fresh connection per call.
     """
-    conn = connect()
+    conn = _pool_acquire()
+    reusable = True
     try:
         with conn.cursor() as cur:
             yield cur
@@ -153,10 +208,15 @@ def cursor(commit: bool = True):
         else:
             conn.rollback()
     except Exception:
-        conn.rollback()
+        reusable = False
+        try:
+            if not conn.closed:
+                conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         raise
     finally:
-        conn.close()
+        _pool_release(conn, reusable)
 
 
 def ping() -> str:

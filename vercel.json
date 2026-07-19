@@ -15,6 +15,10 @@
     {
       "path": "/api/scheduled-tasks/run-due",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/jobs/run-due",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

@@ -80,6 +80,13 @@
             </svg>
             <span>Files</span>
           </button>
+          <button class="strip-tab" type="button" data-view="jobs" title="Jobs">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 4h4a2 2 0 0 1 2 2v2h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3V6a2 2 0 0 1 2-2z"/>
+              <path d="M8 8V6h8v2"/>
+            </svg>
+            <span>Jobs</span>
+          </button>
         </div>
 
         <button class="strip-toggle" id="strip-toggle" type="button" title="Toggle sidebar">
@@ -277,6 +284,30 @@
             <h2>Folders</h2>
             <div class="files-folder-tree" id="files-folder-tree" role="tree"></div>
             <p class="hint" id="files-tree-empty" hidden>No folders yet.</p>
+          </div>
+        </div>
+
+        <!-- Jobs panel: sidebar metadata for the Jobs section -->
+        <div class="panel-section" id="panel-jobs">
+          <div class="panel">
+            <h2>Jobs</h2>
+            <p class="hint">Recurring background jobs — scrapers &amp; data pipelines that run on a schedule and write their output to storage.</p>
+          </div>
+
+          <button id="jobs-refresh-btn" class="ghost new-convo">↻ Refresh</button>
+
+          <div class="panel">
+            <h2>How it works</h2>
+            <ul class="feature-list">
+              <li>Runs on a schedule, unattended</li>
+              <li><strong>Start</strong> to run now, <strong>Stop</strong> to cancel</li>
+              <li>Every run is saved &amp; reviewable</li>
+              <li>Status: running · finished · failed</li>
+            </ul>
+          </div>
+
+          <div class="panel push-bottom">
+            <p class="hint" id="jobs-cron-hint">Jobs fire when your scheduler pings <code>/api/jobs/run-due</code>. Use <strong>Start</strong> to run any job instantly.</p>
           </div>
         </div>
 
@@ -818,6 +849,69 @@
       </div>
     </main>
 
+    <!-- ── Main area: Jobs ────────────────────────────────────────── -->
+    <main class="jobs-view" id="jobs-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-jobs" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(139,92,246,.18);font-size:15px;">⚙️</span> Jobs</div>
+      </header>
+
+      <div class="tasks-page" id="jobs-page">
+        <div class="tasks-pg-header">
+          <div>
+            <h2 class="tasks-pg-title">Jobs</h2>
+            <p class="tasks-pg-sub">Recurring background jobs — scrapers &amp; pipelines that run on a schedule.</p>
+          </div>
+          <button class="tasks-new-btn" id="jobs-refresh-main" type="button">↻ Refresh</button>
+        </div>
+
+        <div class="tasks-list" id="jobs-list"></div>
+        <div class="tasks-empty" id="jobs-empty" hidden>
+          <div class="tasks-empty-icon">⚙️</div>
+          <h3>No jobs yet</h3>
+          <p class="hint">Jobs are set up in the backend. Once the database migration has run, the Google Reviews Scraper appears here.</p>
+        </div>
+      </div>
+
+      <!-- ── Job detail modal (info + runs + start/stop) ───────────── -->
+      <div class="tk-overlay" id="jb-detail-overlay" hidden>
+        <div class="tk-modal">
+          <div class="tk-header">
+            <div class="tk-detail-head">
+              <div class="tk-title" id="jb-detail-name">Job</div>
+              <div class="tk-detail-sched" id="jb-detail-sched"></div>
+            </div>
+            <button class="tk-close-btn" id="jb-detail-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="tk-body">
+            <div class="tk-detail-meta" id="jb-detail-meta"></div>
+
+            <label class="jb-opt">
+              <input type="checkbox" id="jb-allow-multi">
+              <span>Allow multiple runs per day <span class="hint">(off = runs at most once daily)</span></span>
+            </label>
+
+            <div class="tk-runs-head">
+              <span>Run history</span>
+              <span class="hint" id="jb-runs-count"></span>
+            </div>
+            <div class="tk-runs" id="jb-runs"></div>
+            <p class="hint" id="jb-runs-empty" hidden>No runs yet. Press “Start” to run it now.</p>
+          </div>
+          <div class="tk-footer">
+            <span class="hint" id="jb-detail-msg"></span>
+            <div class="tk-footer-actions">
+              <button class="tk-btn tk-danger" id="jb-detail-stop" type="button" hidden>■ Stop</button>
+              <button class="tk-btn tk-save" id="jb-detail-run" type="button">▶ Start</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
   </div><!-- /app -->
 
   {% if voice_enabled %}
@@ -851,6 +945,7 @@
   <script src="/static/meeting.js?v={{ v }}"></script>
   <script src="/static/tasks.js?v={{ v }}"></script>
   <script src="/static/files.js?v={{ v }}"></script>
+  <script src="/static/jobs.js?v={{ v }}"></script>
   {% if voice_enabled %}<script src="/static/voice.js?v={{ v }}"></script>{% endif %}
 </body>
 </html>
