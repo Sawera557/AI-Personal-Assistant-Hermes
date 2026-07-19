@@ -18,6 +18,7 @@
     { slug: "quickbooks", label: "QuickBooks", emoji: "💰" },
     { slug: "wati", label: "WhatsApp", emoji: "💬" },
     { slug: "notion", label: "Notion", emoji: "📝" },
+    { slug: "jira", label: "Jira", emoji: "🧩" },
     { slug: "zoom", label: "Zoom", emoji: "🎥" },
     { slug: "web", label: "Web search", emoji: "🌐" },
   ];

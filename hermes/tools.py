@@ -198,6 +198,61 @@ def build_tools(
             "description": "Cap on the number of events returned. Defaults to 20.",
         },
     }
+    jira_search_props: dict[str, Any] = {
+        "jql": {
+            "type": "string",
+            "description": (
+                "Full JQL query, e.g. \"project = ABC AND status = 'In Progress'\". "
+                "When given, `project`/`status`/`assignee_email` below are ignored."
+            ),
+        },
+        "project": {
+            "type": "string",
+            "description": "Project key filter, e.g. 'ABC'. Ignored if `jql` is given.",
+        },
+        "status": {
+            "type": "string",
+            "description": "Status name filter, e.g. 'In Progress'. Ignored if `jql` is given.",
+        },
+        "assignee_email": {
+            "type": "string",
+            "description": "Filter to issues assigned to this person's email. Ignored if `jql` is given.",
+        },
+        "max_results": {"type": "integer", "description": "Cap on results. Defaults to 20."},
+        "fields": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Which fields to return. Defaults to summary, status, assignee, priority, created, updated.",
+        },
+    }
+    jira_get_props: dict[str, Any] = {
+        "issue_key": {"type": "string", "description": "The issue key, e.g. 'ABC-123'."},
+        "fields": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Optional: limit which fields come back.",
+        },
+    }
+    jira_create_props: dict[str, Any] = {
+        "project_key": {"type": "string", "description": "The Jira project key to create the issue in, e.g. 'ABC'."},
+        "summary": {"type": "string", "description": "Short issue title."},
+        "description": {"type": "string", "description": "Optional longer description (plain text)."},
+        "issue_type": {
+            "type": "string",
+            "description": "Issue type name, e.g. 'Task', 'Bug', 'Story'. Defaults to 'Task'.",
+        },
+        "priority": {"type": "string", "description": "Optional priority name, e.g. 'High'."},
+        "labels": {"type": "array", "items": {"type": "string"}, "description": "Optional labels to attach."},
+        "assignee_email": {
+            "type": "string",
+            "description": "Optional: email of the person to assign this issue to immediately.",
+        },
+    }
+    jira_assign_props: dict[str, Any] = {
+        "issue_key": {"type": "string", "description": "The issue key to assign, e.g. 'ABC-123'."},
+        "assignee_email": {
+            "type": "string",
+            "description": "Email of the person to assign. Pass 'unassigned' to remove the current assignee.",
+        },
+    }
 
     if fan_out:
         connected = Config.connected_business_slugs()
@@ -228,6 +283,10 @@ def build_tools(
         zoom_invite_props["business"] = business_param
         zoom_list_props["business"] = business_param
         calendar_props["business"] = business_param
+        jira_search_props["business"] = business_param
+        jira_get_props["business"] = business_param
+        jira_create_props["business"] = business_param
+        jira_assign_props["business"] = business_param
         # Optional, unlike the others above — a created file isn't tied to any
         # business's connection, so leaving it out just files it generally.
         create_file_props["business"] = {
@@ -311,6 +370,20 @@ def build_tools(
                 "user's meetings/recordings/webinars: same paths as above with "
                 "'/v2/users/{userId}/...' instead of '/v2/users/me/...'; account-wide settings "
                 "(paid plans only): method='GET', path='/v2/accounts/{accountId}/settings'. "
+                "Jira (app='jira') — prefer the dedicated `jira_search_issues`, "
+                "`jira_get_issue`, `jira_create_issue`, and `jira_assign_issue` tools for "
+                "everyday work; they already resolve the Cloud id and any accountId lookups. "
+                "Fall back to this raw tool only for things those don't cover (transitions, "
+                "comments, custom fields). Every Jira path needs the site's Cloud id first: "
+                "method='GET', path='/oauth/token/accessible-resources' returns a list with "
+                "each site's `id` (the cloudId) — then every other call is "
+                "path='/ex/jira/{cloudId}/rest/api/3/...', e.g. "
+                "path='/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/transitions' to list "
+                "or (POST) trigger a status transition, or "
+                "path='/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/comment' (POST) to "
+                "add a comment (body uses Atlassian's doc format: {'body': {'type': 'doc', "
+                "'version': 1, 'content': [{'type': 'paragraph', 'content': [{'type': 'text', "
+                "'text': '...'}]}]}}). "
                 "Always do read-only (GET) calls to discover IDs before any write. "
                 "Do NOT call this for POST/PUT/PATCH/DELETE until the user has explicitly "
                 "confirmed the change."
@@ -450,6 +523,57 @@ def build_tools(
                 "type": "object",
                 "properties": zoom_list_props,
                 "required": [],
+            },
+        },
+        {
+            "name": "jira_search_issues",
+            "description": (
+                "Search/list Jira issues (tasks, bugs, stories) via JQL. Pass a full `jql` "
+                "query for anything specific, or use the `project`/`status`/`assignee_email` "
+                "convenience filters to build a simple AND query for you. Handles the Jira "
+                "Cloud id lookup and (for `assignee_email`) the accountId lookup internally."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": jira_search_props,
+                "required": [],
+            },
+        },
+        {
+            "name": "jira_get_issue",
+            "description": "Get a single Jira issue's full details by its key (e.g. 'ABC-123').",
+            "input_schema": {
+                "type": "object",
+                "properties": jira_get_props,
+                "required": ["issue_key"],
+            },
+        },
+        {
+            "name": "jira_create_issue",
+            "description": (
+                "Create a new Jira issue (task, bug, story, ...). Optionally assign it to "
+                "someone immediately via `assignee_email` — the accountId lookup is handled "
+                "for you. Always confirm the project, summary, and assignee with the user "
+                "before calling this, since it's a write."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": jira_create_props,
+                "required": ["project_key", "summary"],
+            },
+        },
+        {
+            "name": "jira_assign_issue",
+            "description": (
+                "Assign (or reassign) an existing Jira issue to someone by email — looks up "
+                "their Jira accountId for you. Pass `assignee_email='unassigned'` to remove "
+                "the current assignee instead. Confirm the issue and the person with the user "
+                "before calling this."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": jira_assign_props,
+                "required": ["issue_key", "assignee_email"],
             },
         },
         {
@@ -873,6 +997,10 @@ _TOOL_REQUIRED_APPS: dict[str, set[str]] = {
     "zoom_send_invite": {"zoom", "zoom-admin"},
     "zoom_list_meetings": {"zoom", "zoom-admin"},
     "calendar_list_upcoming": {"google-calendar"},
+    "jira_search_issues": {"jira"},
+    "jira_get_issue": {"jira"},
+    "jira_create_issue": {"jira"},
+    "jira_assign_issue": {"jira"},
     "web_search": {"web"},
     "web_fetch": {"web"},
     "wati_list_contacts": {"wati"},
@@ -916,6 +1044,7 @@ LOCAL_TOOLS = {
     "maton_request", "maton_list_connections", "maton_create_connection",
     "drive_read_file", "read_document", "send_email", "zoom_send_invite", "search_business_knowledge",
     "create_file", "worldbank_data", "calendar_list_upcoming", "zoom_list_meetings",
+    "jira_search_issues", "jira_get_issue", "jira_create_issue", "jira_assign_issue",
     "create_scheduled_task", "list_scheduled_tasks",
     "update_scheduled_task", "delete_scheduled_task",
     *WATI_TOOLS,
@@ -1483,6 +1612,117 @@ def _zoom_list_meetings(client: MatonClient, tool_input: dict[str, Any]) -> dict
     return {**result, "data": {"meetings": meetings}}
 
 
+def _jira_cloud_id(client: MatonClient) -> str:
+    """Resolve the Jira Cloud id for this connection. Every Jira REST call needs
+    it in the path (`/ex/jira/{cloudId}/rest/api/3/...`) — unlike QuickBooks'
+    `:realmId`, Maton does not auto-substitute this one."""
+    resp = client.request("jira", "GET", "/oauth/token/accessible-resources")
+    if not resp.get("ok"):
+        raise MatonError("Could not resolve the Jira site (accessible-resources call failed).")
+    resources = resp.get("data") or []
+    if not resources:
+        raise MatonError("No accessible Jira site found for this connection.")
+    return resources[0]["id"]
+
+
+def _jira_find_account_id(client: MatonClient, cloud_id: str, query: str) -> str:
+    """Resolve a Jira accountId from an email or display name via user search —
+    Jira's assignee field takes an accountId, never a raw email."""
+    resp = client.request(
+        "jira", "GET", f"/ex/jira/{cloud_id}/rest/api/3/user/search", query={"query": query}
+    )
+    if not resp.get("ok"):
+        raise MatonError(f"Jira user search failed for '{query}'.")
+    users = resp.get("data") or []
+    if not users:
+        raise MatonError(f"No Jira user found matching '{query}'.")
+    return users[0]["accountId"]
+
+
+def _jira_search_issues(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    cloud_id = _jira_cloud_id(client)
+    jql = (tool_input.get("jql") or "").strip()
+    if not jql:
+        clauses = []
+        project = tool_input.get("project")
+        if project:
+            clauses.append(f"project = {project}")
+        status = tool_input.get("status")
+        if status:
+            clauses.append(f'status = "{status}"')
+        assignee_email = tool_input.get("assignee_email")
+        if assignee_email:
+            account_id = _jira_find_account_id(client, cloud_id, assignee_email)
+            clauses.append(f'assignee = "{account_id}"')
+        if not clauses:
+            raise MatonError(
+                "Provide `jql`, or at least one of project/status/assignee_email to filter."
+            )
+        jql = " AND ".join(clauses) + " ORDER BY created DESC"
+
+    fields = tool_input.get("fields") or ["summary", "status", "assignee", "priority", "created", "updated"]
+    return client.request(
+        "jira", "GET", f"/ex/jira/{cloud_id}/rest/api/3/search/jql",
+        query={
+            "jql": jql,
+            "maxResults": tool_input.get("max_results") or 20,
+            "fields": ",".join(fields),
+        },
+    )
+
+
+def _jira_get_issue(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    cloud_id = _jira_cloud_id(client)
+    issue_key = tool_input["issue_key"]
+    query = {"fields": ",".join(tool_input["fields"])} if tool_input.get("fields") else None
+    return client.request("jira", "GET", f"/ex/jira/{cloud_id}/rest/api/3/issue/{issue_key}", query=query)
+
+
+def _jira_create_issue(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    cloud_id = _jira_cloud_id(client)
+    fields: dict[str, Any] = {
+        "project": {"key": tool_input["project_key"]},
+        "summary": tool_input["summary"],
+        "issuetype": {"name": tool_input.get("issue_type") or "Task"},
+    }
+    description = tool_input.get("description")
+    if description:
+        fields["description"] = {
+            "type": "doc", "version": 1,
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": description}]}],
+        }
+    priority = tool_input.get("priority")
+    if priority:
+        fields["priority"] = {"name": priority}
+    labels = tool_input.get("labels")
+    if labels:
+        fields["labels"] = labels
+    assignee_email = tool_input.get("assignee_email")
+    if assignee_email:
+        fields["assignee"] = {"accountId": _jira_find_account_id(client, cloud_id, assignee_email)}
+
+    return client.request("jira", "POST", f"/ex/jira/{cloud_id}/rest/api/3/issue", body={"fields": fields})
+
+
+def _jira_assign_issue(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    cloud_id = _jira_cloud_id(client)
+    issue_key = tool_input["issue_key"]
+    assignee_email = (tool_input.get("assignee_email") or "").strip()
+    account_id = (
+        None if assignee_email.lower() == "unassigned"
+        else _jira_find_account_id(client, cloud_id, assignee_email)
+    )
+
+    result = client.request(
+        "jira", "PUT", f"/ex/jira/{cloud_id}/rest/api/3/issue/{issue_key}/assignee",
+        body={"accountId": account_id},
+    )
+    if result.get("ok") and not result.get("data"):
+        # Jira returns 204 No Content on success — give the model something readable.
+        result = {**result, "data": {"issue_key": issue_key, "assigned_to": assignee_email or "unassigned"}}
+    return result
+
+
 def _wati_get_media(
     client: MatonClient, tool_input: dict[str, Any], active_business: str | None
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -1835,6 +2075,14 @@ def dispatch(
                 result = _zoom_send_invite(client, tool_input)
             elif name == "zoom_list_meetings":
                 result = _zoom_list_meetings(client, tool_input)
+            elif name == "jira_search_issues":
+                result = _jira_search_issues(client, tool_input)
+            elif name == "jira_get_issue":
+                result = _jira_get_issue(client, tool_input)
+            elif name == "jira_create_issue":
+                result = _jira_create_issue(client, tool_input)
+            elif name == "jira_assign_issue":
+                result = _jira_assign_issue(client, tool_input)
             elif name in WATI_TOOLS:
                 wati = WatiClient(client)
                 if name == "wati_list_contacts":
@@ -1912,6 +2160,10 @@ _TOOL_STATUS: dict[str, str] = {
     "zoom_send_invite": "🎥 Sending your Zoom invite…",
     "zoom_list_meetings": "🎥 Checking your Zoom meetings…",
     "calendar_list_upcoming": "📅 Peeking at your calendar…",
+    "jira_search_issues": "🧩 Searching Jira issues…",
+    "jira_get_issue": "🧩 Pulling up that Jira issue…",
+    "jira_create_issue": "🧩 Creating a Jira issue…",
+    "jira_assign_issue": "🧩 Assigning that Jira issue…",
     "search_business_knowledge": "🔎 Searching your knowledge base…",
     "create_file": "📝 Putting your file together…",
     "worldbank_data": "🌍 Pulling stats from the World Bank…",
@@ -1942,6 +2194,7 @@ _MATON_APP_STATUS: dict[str, str] = {
     "zoom": "🎥 Dialing into Zoom…",
     "zoom-admin": "🎥 Dialing into Zoom…",
     "quickbooks": "💰 Crunching the QuickBooks numbers…",
+    "jira": "🧩 Working in Jira…",
     "wati": "💬 Pinging WhatsApp…",
     "fathom": "🎙️ Pulling up the meeting recording…",
     "pdf-co": "📄 Processing a PDF…",

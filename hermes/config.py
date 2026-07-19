@@ -34,6 +34,7 @@ APP_LABELS: dict[str, str] = {
     "zoom-admin": "Zoom Admin (account-wide: any user's meetings/recordings/settings)",
     "wati": "WATI (WhatsApp Business messaging)",
     "notion": "Notion (pages, databases, comments)",
+    "jira": "Jira (issues/tasks, assignment)",
 }
 
 
@@ -195,7 +196,7 @@ class Config:
             "HERMES_APPS",
             "quickbooks,pdf-co,google-contacts,fathom,google-meet,google-forms,"
             "google-sheets,google-docs,google-drive,google-calendar,google-mail,wati,notion,"
-            "zoom,zoom-admin",
+            "zoom,zoom-admin,jira",
         )
         return [a.strip() for a in raw.split(",") if a.strip()]
 
