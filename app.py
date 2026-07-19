@@ -88,6 +88,8 @@ from hermes.memory_extract import extract_async
 from hermes import models as hermes_models
 from hermes import scheduler as hermes_scheduler
 from hermes.db import scheduled_tasks as tasks_db
+from hermes import job_runner as hermes_jobs
+from hermes.jobs_api import router as jobs_router
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
 
@@ -126,11 +128,23 @@ async def _lifespan(_app: "FastAPI"):
             hermes_scheduler.start_background_poller(Config.SCHEDULER_POLL_SECONDS)
         except Exception:  # noqa: BLE001 — never block startup on the poller
             log.warning("Could not start in-process scheduler", exc_info=True)
+        # Same deal for code-driven Jobs (the Jobs tab): fire due jobs on any
+        # always-on process; on Vercel the vercel.json cron hits /api/jobs/run-due.
+        try:
+            hermes_jobs.start_background_poller(Config.SCHEDULER_POLL_SECONDS)
+        except Exception:  # noqa: BLE001
+            log.warning("Could not start in-process jobs poller", exc_info=True)
 
     yield
 
 
 app = FastAPI(title="Hermes AI Agent API", version="0.1.0", lifespan=_lifespan)
+
+# Jobs (the Jobs tab) — /api/jobs/* routes live in hermes/jobs_api.py.
+app.include_router(jobs_router)
+# Review intelligence reports — /api/reviews/* routes live in hermes/reviews_api.py.
+from hermes.reviews_api import router as reviews_router
+app.include_router(reviews_router)
 
 # ---- Web UI (single-page chat with conversation history) ------------------
 _BASE_DIR = Path(__file__).resolve().parent
@@ -229,7 +243,7 @@ def _asset_version() -> int:
     """A version stamp that changes whenever a static asset changes, so browsers
     fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
     latest = 0.0
-    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js", "tasks.js", "context.js", "model.js", "files.js"):
+    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js", "tasks.js", "context.js", "model.js", "files.js", "jobs.js"):
         try:
             latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
         except OSError:
