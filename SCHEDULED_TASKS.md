@@ -267,6 +267,53 @@ entity indexes.
   frontend builds its Mon–Sun chips against the same numbering.
 - `times`: `["07:00","13:00","19:00"]` → a 3×/day task.
 
+### Date window — one-day-per-run backfill (migration 0013)
+
+The base model fires the **same prompt every run** with a throwaway session and no
+cross-run state, so it can't natively "process day N on run N" across a range. The
+optional **date window** adds exactly that — a per-task cursor that walks
+`[window_start … window_end]` **one day per run**, so a task like *"read each day's
+WhatsApp for Nour Hammam mentions and batch a report"* covers a whole month, one
+focused batch per fire.
+
+Columns on `scheduled_tasks` (all NULL/unset for an ordinary task):
+
+| Column | Meaning |
+|--------|---------|
+| `window_start` | first day to process (inclusive) |
+| `window_end` | last day (inclusive); NULL = open-ended (forward) |
+| `window_cursor` | the **next** day this task will process; advances by `window_step` per successful claim. Starts at `window_start`. |
+| `window_step` | days to advance per run (default 1) |
+| `window_pace` | NULL = no window; `catchup` = re-arm `next_run_at` to *now* after each run so a past range drains as fast as the poller ticks (a 31-day backfill finishes in minutes, not weeks); `scheduled` = advance one day per normal scheduled fire |
+
+**Firing (windowed path).** `execute_and_record` detects `window_pace` and calls
+`repo.claim_due_window(task_id, scheduled_next)` instead of `claim_due`. Inside one
+`FOR UPDATE` transaction it re-checks due, reads the cursor, and — via the **pure,
+unit-tested** `scheduler.advance_window(cursor, end, step, pace, now, scheduled_next)`
+— computes `(claimed_day, new_cursor, new_next_run_at)`, then writes the advanced
+cursor and next fire atomically (same multi-fire guard as `claim_due`). The claimed
+day is stashed on the task as `_window_day`; `build_run_prompt` prepends a hard
+**"process EXACTLY ONE day: {date}"** guardrail with a `batch N of M` marker, so each
+run produces one dated batch and later runs cover the rest. When the cursor passes
+`window_end`, `new_next_run_at` is NULL → the task stops firing but stays enabled
+(its run history and last result remain visible). **Manual "Run now"** on a windowed
+task processes the current pending day **without** advancing the cursor (mirrors how
+manual runs never move the schedule).
+
+**API.** `POST`/`PATCH` accept an optional `window: {pace, start, end, step_days}`.
+On create, a `catchup` window sets `next_run_at = now` (`scheduler.initial_next_run`)
+so it starts immediately. On `PATCH`, `window: {...}` replaces the window and
+**restarts the cursor** at the new start; `window: null` clears it back to an
+ordinary task. Validation (`app._validate_window`): valid pace, ISO dates,
+`end ≥ start`, `step ≥ 1`, and `catchup` requires an `end` (an open-ended catchup
+would fire forever). The editor exposes this as a **"Process a date range, one day
+per run"** toggle; cards show a `📆 Backfill Jun 17 → Jul 17 · 1 day/run · next … (N left)`
+line (`scheduler.describe_window`).
+
+> Forward-going daily digests **don't** need a window — a plain `daily` task already
+> fires once per day and `build_run_prompt` injects the run's date. The window is
+> specifically for **bounded backfills** of an explicit (usually past) range.
+
 ---
 
 ## 10. Code map
@@ -274,8 +321,9 @@ entity indexes.
 | File | Responsibility |
 |------|----------------|
 | `hermes/db/migrations/0012_scheduled_tasks.sql` | the two tables + indexes |
-| `hermes/db/scheduled_tasks.py` | **storage only** — `create_task`, `get_task`, `list_tasks`, `update_task`, `delete_task`, `due`, `claim_due` (atomic claim that advances `next_run_at` up front), `reap_stale_runs` (close dead-process runs), `start_run`, `finish_run`, `list_runs`. Mirrors `hermes/db/meetings.py`'s owner/entity resolution and graceful-degradation style. Never runs the agent. |
-| `hermes/scheduler.py` | **when + what** — schedule math (`compute_next_run`, `describe_schedule`), autonomy guardrails (`build_run_prompt`), the run (`run_task`), the record-and-advance orchestration (`execute_and_record`, `run_due`), and the in-process poller (`start_background_poller`). Also exports `VALID_FREQUENCIES`, `VALID_AUTONOMY`, `DEFAULT_TZ`. |
+| `hermes/db/migrations/0013_scheduled_task_window.sql` | the `window_*` columns for one-day-per-run backfills |
+| `hermes/db/scheduled_tasks.py` | **storage only** — `create_task`, `get_task`, `list_tasks`, `update_task`, `delete_task`, `due`, `claim_due` (atomic claim that advances `next_run_at` up front), `claim_due_window` (windowed claim: advances the date cursor + returns the claimed day), `reap_stale_runs` (close dead-process runs), `start_run`, `finish_run`, `list_runs`. Mirrors `hermes/db/meetings.py`'s owner/entity resolution and graceful-degradation style. Never runs the agent. |
+| `hermes/scheduler.py` | **when + what** — schedule math (`compute_next_run`, `describe_schedule`), window math (`advance_window`, `describe_window`, `window_batch_position`, `initial_next_run`), autonomy + single-day guardrails (`build_run_prompt`), the run (`run_task`), the record-and-advance orchestration (`execute_and_record`, `run_due`), and the in-process poller (`start_background_poller`). Also exports `VALID_FREQUENCIES`, `VALID_AUTONOMY`, `VALID_WINDOW_PACES`, `DEFAULT_TZ`. |
 | `hermes/tools.py` | `build_tools(active_business, allowed_apps=…)` narrows the toolset; `_restrict_tools` + `_TOOL_REQUIRED_APPS` drop app-gated tools whose app isn't allowed; `maton_request`'s app enum is hard-narrowed. |
 | `hermes/agent.py` | `run_turn` / `stream_turn` gained an `allowed_apps` param (threaded to `build_tools`); everything else identical to chat. |
 | `hermes/config.py` | `SCHEDULER_SECRET`, `SCHEDULER_DEFAULT_TZ`, `SCHEDULER_POLL_SECONDS`, `scheduler_inprocess()`. |

@@ -1586,19 +1586,88 @@ def _validate_schedule(schedule: dict) -> str | None:
     return None
 
 
+def _validate_window(window: dict | None) -> str | None:
+    """Return an error string if the optional date window is unusable, else None.
+
+    A window turns a task into a one-day-per-run backfill over [start … end]."""
+    if not window:
+        return None
+    from datetime import date as _date
+    pace = (window.get("pace") or "").strip()
+    if pace not in hermes_scheduler.VALID_WINDOW_PACES:
+        return f"window.pace must be one of {sorted(hermes_scheduler.VALID_WINDOW_PACES)}."
+    try:
+        start = _date.fromisoformat((window.get("start") or "").strip())
+    except ValueError:
+        return "window.start must be a date (YYYY-MM-DD)."
+    end_raw = (window.get("end") or "").strip()
+    end = None
+    if end_raw:
+        try:
+            end = _date.fromisoformat(end_raw)
+        except ValueError:
+            return "window.end must be a date (YYYY-MM-DD) or empty."
+    if end and end < start:
+        return "window.end must be on or after window.start."
+    if pace == "catchup" and not end:
+        return "A 'catchup' backfill needs an end date (an open-ended range would fire forever)."
+    step = window.get("step_days", 1)
+    if not isinstance(step, int) or step < 1:
+        return "window.step_days must be an integer ≥ 1."
+    return None
+
+
 def _enrich_task(task: dict) -> dict:
-    """Add the human schedule summary the UI shows on each card."""
+    """Add the human schedule + window summaries the UI shows on each card."""
     if task:
         task["schedule_summary"] = hermes_scheduler.describe_schedule(
             task.get("schedule") or {}, task.get("timezone")
         )
+        task["window_summary"] = hermes_scheduler.describe_window(task)
     return task
+
+
+def _enrich_run(run: dict) -> dict:
+    """Attach a `files` list to a run: any files it created (via `create_file`),
+    with a FRESH presigned download link. The run's tool trace stores each file's
+    stable `s3_uri` (the presigned url created at run time has since expired), so
+    we re-presign here every time the run is viewed."""
+    if not run:
+        return run
+    files = []
+    for call in (run.get("tool_calls") or []):
+        f = call.get("file") if isinstance(call, dict) else None
+        if not f or not f.get("s3_uri"):
+            continue
+        url = None
+        try:
+            url = s3.presign(f["s3_uri"], expires=24 * 3600)
+        except Exception:  # noqa: BLE001 — a bad/expired uri shouldn't break the view
+            url = None
+        files.append({
+            "filename": f.get("filename"),
+            "content_type": f.get("content_type"),
+            "size_bytes": f.get("size_bytes"),
+            "download_url": url,
+        })
+    run["files"] = files
+    return run
 
 
 class ScheduleBody(BaseModel):
     frequency: str = "daily"           # hourly | daily | weekdays | weekly
     times: list[str] = []              # ["07:00", "13:00", ...] wall-clock
     days_of_week: list[int] = []       # 0=Mon … 6=Sun, for weekly
+
+
+class WindowBody(BaseModel):
+    """Optional date window: process [start … end] ONE day per run, advancing a
+    cursor each fire. `pace`='catchup' drains a past range as fast as the poller
+    ticks; 'scheduled' processes one day per normal scheduled fire."""
+    pace: str                          # catchup | scheduled
+    start: str                         # 'YYYY-MM-DD' — first day (inclusive)
+    end: str | None = None             # 'YYYY-MM-DD' — last day; None = open-ended
+    step_days: int = 1                 # days to advance per run
 
 
 class TaskCreateBody(BaseModel):
@@ -1610,6 +1679,7 @@ class TaskCreateBody(BaseModel):
     schedule: ScheduleBody
     timezone: str | None = None
     enabled: bool = True
+    window: WindowBody | None = None   # optional backfill window
 
 
 @app.get("/api/scheduled-tasks")
@@ -1646,6 +1716,10 @@ async def create_scheduled_task(body: TaskCreateBody):
     if err := _validate_schedule(schedule):
         return JSONResponse({"error": err}, status_code=400)
 
+    window = body.window.model_dump() if body.window else None
+    if err := _validate_window(window):
+        return JSONResponse({"error": err}, status_code=400)
+
     business = (body.business or "").strip()
     entity_slug = None
     if business and business != "all":
@@ -1654,7 +1728,8 @@ async def create_scheduled_task(body: TaskCreateBody):
             return JSONResponse({"error": f"Unknown or unmapped business '{business}'."}, status_code=400)
 
     tz = (body.timezone or Config.SCHEDULER_DEFAULT_TZ).strip() or Config.SCHEDULER_DEFAULT_TZ
-    next_run = hermes_scheduler.compute_next_run(schedule, tz) if body.enabled else None
+    win_pace = window["pace"] if window else None
+    next_run = hermes_scheduler.initial_next_run(schedule, tz, body.enabled, win_pace)
 
     task_id = await run_in_threadpool(
         tasks_db.create_task,
@@ -1667,6 +1742,10 @@ async def create_scheduled_task(body: TaskCreateBody):
         autonomy=body.autonomy,
         enabled=body.enabled,
         next_run_at=next_run,
+        window_start=(window["start"] if window else None),
+        window_end=(window["end"] if window else None),
+        window_step=(window["step_days"] if window else 1),
+        window_pace=win_pace,
     )
     if not task_id:
         return JSONResponse({"error": "Could not create the task."}, status_code=500)
@@ -1707,7 +1786,7 @@ async def get_scheduled_task(task_id: str):
     if not task:
         return JSONResponse({"error": "Task not found."}, status_code=404)
     runs = await run_in_threadpool(tasks_db.list_runs, task_id, 20)
-    return {"task": _enrich_task(task), "runs": runs}
+    return {"task": _enrich_task(task), "runs": [_enrich_run(r) for r in runs]}
 
 
 class TaskPatchBody(BaseModel):
@@ -1719,6 +1798,9 @@ class TaskPatchBody(BaseModel):
     schedule: ScheduleBody | None = None
     timezone: str | None = None
     enabled: bool | None = None
+    # Send `window: {...}` to set/replace the backfill window (restarts its
+    # cursor); send `window: null` to clear it back to an ordinary task.
+    window: WindowBody | None = None
 
 
 @app.patch("/api/scheduled-tasks/{task_id}")
@@ -1755,6 +1837,16 @@ async def update_scheduled_task(task_id: str, body: TaskPatchBody):
         kwargs["timezone_name"] = body.timezone.strip()
     if "enabled" in sent:
         kwargs["enabled"] = body.enabled
+    if "window" in sent:
+        # window: {...} sets/replaces (restarts cursor); window: null clears it.
+        window = body.window.model_dump() if body.window else None
+        if err := _validate_window(window):
+            return JSONResponse({"error": err}, status_code=400)
+        kwargs["window_set"] = True
+        kwargs["window_pace"] = window["pace"] if window else None
+        kwargs["window_start"] = window["start"] if window else None
+        kwargs["window_end"] = window["end"] if window else None
+        kwargs["window_step"] = window["step_days"] if window else 1
     if "business" in sent:
         business = (body.business or "").strip()
         if not business or business == "all":
@@ -1766,12 +1858,16 @@ async def update_scheduled_task(task_id: str, body: TaskPatchBody):
             kwargs["entity_slug"] = resolved
         kwargs["entity_slug_set"] = True
 
-    # Recompute next_run_at whenever timing-relevant fields change.
+    # Recompute next_run_at whenever timing-relevant fields change (schedule,
+    # timezone, enabled, or the backfill window). A newly-set 'catchup' window
+    # fires immediately; clearing/replacing the window re-arms from the schedule.
     schedule = kwargs.get("schedule", existing.get("schedule") or {})
     tz = kwargs.get("timezone_name", existing.get("timezone"))
     enabled = kwargs.get("enabled", existing.get("enabled"))
-    if {"schedule", "timezone_name", "enabled"} & kwargs.keys():
-        kwargs["next_run_at"] = hermes_scheduler.compute_next_run(schedule, tz) if enabled else None
+    win_pace = kwargs.get("window_pace", existing.get("window_pace")) \
+        if ("window_set" in kwargs or existing.get("window_pace")) else None
+    if {"schedule", "timezone_name", "enabled", "window_set"} & kwargs.keys():
+        kwargs["next_run_at"] = hermes_scheduler.initial_next_run(schedule, tz, enabled, win_pace)
         kwargs["next_run_set"] = True
 
     ok = await run_in_threadpool(lambda: tasks_db.update_task(task_id, **kwargs))
@@ -1792,7 +1888,7 @@ async def delete_scheduled_task(task_id: str):
 @app.get("/api/scheduled-tasks/{task_id}/runs")
 async def list_scheduled_task_runs(task_id: str, limit: int = 20):
     runs = await run_in_threadpool(tasks_db.list_runs, task_id, max(1, min(limit, 100)))
-    return {"task_id": task_id, "runs": runs}
+    return {"task_id": task_id, "runs": [_enrich_run(r) for r in runs]}
 
 
 @app.post("/api/scheduled-tasks/{task_id}/run")

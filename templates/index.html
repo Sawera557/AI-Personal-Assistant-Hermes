@@ -633,7 +633,10 @@
         <div class="tk-modal">
           <div class="tk-header">
             <div class="tk-title" id="tk-editor-title">New scheduled task</div>
-            <button class="tk-close-btn" id="tk-editor-close" type="button" aria-label="Close">✕</button>
+            <div class="tk-header-actions">
+              <button class="tk-close-btn" id="tk-editor-expand" type="button" aria-label="Expand to full screen" title="Expand to full screen">⤢</button>
+              <button class="tk-close-btn" id="tk-editor-close" type="button" aria-label="Close">✕</button>
+            </div>
           </div>
           <div class="tk-body">
 
@@ -692,6 +695,33 @@
                 </div>
               </div>
               <p class="tk-sched-preview" id="tk-sched-preview"></p>
+            </div>
+
+            <!-- Backfill / date window -->
+            <label class="tk-label tk-window-toggle">
+              <input type="checkbox" id="tk-window-on" />
+              <span>Process a date range, one day per run <span class="tk-hint-inline">(backfill — each run reads a single day and reports, marching across the range)</span></span>
+            </label>
+            <div class="tk-window" id="tk-window" hidden>
+              <div class="tk-window-row">
+                <div class="tk-field">
+                  <label class="tk-sublabel" for="tk-window-start">From (first day)</label>
+                  <input type="date" id="tk-window-start" class="tk-input" />
+                </div>
+                <div class="tk-field">
+                  <label class="tk-sublabel" for="tk-window-end">To (last day)</label>
+                  <input type="date" id="tk-window-end" class="tk-input" />
+                </div>
+                <div class="tk-field tk-field-narrow">
+                  <label class="tk-sublabel" for="tk-window-step">Days / run</label>
+                  <input type="number" id="tk-window-step" class="tk-input" min="1" step="1" value="1" />
+                </div>
+              </div>
+              <div class="tk-window-pace" id="tk-window-pace">
+                <label class="tk-auto-opt"><input type="radio" name="tk-window-pace" value="catchup" checked><div><span class="tk-auto-name">Catch up fast</span><span class="tk-auto-desc">Drain the whole range now — one run per day, back-to-back, until done. Best for a past range.</span></div></label>
+                <label class="tk-auto-opt"><input type="radio" name="tk-window-pace" value="scheduled"><div><span class="tk-auto-name">One day per scheduled run</span><span class="tk-auto-desc">Advance a single day each time the schedule above fires.</span></div></label>
+              </div>
+              <p class="tk-sched-preview" id="tk-window-preview"></p>
             </div>
 
             <!-- Allowed apps -->

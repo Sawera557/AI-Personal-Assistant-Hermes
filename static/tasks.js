@@ -18,6 +18,7 @@
     { slug: "quickbooks", label: "QuickBooks", emoji: "💰" },
     { slug: "wati", label: "WhatsApp", emoji: "💬" },
     { slug: "notion", label: "Notion", emoji: "📝" },
+    { slug: "jira", label: "Jira", emoji: "🧩" },
     { slug: "zoom", label: "Zoom", emoji: "🎥" },
     { slug: "web", label: "Web search", emoji: "🌐" },
   ];
@@ -91,6 +92,13 @@
     const [h, m] = String(hhmm).split(":").map(Number);
     const suf = h < 12 ? "AM" : "PM";
     return `${(h % 12) || 12}:${String(m).padStart(2, "0")} ${suf}`;
+  }
+
+  function fmtBytes(n) {
+    if (!n && n !== 0) return "";
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   // Client-side mirror of scheduler.describe_schedule, for the live preview.
@@ -205,6 +213,7 @@
             </label>
           </div>
           <div class="tk-card-sched">⏱ ${esc(t.schedule_summary || "")}</div>
+          ${t.window_summary ? `<div class="tk-card-window">📆 ${esc(t.window_summary)}</div>` : ""}
           <div class="tk-card-chips">${bizChip(t.business)}${AUTONOMY_CHIP[t.autonomy] || ""}</div>
           <div class="tk-card-foot">${next}${last}</div>
         </div>
@@ -306,6 +315,37 @@
       }));
   }
 
+  // ── Backfill / date-window UI ──────────────────────────────────────────────
+  function windowPace() {
+    return (document.querySelector('input[name="tk-window-pace"]:checked') || {}).value || "catchup";
+  }
+
+  function describeWindowClient() {
+    const start = $("tk-window-start").value;
+    const end = $("tk-window-end").value;
+    const step = Math.max(1, parseInt($("tk-window-step").value, 10) || 1);
+    if (!start) return "Pick a start date.";
+    const per = step === 1 ? "1 day/run" : `${step} days/run`;
+    let days = "";
+    if (end) {
+      const n = Math.floor((new Date(end) - new Date(start)) / 86400000);
+      if (n < 0) return "End date is before the start date.";
+      days = ` · ${Math.floor(n / step) + 1} run(s)`;
+    } else {
+      days = " · open-ended";
+    }
+    const label = windowPace() === "catchup" ? "Backfill" : "Windowed";
+    return `${label} ${start}${end ? " → " + end : ""} · ${per}${days}`;
+  }
+
+  function syncWindowUI() {
+    const on = $("tk-window-on").checked;
+    $("tk-window").hidden = !on;
+    // A catchup backfill needs an end date; nudge the field.
+    $("tk-window-end").required = on && windowPace() === "catchup";
+    $("tk-window-preview").textContent = on ? describeWindowClient() : "";
+  }
+
   function openEditor(task) {
     editingId = task ? task.task_id : null;
     $("tk-editor-title").textContent = task ? "Edit scheduled task" : "New scheduled task";
@@ -326,6 +366,14 @@
       setSelectedApps(task.allowed_apps || []);
       const radio = document.querySelector(`input[name="tk-autonomy"][value="${task.autonomy || "readonly"}"]`);
       if (radio) radio.checked = true;
+      // Backfill window
+      const hasWin = !!task.window_pace;
+      $("tk-window-on").checked = hasWin;
+      $("tk-window-start").value = task.window_start || "";
+      $("tk-window-end").value = task.window_end || "";
+      $("tk-window-step").value = task.window_step || 1;
+      const pr = document.querySelector(`input[name="tk-window-pace"][value="${task.window_pace || "catchup"}"]`);
+      if (pr) pr.checked = true;
     } else {
       $("tk-name").value = "";
       $("tk-prompt").value = "";
@@ -336,12 +384,33 @@
       setSelectedApps([]);
       const radio = document.querySelector('input[name="tk-autonomy"][value="readonly"]');
       if (radio) radio.checked = true;
+      $("tk-window-on").checked = false;
+      $("tk-window-start").value = "";
+      $("tk-window-end").value = "";
+      $("tk-window-step").value = 1;
+      const pr = document.querySelector('input[name="tk-window-pace"][value="catchup"]');
+      if (pr) pr.checked = true;
     }
     syncScheduleUI();
+    syncWindowUI();
+    applyEditorFull();
     $("tk-editor-overlay").hidden = false;
   }
 
   function closeEditor() { $("tk-editor-overlay").hidden = true; }
+
+  // Expand the editor to full-page. The preference persists across opens.
+  let editorFull = false;
+  function applyEditorFull() {
+    $("tk-editor-overlay").classList.toggle("tk-full", editorFull);
+    const btn = $("tk-editor-expand");
+    if (btn) {
+      btn.textContent = editorFull ? "⤡" : "⤢";
+      btn.title = editorFull ? "Shrink to window" : "Expand to full screen";
+      btn.setAttribute("aria-label", btn.title);
+    }
+  }
+  function toggleEditorFull() { editorFull = !editorFull; applyEditorFull(); }
 
   function collectForm() {
     const name = $("tk-name").value.trim();
@@ -352,6 +421,23 @@
       return { error: "Add at least one time for the schedule." };
     if (sb.frequency === "weekly" && !sb.days.length)
       return { error: "Pick at least one day for a weekly schedule." };
+
+    // Backfill window (optional). Always send the `window` key — an object when
+    // enabled, null when off — so an edit can also CLEAR a previously-set window.
+    let window = null;
+    if ($("tk-window-on").checked) {
+      const start = $("tk-window-start").value;
+      const end = $("tk-window-end").value || null;
+      const step = Math.max(1, parseInt($("tk-window-step").value, 10) || 1);
+      const pace = windowPace();
+      if (!start) return { error: "Pick a start date for the backfill window." };
+      if (end && new Date(end) < new Date(start))
+        return { error: "The window's end date must be on or after the start." };
+      if (pace === "catchup" && !end)
+        return { error: "A catch-up backfill needs an end date." };
+      window = { pace, start, end, step_days: step };
+    }
+
     const business = $("tk-business").value;
     return {
       body: {
@@ -367,6 +453,7 @@
           times: sb.frequency === "hourly" ? sb.times.slice(0, 1) : sb.times,
           days_of_week: sb.frequency === "weekly" ? sb.days : [],
         },
+        window,
       },
     };
   }
@@ -449,14 +536,28 @@
       const tools = (run.tool_calls && run.tool_calls.length)
         ? `<div class="tk-run-tools">${run.tool_calls.map((c) => `<span class="tk-run-tool">${esc(c.label || c.tool || "")}</span>`).join("")}</div>`
         : "";
+      const files = (run.files && run.files.length)
+        ? `<div class="tk-run-files"><div class="tk-run-files-label">📎 Files created</div>` +
+          run.files.map((f) => {
+            const size = f.size_bytes ? ` · ${fmtBytes(f.size_bytes)}` : "";
+            const label = `📄 ${esc(f.filename || "file")}${size}`;
+            return f.download_url
+              ? `<a class="tk-run-file" href="${esc(f.download_url)}" target="_blank" rel="noopener" download>${label}</a>`
+              : `<span class="tk-run-file tk-run-file-dead" title="Link unavailable">${label}</span>`;
+          }).join("") + `</div>`
+        : "";
+      const fileTag = (run.files && run.files.length)
+        ? `<span class="tk-run-filecount" title="${run.files.length} file(s) created">📎 ${run.files.length}</span>`
+        : "";
       return `
         <div class="tk-run">
           <div class="tk-run-head" data-run="${i}">
             ${badge}<span class="tk-run-trig">${trig}</span>
             <span class="tk-run-time">${esc(fmtWhen(run.started_at))}</span>
+            ${fileTag}
             <span class="tk-run-chev">▾</span>
           </div>
-          <div class="tk-run-body" hidden>${tools}${body}</div>
+          <div class="tk-run-body" hidden>${tools}${files}${body}</div>
         </div>`;
     }).join("");
     wrap.querySelectorAll(".tk-run-head").forEach((h) =>
@@ -524,6 +625,7 @@
     // Editor modal
     $("tk-editor-close")?.addEventListener("click", closeEditor);
     $("tk-editor-cancel")?.addEventListener("click", closeEditor);
+    $("tk-editor-expand")?.addEventListener("click", toggleEditorFull);
     $("tk-editor-save")?.addEventListener("click", saveTask);
     $("tk-editor-overlay")?.addEventListener("click", (e) => {
       if (e.target === $("tk-editor-overlay")) closeEditor();
@@ -547,6 +649,13 @@
       else if (!sb.times.includes(v)) sb.times.push(v);
       syncScheduleUI();
     });
+
+    // Backfill / date window
+    $("tk-window-on")?.addEventListener("change", syncWindowUI);
+    ["tk-window-start", "tk-window-end", "tk-window-step"].forEach((id) =>
+      $(id)?.addEventListener("input", syncWindowUI));
+    document.querySelectorAll('input[name="tk-window-pace"]').forEach((r) =>
+      r.addEventListener("change", syncWindowUI));
 
     renderTemplates();
     renderApps();

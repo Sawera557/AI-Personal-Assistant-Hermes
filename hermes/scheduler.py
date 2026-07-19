@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -35,6 +35,12 @@ _ALL_DAYS = {0, 1, 2, 3, 4, 5, 6}
 DEFAULT_TZ = "America/Chicago"
 VALID_FREQUENCIES = {"hourly", "daily", "weekdays", "weekly"}
 VALID_AUTONOMY = {"readonly", "draft", "full"}
+# A task may carry an optional DATE WINDOW so it processes a bounded range one day
+# per run (see hermes/db/migrations/0013). The pace controls how fast it advances:
+#   catchup   — re-arm next_run_at to now after each run, so a backfill of a past
+#               range drains as fast as the poller ticks (minutes, not weeks).
+#   scheduled — advance one day per normal scheduled fire.
+VALID_WINDOW_PACES = {"catchup", "scheduled"}
 
 # How far ahead compute_next_run is willing to search for a matching day before
 # giving up (guards against an empty days_of_week producing an infinite loop).
@@ -148,6 +154,122 @@ def describe_schedule(schedule: dict[str, Any], tz_name: str | None = None) -> s
     return f"{when} at {time_str}"
 
 
+# ── Date-window (backfill) math ───────────────────────────────────────────────
+# A windowed task walks [window_start … window_end] one day per run. All the
+# per-run bookkeeping is a pure function so the storage layer (claim_due_window)
+# stays mechanical and this can be unit-tested without a database.
+
+def _as_date(value: Any) -> date | None:
+    """Coerce a date / ISO 'YYYY-MM-DD' string / None into a date (or None)."""
+    if value is None or isinstance(value, date) and not isinstance(value, datetime):
+        return value if isinstance(value, date) else None
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def advance_window(
+    cursor_day: Any,
+    end_day: Any,
+    step_days: int,
+    pace: str,
+    now_utc: datetime,
+    scheduled_next: datetime | None,
+) -> tuple[date | None, date | None, datetime | None]:
+    """Decide what a windowed task does on one fire.
+
+    Given the current cursor (the day this run will process), returns
+    ``(claimed_day, new_cursor, new_next_run_at)``:
+
+    * ``claimed_day`` — the single day this run processes (== the cursor). None if
+      there is no valid cursor (nothing to do).
+    * ``new_cursor`` — the cursor advanced by ``step_days``.
+    * ``new_next_run_at`` — when to fire next:
+        - the range is exhausted (``new_cursor > end_day``) → ``None`` (stop);
+        - pace ``catchup`` → ``now_utc`` (fire again on the next poll tick);
+        - pace ``scheduled`` → ``scheduled_next`` (one day per normal fire).
+
+    Keeping this pure means the DB layer only reads/writes columns and the
+    "what happens next" decision lives here with the rest of the schedule math.
+    """
+    cursor = _as_date(cursor_day)
+    if cursor is None:
+        return None, None, None
+    end = _as_date(end_day)
+    step = max(1, int(step_days or 1))
+
+    new_cursor = cursor + timedelta(days=step)
+    if end is not None and new_cursor > end:
+        new_next = None                      # backfill complete — stop firing
+    elif pace == "catchup":
+        new_next = now_utc                   # drain as fast as the poller ticks
+    else:
+        new_next = scheduled_next            # one day per scheduled fire
+    return cursor, new_cursor, new_next
+
+
+def window_batch_position(task: dict[str, Any], day: date | None) -> tuple[int, int]:
+    """(batch_number, total_batches) for the given day within the task's window,
+    for a human "batch N of M" line. Returns (0, 0) when it can't be computed."""
+    start = _as_date(task.get("window_start"))
+    end = _as_date(task.get("window_end"))
+    step = max(1, int(task.get("window_step") or 1))
+    if not start or not day:
+        return 0, 0
+    n = (day - start).days // step + 1
+    total = ((end - start).days // step + 1) if end else 0
+    return max(1, n), max(0, total)
+
+
+def describe_window(task: dict[str, Any]) -> str | None:
+    """A short human line for a windowed task's card, e.g.
+    'Backfill Jun 17 → Jul 17 · 1 day/run · next: Jun 20 (12 left)'. None if the
+    task has no window."""
+    pace = task.get("window_pace")
+    if not pace:
+        return None
+    start = _as_date(task.get("window_start"))
+    end = _as_date(task.get("window_end"))
+    cursor = _as_date(task.get("window_cursor"))
+    step = max(1, int(task.get("window_step") or 1))
+
+    def _lbl(d: date | None) -> str:  # portable "Jun 17" (no %-d — Windows-safe)
+        return f"{d.strftime('%b')} {d.day}" if d else "?"
+
+    span = _lbl(start) + (f" → {_lbl(end)}" if end else " → open-ended")
+    per = "1 day/run" if step == 1 else f"{step} days/run"
+    label = "Backfill" if pace == "catchup" else "Windowed"
+    if end and cursor and cursor > end:
+        return f"{label} {span} · {per} · complete"
+    if cursor and end:
+        left = max(0, (end - cursor).days // step + 1)
+        return f"{label} {span} · {per} · next {_lbl(cursor)} ({left} left)"
+    if cursor:
+        return f"{label} {span} · {per} · next {_lbl(cursor)}"
+    return f"{label} {span} · {per}"
+
+
+def initial_next_run(
+    schedule: dict[str, Any],
+    tz_name: str | None,
+    enabled: bool,
+    window_pace: str | None = None,
+) -> datetime | None:
+    """The next_run_at to store when a task is created or its timing is edited.
+
+    Disabled → None. A 'catchup' backfill fires immediately (now), so it starts
+    draining the range on the very next poll instead of waiting for a scheduled
+    slot. Everything else uses the normal schedule."""
+    if not enabled:
+        return None
+    if window_pace == "catchup":
+        return datetime.now(timezone.utc)
+    return compute_next_run(schedule, tz_name)
+
+
 # ── Autonomy guardrails prepended to the task prompt for an unattended run ──
 # There is no human watching to approve a write, so the default is read-only.
 # 'full' is an explicit, per-task standing authorization the user set when they
@@ -179,18 +301,48 @@ _AUTONOMY_GUARDRAIL = {
 }
 
 
+def _window_guardrail(task: dict[str, Any]) -> str | None:
+    """When a run is scoped to one day of a date window, a hard 'process only this
+    day' instruction to prepend — so a 31-day backfill produces one focused batch
+    per run instead of the agent trying to read the whole range at once.
+
+    The day is carried on the task dict as ``_window_day`` (an ISO date string),
+    set by the firing path right after it claims the day from the cursor."""
+    day = _as_date(task.get("_window_day"))
+    if not day:
+        return None
+    tz_name = task.get("timezone") or DEFAULT_TZ
+    n, total = window_batch_position(task, day)
+    batch = f" (batch {n} of {total})" if total else f" (batch {n})"
+    day_str = day.strftime("%A, %B %d, %Y")
+    return (
+        f"DATE WINDOW — SINGLE DAY{batch}. This run must process EXACTLY ONE day: "
+        f"{day_str}, in the {tz_name} timezone (that day's 00:00–23:59 local). "
+        f"Only read, count, and report on items dated on {day_str}; ignore anything "
+        f"before or after it, even if you see it. This is one batch of a multi-day "
+        f"backfill — later runs cover the other days, so do NOT try to cover the "
+        f"whole range now. Title your output with this exact date so the batches "
+        f"stay distinguishable."
+    )
+
+
 def build_run_prompt(task: dict[str, Any]) -> str:
     """The full instruction handed to the agent for one run: the autonomy
-    guardrail, a note that this is an automated run, then the task's own prompt."""
+    guardrail, a note that this is an automated run, an optional single-day window
+    guardrail, then the task's own prompt."""
     autonomy = task.get("autonomy") or "readonly"
     guardrail = _AUTONOMY_GUARDRAIL.get(autonomy, _AUTONOMY_GUARDRAIL["readonly"])
     today = datetime.now(_tz(task.get("timezone"))).strftime("%A, %B %d, %Y")
-    return (
+    window = _window_guardrail(task)
+    parts = [
         f"[Automated scheduled task: \"{task.get('name') or 'Untitled task'}\" — "
-        f"running now, {today}.]\n\n"
-        f"{guardrail}\n\n"
-        f"Your task:\n{task.get('prompt') or ''}"
-    )
+        f"running now, {today}.]",
+        guardrail,
+    ]
+    if window:
+        parts.append(window)
+    parts.append(f"Your task:\n{task.get('prompt') or ''}")
+    return "\n\n".join(parts)
 
 
 def run_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -242,6 +394,7 @@ def execute_and_record(task: dict[str, Any], trigger: str = "schedule") -> dict[
     from .db import scheduled_tasks as repo
 
     task_id = task.get("task_id")
+    windowed = bool(task.get("window_pace"))
 
     # Claim before running (scheduled only). This is the fix for the re-entrancy
     # multi-fire: next_run_at moves forward up front, atomically, guarding the
@@ -249,8 +402,20 @@ def execute_and_record(task: dict[str, Any], trigger: str = "schedule") -> dict[
     if trigger == "schedule":
         next_run = compute_next_run(task.get("schedule") or {}, task.get("timezone")) \
             if task.get("enabled") else None
-        if not repo.claim_due(task_id, next_run):
+        if windowed:
+            # A windowed fire also advances the date cursor atomically and tells us
+            # which single day it claimed, so we can scope the run to that day.
+            claimed_day = repo.claim_due_window(task_id, next_run)
+            if not claimed_day:
+                return {"task_id": task_id, "status": "skipped", "reason": "already claimed or window done"}
+            task["_window_day"] = claimed_day.isoformat()
+        elif not repo.claim_due(task_id, next_run):
             return {"task_id": task_id, "status": "skipped", "reason": "already claimed or not due"}
+    elif windowed and task.get("window_cursor"):
+        # Manual "Run now" on a windowed task: process the current pending day for
+        # a test/kick, but do NOT advance the cursor (mirrors how manual runs never
+        # move the schedule).
+        task["_window_day"] = task["window_cursor"]
 
     run_id = repo.start_run(task_id, trigger=trigger)
 

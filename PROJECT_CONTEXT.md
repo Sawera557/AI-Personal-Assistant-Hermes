@@ -65,6 +65,7 @@ each app's native REST API. Hermes reaches every app below either through a
 | `google-meet`     | Google Meet | Meeting info |
 | `quickbooks`      | QuickBooks (accounting) | AR/AP aging, P&L, balance sheet, invoices, customers, payroll data |
 | `notion`          | Notion | Search workspace; read/create/update pages & database rows; comments |
+| `jira`            | Jira | Search/get issues (tasks), create issues, assign to people by email |
 | `zoom`            | Zoom (your account) | Your meetings, recordings, webinars, registrants |
 | `zoom-admin`      | Zoom Admin | Account-wide: any user's meetings/recordings/settings |
 | `wati`            | WATI (WhatsApp Business) | Contacts, messages, send text/file, assign operator, media |

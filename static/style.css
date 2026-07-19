@@ -1596,10 +1596,19 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 .tk-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
   padding: 18px 20px 14px; border-bottom: 1px solid var(--border); }
 .tk-title { font-size: 17px; font-weight: 700; letter-spacing: -.3px; }
+.tk-header-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .tk-close-btn { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer;
   line-height: 1; padding: 2px 6px; border-radius: 8px; }
 .tk-close-btn:hover { color: var(--text); background: var(--surface); }
 .tk-body { padding: 18px 20px; overflow-y: auto; flex: 1; }
+
+/* Expand-to-full-page: JS toggles .tk-full on the overlay. The modal fills the
+   viewport edge-to-edge and the body content re-centers in a readable column. */
+.tk-overlay.tk-full { padding: 0; }
+.tk-overlay.tk-full .tk-modal { max-width: 100%; width: 100%; height: 100%;
+  max-height: 100vh; border-radius: 0; border: none; }
+.tk-overlay.tk-full .tk-body,
+.tk-overlay.tk-full .tk-footer { max-width: 860px; margin-left: auto; margin-right: auto; width: 100%; }
 .tk-footer { display: flex; align-items: center; gap: 12px; padding: 14px 20px;
   border-top: 1px solid var(--border); flex-wrap: wrap; }
 .tk-footer-actions { display: flex; gap: 8px; margin-left: auto; }
@@ -1657,6 +1666,17 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
   color: var(--text); font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer; white-space: nowrap; }
 .tk-add-btn:hover { border-color: var(--tk); }
 .tk-sched-preview { margin: 12px 0 0; font-size: 12.5px; color: var(--tk-2); font-weight: 600; }
+
+/* Backfill / date window */
+.tk-window-toggle { display: flex; gap: 9px; align-items: flex-start; margin-top: 16px; cursor: pointer; font-weight: 550; }
+.tk-window-toggle input { margin-top: 3px; accent-color: var(--tk); }
+.tk-window { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-top: 10px; }
+.tk-window-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.tk-field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 140px; }
+.tk-field-narrow { flex: 0 0 90px; }
+.tk-sublabel { font-size: 11.5px; color: var(--tk-2); font-weight: 600; }
+.tk-window-pace { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.tk-card-window { font-size: 12px; color: var(--tk-2); margin-top: 4px; font-weight: 550; }
 
 /* Apps */
 .tk-apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
@@ -1723,6 +1743,16 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 .tk-run-tools { display: flex; flex-wrap: wrap; gap: 5px; margin: 12px 0 4px; }
 .tk-run-tool { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2);
   border: 1px solid var(--border); color: var(--muted); }
+
+/* Files a run produced (create_file) — shown with a fresh download link */
+.tk-run-filecount { color: var(--tk-2, var(--accent)); font-weight: 700; font-size: 11px; }
+.tk-run-files { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 12px 0 4px; }
+.tk-run-files-label { width: 100%; font-size: 11px; font-weight: 700; color: var(--muted); margin-bottom: 2px; }
+.tk-run-file { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  padding: 6px 11px; border-radius: 9px; background: rgba(139,92,246,.12);
+  border: 1px solid var(--tk, var(--accent)); color: var(--text); text-decoration: none; }
+.tk-run-file:hover { background: rgba(139,92,246,.22); }
+.tk-run-file-dead { opacity: .55; border-style: dashed; cursor: default; }
 
 /* Mobile */
 @media (max-width: 720px) {
