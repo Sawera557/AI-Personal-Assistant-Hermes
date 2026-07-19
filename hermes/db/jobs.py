@@ -25,7 +25,8 @@ log = logging.getLogger("hermes.db.jobs")
 
 _JOB_COLS = (
     "job_id, job_type, name, config, schedule, timezone, enabled, "
-    "next_run_at, last_run_at, last_status, cancel_requested, created_at, updated_at"
+    "next_run_at, last_run_at, last_status, cancel_requested, "
+    "allow_multiple_runs, created_at, updated_at"
 )
 
 
@@ -47,7 +48,8 @@ def _iso(dt: datetime | None) -> str | None:
 
 def _job_row_to_dict(row: tuple) -> dict[str, Any]:
     (job_id, job_type, name, config, schedule, tz, enabled,
-     next_run_at, last_run_at, last_status, cancel_requested, created, updated) = row
+     next_run_at, last_run_at, last_status, cancel_requested,
+     allow_multiple_runs, created, updated) = row
     return {
         "job_id": str(job_id),
         "job_type": job_type,
@@ -60,6 +62,7 @@ def _job_row_to_dict(row: tuple) -> dict[str, Any]:
         "last_run_at": _iso(last_run_at),
         "last_status": last_status,
         "cancel_requested": bool(cancel_requested),
+        "allow_multiple_runs": bool(allow_multiple_runs),
         "created_at": _iso(created),
         "updated_at": _iso(updated),
     }
@@ -73,6 +76,7 @@ def create_job(
     timezone_name: str,
     config: dict[str, Any] | None = None,
     enabled: bool = True,
+    allow_multiple_runs: bool = False,
     next_run_at: datetime | None = None,
 ) -> str | None:
     """Insert a job and return its job_id (or None on failure)."""
@@ -80,13 +84,14 @@ def create_job(
         with cursor() as cur:
             cur.execute(
                 """INSERT INTO jobs
-                       (job_type, name, config, schedule, timezone, enabled, next_run_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       (job_type, name, config, schedule, timezone, enabled,
+                        allow_multiple_runs, next_run_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                    RETURNING job_id;""",
                 (
                     job_type, name, json.dumps(config or {}),
                     json.dumps(schedule or {}), timezone_name, enabled,
-                    next_run_at if enabled else None,
+                    allow_multiple_runs, next_run_at if enabled else None,
                 ),
             )
             return str(cur.fetchone()[0])
@@ -130,6 +135,7 @@ def update_job(
     schedule: dict[str, Any] | None = None,
     timezone_name: str | None = None,
     enabled: bool | None = None,
+    allow_multiple_runs: bool | None = None,
     next_run_at: datetime | None = None,
     next_run_set: bool = False,
 ) -> bool:
@@ -149,6 +155,8 @@ def update_job(
         sets.append("timezone = %s"); params.append(timezone_name)
     if enabled is not None:
         sets.append("enabled = %s"); params.append(enabled)
+    if allow_multiple_runs is not None:
+        sets.append("allow_multiple_runs = %s"); params.append(allow_multiple_runs)
     if next_run_set:
         sets.append("next_run_at = %s"); params.append(next_run_at)
     if not sets:
@@ -212,6 +220,29 @@ def is_cancel_requested(job_id: str) -> bool:
 
 
 # ── Firing / run lifecycle ───────────────────────────────────────────────────
+def has_run_today(job_id: str, tz_name: str | None) -> bool:
+    """Whether the job already has a run today (in its own timezone) that is
+    successful or still in progress — the once-per-day guard. A prior 'error' or
+    'cancelled' run does NOT count, so a failed attempt can be retried same-day."""
+    if not _is_uuid(job_id):
+        return False
+    tz = tz_name or "America/Chicago"
+    try:
+        with cursor(commit=False) as cur:
+            cur.execute(
+                """SELECT 1 FROM job_runs
+                   WHERE job_id = %s
+                     AND status IN ('success', 'running')
+                     AND (started_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date
+                   LIMIT 1;""",
+                (job_id, tz, tz),
+            )
+            return cur.fetchone() is not None
+    except Exception as exc:  # noqa: BLE001
+        log.warning("has_run_today(%s) failed: %s", job_id, exc)
+        return False
+
+
 def due(now: datetime | None = None, limit: int = 25) -> list[dict[str, Any]]:
     """Enabled jobs whose next_run_at has passed — the cron's work list."""
     now = now or datetime.now(timezone.utc)

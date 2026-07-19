@@ -63,8 +63,21 @@ def execute_and_record(job: dict[str, Any], trigger: str = "schedule") -> dict[s
 
     The run function polls a cancel_check (backed by jobs.is_cancel_requested) so
     a Stop set from another request interrupts it; a cleanly-interrupted run is
-    recorded as 'cancelled'."""
+    recorded as 'cancelled'.
+
+    Once-per-day guard: unless the job has allow_multiple_runs, a fire (manual OR
+    scheduled) is SKIPPED when the job already ran today (in its timezone) — so a
+    double-click or an overlapping schedule can't run it twice a day."""
     job_id = job.get("job_id")
+    tz = job.get("timezone")
+
+    if not job.get("allow_multiple_runs") and repo.has_run_today(job_id, tz):
+        # Already ran today. For a scheduled fire, roll next_run_at forward so the
+        # poller doesn't re-select it every tick for the rest of the day.
+        if trigger == "schedule":
+            nxt = _scheduler.compute_next_run(job.get("schedule") or {}, tz) if job.get("enabled") else None
+            repo.update_job(job_id, next_run_at=nxt, next_run_set=True)
+        return {"job_id": job_id, "status": "skipped", "reason": "already ran today"}
 
     if trigger == "schedule":
         next_run = _scheduler.compute_next_run(job.get("schedule") or {}, job.get("timezone")) \

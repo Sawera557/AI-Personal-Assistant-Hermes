@@ -34,6 +34,57 @@
 
   const isRunning = (j) => j && j.last_status === "running";
 
+  // ── In-app dialog (replaces the browser's confirm()/alert()) ─────────────
+  let _dlg = null;
+  function ensureDialog() {
+    if (_dlg) return _dlg;
+    const o = document.createElement("div");
+    o.className = "appdlg-overlay";
+    o.hidden = true;
+    o.innerHTML =
+      `<div class="appdlg" role="dialog" aria-modal="true" aria-labelledby="appdlg-title">
+         <div class="appdlg-title" id="appdlg-title"></div>
+         <div class="appdlg-msg" id="appdlg-msg"></div>
+         <div class="appdlg-actions">
+           <button class="tk-btn tk-cancel" id="appdlg-cancel" type="button">Cancel</button>
+           <button class="tk-btn tk-save" id="appdlg-ok" type="button">OK</button>
+         </div>
+       </div>`;
+    document.body.appendChild(o);
+    _dlg = {
+      o, box: o.querySelector(".appdlg"),
+      title: o.querySelector("#appdlg-title"), msg: o.querySelector("#appdlg-msg"),
+      cancel: o.querySelector("#appdlg-cancel"), ok: o.querySelector("#appdlg-ok"),
+    };
+    return _dlg;
+  }
+  function openDialog({ title, message, okText = "OK", danger = false, showCancel = true }) {
+    const d = ensureDialog();
+    d.title.textContent = title || "";
+    d.msg.textContent = message || "";
+    d.ok.textContent = okText;
+    d.cancel.style.display = showCancel ? "" : "none";
+    d.ok.classList.toggle("tk-danger", !!danger);
+    d.o.hidden = false;
+    return new Promise((resolve) => {
+      const done = (v) => { cleanup(); d.o.hidden = true; resolve(v); };
+      const onOk = () => done(true), onCancel = () => done(false);
+      const onKey = (e) => { if (e.key === "Escape") done(false); else if (e.key === "Enter") done(true); };
+      const onBack = (e) => { if (e.target === d.o) done(false); };
+      function cleanup() {
+        d.ok.removeEventListener("click", onOk); d.cancel.removeEventListener("click", onCancel);
+        document.removeEventListener("keydown", onKey, true); d.o.removeEventListener("click", onBack);
+      }
+      d.ok.addEventListener("click", onOk); d.cancel.addEventListener("click", onCancel);
+      document.addEventListener("keydown", onKey, true); d.o.addEventListener("click", onBack);
+      d.ok.focus();
+    });
+  }
+  const appConfirm = (message, opts = {}) =>
+    openDialog({ title: opts.title || "Please confirm", message, okText: opts.okText || "Confirm", danger: opts.danger, showCancel: true });
+  const appNotice = (message, opts = {}) =>
+    openDialog({ title: opts.title || "Heads up", message, okText: "OK", showCancel: false });
+
   // ── Job list ─────────────────────────────────────────────────────────────
   async function loadJobs() {
     const listEl = $("jobs-list");
@@ -121,10 +172,19 @@
 
   function closeDetail() { $("jb-detail-overlay").hidden = true; detailJob = null; }
 
+  // Feedback that works whether or not the detail modal is open.
+  function feedback(text) {
+    const overlay = $("jb-detail-overlay");
+    if (overlay && !overlay.hidden) { $("jb-detail-msg").textContent = text; }
+    else if (text) { appNotice(text); }
+  }
+
   function renderDetail(j, runs) {
     detailJob = j;
     $("jb-detail-name").textContent = j.name;
     $("jb-detail-sched").textContent = `⏱ ${j.schedule_summary || ""}`;
+    const am = $("jb-allow-multi");
+    if (am) am.checked = !!j.allow_multiple_runs;
     $("jb-detail-meta").innerHTML =
       `<div class="tk-detail-row"><span class="tk-chip">⚙️ ${esc(j.job_type)}</span>` +
       `<span class="tk-chip ${j.enabled ? "tk-chip-on" : "tk-chip-off"}">${j.enabled ? "● Enabled" : "❚❚ Paused"}</span>` +
@@ -202,26 +262,45 @@
 
   // ── Actions ──────────────────────────────────────────────────────────────
   async function startJob(jobId, btn) {
+    // Confirm so a job is never started by an accidental click.
+    const ok = await appConfirm(
+      "This starts a live scrape (uses API credits) and writes the results to storage.",
+      { title: "Run this job now?", okText: "Run now" });
+    if (!ok) return;
     if (btn) { btn.disabled = true; btn.textContent = "Starting…"; }
-    const msg = $("jb-detail-msg");
-    if (detailJob && detailJob.job_id === jobId && msg) msg.textContent = "Running the job — this can take a moment.";
-    // Optimistically show running + start polling so the cron/other-tab case updates.
+    if (detailJob && detailJob.job_id === jobId) feedback("Running the job — this can take a moment.");
+    // Optimistically start polling so the cron/other-tab case updates.
     startPolling();
     try {
       const r = await fetch(`/api/jobs/${jobId}/run`, { method: "POST" });
       const j = await r.json();
       if (!r.ok) {
-        if (msg) msg.textContent = j.error || "Run failed.";
-      } else if (msg) {
-        msg.textContent = j.status === "error" ? "Run finished with an error."
-          : j.status === "cancelled" ? "Run stopped." : "Run complete.";
+        feedback(j.error || "Run failed.");
+      } else if (j.status === "skipped") {
+        feedback(j.reason === "already ran today"
+          ? "This job already ran today. Turn on “Allow multiple runs per day” to run it again."
+          : ("Skipped: " + (j.reason || "not run")));
+      } else {
+        feedback(j.status === "error" ? "Run finished with an error."
+          : j.status === "cancelled" ? "Run stopped." : "Run complete.");
       }
     } catch (e) {
-      if (msg) msg.textContent = "Error: " + e;
+      feedback("Error: " + e);
     } finally {
       await loadJobs();
       if (detailJob && detailJob.job_id === jobId) openDetail(jobId);
     }
+  }
+
+  async function setAllowMultiple(jobId, allow) {
+    try {
+      await fetch(`/api/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allow_multiple_runs: allow }),
+      });
+    } catch (_) { /* best-effort */ }
+    loadJobs();
   }
 
   async function stopJob(jobId, btn) {
@@ -290,6 +369,9 @@
     });
     $("jb-detail-stop")?.addEventListener("click", (e) => {
       if (detailJob) stopJob(detailJob.job_id, e.currentTarget);
+    });
+    $("jb-allow-multi")?.addEventListener("change", (e) => {
+      if (detailJob) setAllowMultiple(detailJob.job_id, e.target.checked);
     });
 
     // Esc closes the detail modal.

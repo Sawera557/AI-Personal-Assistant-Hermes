@@ -40,6 +40,7 @@ class JobCreateBody(BaseModel):
     schedule: ScheduleBody
     timezone: str | None = None
     enabled: bool = True
+    allow_multiple_runs: bool = False
 
 
 class JobPatchBody(BaseModel):
@@ -48,6 +49,7 @@ class JobPatchBody(BaseModel):
     schedule: ScheduleBody | None = None
     timezone: str | None = None
     enabled: bool | None = None
+    allow_multiple_runs: bool | None = None
 
 
 def _validate_schedule(schedule: dict) -> str | None:
@@ -105,6 +107,7 @@ async def create_job(body: JobCreateBody):
         timezone_name=tz,
         config=body.config or {},
         enabled=body.enabled,
+        allow_multiple_runs=body.allow_multiple_runs,
         next_run_at=next_run,
     )
     if not job_id:
@@ -166,6 +169,8 @@ async def update_job_detail(job_id: str, body: JobPatchBody):
         kwargs["timezone_name"] = body.timezone.strip()
     if "enabled" in sent:
         kwargs["enabled"] = body.enabled
+    if "allow_multiple_runs" in sent:
+        kwargs["allow_multiple_runs"] = body.allow_multiple_runs
 
     schedule = kwargs.get("schedule", existing.get("schedule") or {})
     tz = kwargs.get("timezone_name", existing.get("timezone"))

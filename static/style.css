@@ -1721,6 +1721,22 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 .jb-report-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; font-weight: 600;
   color: var(--accent); text-decoration: none; padding: 5px 11px; border: 1px solid var(--accent); border-radius: 8px; }
 .jb-report-link:hover { background: rgba(245,166,35,.12); }
+.jb-opt { display: flex; align-items: center; gap: 9px; margin: 4px 0 16px; font-size: 13px; color: var(--text-2, var(--muted)); cursor: pointer; }
+.jb-opt input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.jb-opt .hint { font-weight: 400; }
+
+/* In-app dialog (custom confirm/alert) — sits above modals & tooltip */
+.appdlg-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center;
+  justify-content: center; padding: 20px; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); }
+.appdlg-overlay[hidden] { display: none; }
+.appdlg { width: 100%; max-width: 420px; background: var(--surface, #1b1b1f); color: var(--text, #fff);
+  border: 1px solid var(--border, rgba(255,255,255,.12)); border-radius: 14px; padding: 22px 22px 18px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.45); animation: appdlg-in .13s ease-out; }
+@keyframes appdlg-in { from { transform: translateY(8px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
+.appdlg-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+.appdlg-msg { font-size: 13.5px; line-height: 1.55; color: var(--text-2, var(--muted)); white-space: pre-line; }
+.appdlg-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+@media (prefers-reduced-motion: reduce) { .appdlg { animation: none; } }
 .tk-run-trig { color: var(--muted); font-weight: 600; }
 .tk-run-time { margin-left: auto; color: var(--muted); }
 .tk-run-chev { color: var(--muted); }
