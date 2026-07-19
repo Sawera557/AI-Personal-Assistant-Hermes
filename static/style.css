@@ -1725,6 +1725,14 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 .jb-opt input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .jb-opt .hint { font-weight: 400; }
 
+/* Loading spinner */
+.spin { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--border, rgba(128,128,128,.25));
+  border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; flex: none; }
+.spin-box { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 28px 8px;
+  color: var(--muted); font-size: 13px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 1.5s; } }
+
 /* In-app dialog (custom confirm/alert) — sits above modals & tooltip */
 .appdlg-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center;
   justify-content: center; padding: 20px; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); }

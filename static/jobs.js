@@ -33,6 +33,7 @@
   }
 
   const isRunning = (j) => j && j.last_status === "running";
+  const spinner = (text) => `<div class="spin-box"><span class="spin" role="status" aria-label="Loading"></span>${text ? esc(text) : ""}</div>`;
 
   // ── In-app dialog (replaces the browser's confirm()/alert()) ─────────────
   let _dlg = null;
@@ -90,7 +91,7 @@
     const listEl = $("jobs-list");
     const emptyEl = $("jobs-empty");
     if (!listEl) return;
-    if (!listEl.dataset.loaded) listEl.innerHTML = `<p class="hint" style="padding:8px">Loading jobs…</p>`;
+    if (!listEl.dataset.loaded) listEl.innerHTML = spinner("Loading jobs…");
     let jobs = [];
     try {
       const r = await fetch("/api/jobs");
@@ -156,7 +157,7 @@
     $("jb-detail-name").textContent = "Loading…";
     $("jb-detail-sched").textContent = "";
     $("jb-detail-meta").innerHTML = "";
-    $("jb-runs").innerHTML = "";
+    $("jb-runs").innerHTML = spinner("Loading run history…");
     $("jb-runs-empty").hidden = true;
     $("jb-detail-msg").textContent = "";
     try {
