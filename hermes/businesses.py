@@ -38,3 +38,26 @@ def to_business_slug(entity_slug: str | None) -> str | None:
     if not entity_slug:
         return None
     return ENTITY_TO_BUSINESS_SLUG.get(entity_slug)
+
+
+def key_business(key: str) -> str | None:
+    """The business slug an S3 key belongs to, by our prefix conventions:
+
+    * ``wati-media/{business}/...``, ``drive-files/{business}/...`` and
+      ``generated/{business}/...`` are keyed by the *business* slug (afk, gak, ...)
+      — see `_wati_get_media`/`_drive_read_file`/`_create_file`. The `generated/`
+      case is what lets Hermes read back a file it created with `create_file`.
+    * A bare ``{entity}/...`` KB-document key is keyed by the *entity* slug
+      (afro_farm, ...); map it back to its business slug.
+
+    Returns None for anything that doesn't resolve to a known business (the
+    `unsorted/` hole, `bills/...` — keyed by a business *id*, not slug, so
+    resolve those separately — `generated/general/...`, or an unknown tenant).
+    """
+    parts = [p for p in key.split("/") if p]
+    if not parts:
+        return None
+    if parts[0] in ("wati-media", "drive-files", "generated"):
+        seg = parts[1] if len(parts) >= 3 else None
+        return seg if seg in BUSINESS_TO_ENTITY_SLUG else None
+    return to_business_slug(parts[0])

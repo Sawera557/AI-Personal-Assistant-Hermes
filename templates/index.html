@@ -74,6 +74,12 @@
             </svg>
             <span>Tasks</span>
           </button>
+          <button class="strip-tab" type="button" data-view="files" title="File Explorer">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            </svg>
+            <span>Files</span>
+          </button>
         </div>
 
         <button class="strip-toggle" id="strip-toggle" type="button" title="Toggle sidebar">
@@ -254,6 +260,23 @@
 
           <div class="panel push-bottom">
             <p class="hint" id="tasks-cron-hint">Tasks fire when your scheduler pings <code>/api/scheduled-tasks/run-due</code>. Use <strong>Run now</strong> to test any task instantly.</p>
+          </div>
+        </div>
+
+        <!-- File Explorer panel: business selector + folder tree -->
+        <div class="panel-section" id="panel-files">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-files" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-files" hidden></p>
+          </div>
+
+          <button id="files-refresh-btn" class="ghost new-convo">↻ Refresh</button>
+
+          <div class="panel files-tree-panel">
+            <h2>Folders</h2>
+            <div class="files-folder-tree" id="files-folder-tree" role="tree"></div>
+            <p class="hint" id="files-tree-empty" hidden>No folders yet.</p>
           </div>
         </div>
 
@@ -731,6 +754,40 @@
       </div>
     </main>
 
+    <!-- ── Main area: File Explorer ───────────────────────────────── -->
+    <main class="files-view" id="files-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-files" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(96,165,250,.18);font-size:15px;">📁</span> Files</div>
+        <button class="icon-btn plus" id="files-refresh-m" aria-label="Refresh" style="margin-left:auto">↻</button>
+      </header>
+
+      <div class="files-page">
+        <div class="files-toolbar">
+          <nav class="files-breadcrumb" id="files-breadcrumb" aria-label="Breadcrumb"></nav>
+          <div class="files-view-toggle" id="files-view-toggle" role="group" aria-label="View mode">
+            <button type="button" data-mode="list" title="List view" aria-label="List view">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            </button>
+            <button type="button" data-mode="tiles" title="Tiles view" aria-label="Tiles view">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="files-content" id="files-content"></div>
+        <p class="hint" id="files-loading" hidden>Loading…</p>
+        <div class="files-empty" id="files-empty" hidden>
+          <div class="files-empty-icon">📁</div>
+          <h3>This folder is empty</h3>
+          <p class="hint">Files uploaded, generated, or received for this business will appear here.</p>
+        </div>
+      </div>
+    </main>
+
   </div><!-- /app -->
 
   {% if voice_enabled %}
@@ -763,6 +820,7 @@
   <script src="/static/bills.js?v={{ v }}"></script>
   <script src="/static/meeting.js?v={{ v }}"></script>
   <script src="/static/tasks.js?v={{ v }}"></script>
+  <script src="/static/files.js?v={{ v }}"></script>
   {% if voice_enabled %}<script src="/static/voice.js?v={{ v }}"></script>{% endif %}
 </body>
 </html>
