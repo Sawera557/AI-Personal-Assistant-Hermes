@@ -85,7 +85,7 @@ function renderGrouped(container, items, slug, groupLabelFn, itemHtmlFn) {
   container.innerHTML = parts.join("");
 }
 
-function fileItemHtml(d) {
+function ctxFileItemHtml(d) {
   const globalBadge = d.is_global
     ? '<span class="memory-item-type" title="Visible to every business">🌐 All Businesses</span>'
     : "";
@@ -116,7 +116,7 @@ async function loadContextList() {
     renderGrouped(
       ctxListEl, currentDocs, slug,
       (d) => (d.is_global ? "🌐 All Businesses" : (d.entity_name || d.entity_slug)),
-      fileItemHtml,
+      ctxFileItemHtml,
     );
   } catch (e) {
     console.error("loadContextList:", e);
