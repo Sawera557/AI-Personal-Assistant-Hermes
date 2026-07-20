@@ -251,6 +251,59 @@ class Config:
     # calls Claude directly, independent of the switchable agent model.
     OCR_FALLBACK_MODEL: str = os.getenv("OCR_FALLBACK_MODEL", "claude-sonnet-5")
 
+    # ---- Authentication (passwordless email OTP login) ---------------------
+    # The app is single-user. Security here rests less on crypto and more on one
+    # decision: only ONE email may ever log in. A code is only ever sent to that
+    # inbox, so an attacker must control it to get in — the allowlist is the wall.
+    AUTH_ENABLED: bool = _bool(os.getenv("AUTH_ENABLED"), True)
+    # The sole address allowed to log in. Requests for any other email are a
+    # silent no-op (no account creation, no enumeration signal).
+    AUTH_ALLOWED_EMAIL: str = os.getenv("AUTH_ALLOWED_EMAIL", "gandikediye@gmail.com").strip().lower()
+    # Server-side pepper: the HMAC key that hashes OTP codes and session tokens
+    # at rest. REQUIRED when auth is on — the app fails CLOSED (denies every
+    # gated request) if it's unset, so a missing secret can never mean "open".
+    # Generate one with:  python -c "import secrets; print(secrets.token_urlsafe(48))"
+    AUTH_SESSION_SECRET: str = os.getenv("AUTH_SESSION_SECRET", "").strip()
+    # Lifetimes.
+    AUTH_CODE_TTL_SECONDS: int = int(os.getenv("AUTH_CODE_TTL_SECONDS", "600"))            # 10 min
+    AUTH_SESSION_TTL_SECONDS: int = int(os.getenv("AUTH_SESSION_TTL_SECONDS", str(30 * 24 * 3600)))  # 30 days
+    # A code is locked after this many wrong tries; a fresh code is then needed.
+    AUTH_MAX_CODE_ATTEMPTS: int = int(os.getenv("AUTH_MAX_CODE_ATTEMPTS", "5"))
+    # Send throttle: at most this many codes per email per hour.
+    AUTH_SEND_MAX_PER_HOUR: int = int(os.getenv("AUTH_SEND_MAX_PER_HOUR", "5"))
+    AUTH_COOKIE_NAME: str = os.getenv("AUTH_COOKIE_NAME", "hermes_session").strip() or "hermes_session"
+    # Secure flag on the session cookie. On (HTTPS-only) by default; set false
+    # ONLY for local plain-http dev.
+    AUTH_COOKIE_SECURE: bool = _bool(os.getenv("AUTH_COOKIE_SECURE"), True)
+    # DEV ONLY: print the login code to the server console instead of emailing it,
+    # so you can test the flow without SES. Ignored in any Vercel runtime, so it
+    # can never leak a real code in production.
+    AUTH_DEV_ECHO: bool = _bool(os.getenv("AUTH_DEV_ECHO"), False)
+
+    # ---- Login-code email delivery -----------------------------------------
+    # Two providers; whichever is configured is used (SMTP wins if both are).
+    #
+    # SMTP — simplest for a single user to receive real codes (e.g. Gmail with an
+    # App Password). Set SMTP_HOST + SMTP_USER + SMTP_PASSWORD.
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "").strip()
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "").strip()
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "").strip()
+    # Defaults to SMTP_USER when unset.
+    SMTP_FROM: str = os.getenv("SMTP_FROM", "").strip()
+    # STARTTLS for port 587 (Gmail); port 465 uses implicit SSL automatically.
+    SMTP_STARTTLS: bool = _bool(os.getenv("SMTP_STARTTLS"), True)
+    #
+    # AWS SES (production path) — SES_SENDER must be a verified SES identity, e.g.
+    # "Hermes <login@yourdomain.com>". Reuses the AWS credentials used for RDS/S3.
+    SES_SENDER: str = os.getenv("SES_SENDER", "").strip()
+    SES_REGION: str = os.getenv("SES_REGION", os.getenv("AWS_REGION", "us-east-1")).strip() or "us-east-1"
+
+    @classmethod
+    def email_delivery_configured(cls) -> bool:
+        """Whether login codes can actually be sent (some provider, or dev echo)."""
+        return bool(cls.SMTP_HOST or cls.SES_SENDER or cls.AUTH_DEV_ECHO)
+
     @classmethod
     def validate(cls) -> list[str]:
         problems = []
@@ -267,4 +320,18 @@ class Config:
             problems.append("MATON_API_KEY is not set (app integrations will fail)")
         if not cls.NUEXTRACT_API_KEY:
             problems.append("NUEXTRACT_API_KEY is not set (bill extraction will fail)")
+        if cls.AUTH_ENABLED:
+            if not cls.AUTH_SESSION_SECRET:
+                problems.append(
+                    "AUTH_SESSION_SECRET is not set — auth is ON so the app fails CLOSED "
+                    "(every login is denied) until it is set. Generate one with "
+                    '`python -c "import secrets; print(secrets.token_urlsafe(48))"`'
+                )
+            if not cls.email_delivery_configured():
+                problems.append(
+                    "No login-code email delivery configured — set SMTP_HOST (+ SMTP_USER/"
+                    "SMTP_PASSWORD) or SES_SENDER, or AUTH_DEV_ECHO=true for local testing"
+                )
+            if not cls.AUTH_ALLOWED_EMAIL:
+                problems.append("AUTH_ALLOWED_EMAIL is not set — no one can log in")
         return problems

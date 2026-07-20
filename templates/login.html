@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Sign in · Hermes</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: #0b0c10; color: #e8e8ea;
+    }
+    .card {
+      width: min(92vw, 380px); background: #16181d; border: 1px solid #24262d;
+      border-radius: 16px; padding: 28px 26px; box-shadow: 0 20px 60px rgba(0,0,0,.45);
+    }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    p.sub { margin: 0 0 22px; color: #9aa0a6; font-size: 14px; }
+    label { display: block; font-size: 13px; color: #b8bcc2; margin: 0 0 6px; }
+    input {
+      width: 100%; padding: 12px 14px; font-size: 15px; border-radius: 10px;
+      border: 1px solid #2b2e36; background: #0f1115; color: #f0f0f2; outline: none;
+    }
+    input:focus { border-color: #5b8cff; box-shadow: 0 0 0 3px rgba(91,140,255,.18); }
+    #code { letter-spacing: 8px; text-align: center; font-size: 22px; font-weight: 600; }
+    button {
+      width: 100%; margin-top: 16px; padding: 12px 14px; font-size: 15px; font-weight: 600;
+      border: 0; border-radius: 10px; background: #5b8cff; color: #fff; cursor: pointer;
+    }
+    button:disabled { opacity: .55; cursor: default; }
+    .msg { margin-top: 14px; font-size: 13px; min-height: 18px; }
+    .msg.err { color: #ff7b7b; }
+    .msg.ok { color: #6ee7a8; }
+    .link { margin-top: 16px; text-align: center; }
+    .link a { color: #9aa0a6; font-size: 13px; text-decoration: none; cursor: pointer; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Sign in to Hermes</h1>
+    <p class="sub">A one-time code will be emailed to the account owner.</p>
+
+    <!-- Step 1: request a code -->
+    <form id="request-form">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email"
+             value="{{ email }}" required />
+      <button id="request-btn" type="submit">Email me a code</button>
+    </form>
+
+    <!-- Step 2: enter the code -->
+    <form id="verify-form" class="hidden">
+      <label for="code">Enter the 6-digit code</label>
+      <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" pattern="[0-9]{6}" placeholder="••••••" />
+      <button id="verify-btn" type="submit">Verify &amp; sign in</button>
+      <div class="link"><a id="back">Use a different email</a></div>
+    </form>
+
+    <div id="msg" class="msg"></div>
+  </div>
+
+  <script>
+    const requestForm = document.getElementById("request-form");
+    const verifyForm  = document.getElementById("verify-form");
+    const emailInput  = document.getElementById("email");
+    const codeInput   = document.getElementById("code");
+    const msg = document.getElementById("msg");
+
+    function say(text, kind) { msg.textContent = text || ""; msg.className = "msg" + (kind ? " " + kind : ""); }
+
+    requestForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("request-btn");
+      btn.disabled = true; say("Sending…");
+      try {
+        const r = await fetch("/api/auth/request", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: emailInput.value.trim() }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok) {
+          requestForm.classList.add("hidden");
+          verifyForm.classList.remove("hidden");
+          codeInput.focus();
+          say("Check your email for the code.", "ok");
+        } else {
+          say(data.error || "Something went wrong.", "err");
+        }
+      } catch { say("Network error. Try again.", "err"); }
+      finally { btn.disabled = false; }
+    });
+
+    verifyForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("verify-btn");
+      btn.disabled = true; say("Verifying…");
+      try {
+        const r = await fetch("/api/auth/verify", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: emailInput.value.trim(), code: codeInput.value.trim() }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok) { say("Signed in. Redirecting…", "ok"); window.location.href = "/"; }
+        else { say(data.error || "Invalid code.", "err"); btn.disabled = false; }
+      } catch { say("Network error. Try again.", "err"); btn.disabled = false; }
+    });
+
+    document.getElementById("back").addEventListener("click", () => {
+      verifyForm.classList.add("hidden");
+      requestForm.classList.remove("hidden");
+      say("");
+    });
+  </script>
+</body>
+</html>

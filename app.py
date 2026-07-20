@@ -47,7 +47,7 @@ log = logging.getLogger("hermes.app")
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -56,6 +56,7 @@ from pydantic import BaseModel
 from starlette.concurrency import iterate_in_threadpool
 from starlette.datastructures import UploadFile as FormUploadFile
 
+from hermes import authn
 from hermes.agent import run_turn, stream_turn
 from hermes.attachments import store as attachment_store
 from hermes.bills import check_paid_bills, extract_bill, fetch_gmail_body, guess_business, scan_drive, scan_gmail
@@ -177,6 +178,58 @@ async def _limit_upload_size(request: Request, call_next):
     return await call_next(request)
 
 
+# ---- Authentication gate --------------------------------------------------
+# Paths reachable WITHOUT a session. Everything else requires a valid login
+# cookie (API → 401 JSON, page → redirect to /login).
+_AUTH_PUBLIC_EXACT = {
+    "/login",
+    "/api/health",
+    "/api/auth/request",
+    "/api/auth/verify",
+    "/favicon.ico",
+}
+_AUTH_PUBLIC_PREFIX = ("/static/",)
+# Cron trigger endpoints authenticate themselves with SCHEDULER_SECRET/CRON_SECRET
+# (a Bearer token from Vercel Cron), not a user session — so the session gate
+# must let them through to their own secret check.
+_AUTH_SELF_SECRET = ("/api/scheduled-tasks/run-due", "/api/jobs/run-due")
+
+
+@app.middleware("http")
+async def _require_login(request: Request, call_next):
+    """Block every non-public route unless the request carries a valid session."""
+    if not authn.is_enabled():
+        return await call_next(request)
+
+    # CORS preflight must pass so the browser can even see a 401 on the real call.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    path = request.url.path
+    if (
+        path in _AUTH_PUBLIC_EXACT
+        or path.startswith(_AUTH_PUBLIC_PREFIX)
+        or path in _AUTH_SELF_SECRET
+    ):
+        return await call_next(request)
+
+    # Fail CLOSED: if auth is on but has no secret, it can't validate anything —
+    # deny rather than silently wave requests through.
+    if not authn.is_configured():
+        if path.startswith("/api/"):
+            return JSONResponse({"error": "Authentication is misconfigured."}, status_code=503)
+        return RedirectResponse(url="/login", status_code=303)
+
+    session = await run_in_threadpool(authn.current_session, request)
+    if session is None:
+        if path.startswith("/api/"):
+            return JSONResponse({"error": "Not authenticated."}, status_code=401)
+        return RedirectResponse(url="/login", status_code=303)
+
+    request.state.auth_email = session.get("email")
+    return await call_next(request)
+
+
 def _truthy(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
@@ -273,6 +326,84 @@ def index(request: Request):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "problems": Config.validate()}
+
+
+# ---- Authentication (passwordless email OTP) ------------------------------
+@app.get("/login")
+def login_page(request: Request):
+    """The login screen. If already signed in, bounce to the app."""
+    if authn.is_enabled() and authn.is_configured() and authn.current_session(request):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={"email": Config.AUTH_ALLOWED_EMAIL, "v": _asset_version()},
+    )
+
+
+class AuthRequest(BaseModel):
+    email: str
+
+
+class AuthVerify(BaseModel):
+    email: str
+    code: str
+
+
+@app.post("/api/auth/request")
+async def auth_request_code(body: AuthRequest):
+    """Email a one-time login code. The response is deliberately generic — it does
+    not reveal whether the address is the allowlisted one."""
+    generic = {"ok": True, "message": "If that address can sign in, a code has been sent."}
+    try:
+        status = await run_in_threadpool(authn.request_code, body.email)
+    except Exception:  # noqa: BLE001 — e.g. SES send failure
+        log.exception("Failed to send login code")
+        return JSONResponse(
+            {"ok": False, "error": "Could not send the login code. Try again shortly."},
+            status_code=502,
+        )
+    if status == authn.RATE_LIMITED:
+        return JSONResponse(
+            {"ok": False, "error": "Too many code requests. Wait a bit and try again."},
+            status_code=429,
+        )
+    # SENT and NOT_ALLOWED both return the same generic success.
+    return generic
+
+
+@app.post("/api/auth/verify")
+async def auth_verify_code(body: AuthVerify, request: Request):
+    """Exchange a valid code for a session cookie."""
+    ok = await run_in_threadpool(authn.verify_code, body.email, body.code)
+    if not ok:
+        return JSONResponse({"ok": False, "error": "Invalid or expired code."}, status_code=401)
+    ua = request.headers.get("user-agent")
+    ip = request.client.host if request.client else None
+    raw_token, _ = await run_in_threadpool(
+        lambda: authn.start_session(body.email, user_agent=ua, ip=ip)
+    )
+    resp = JSONResponse({"ok": True})
+    authn.set_session_cookie(resp, raw_token)
+    return resp
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request):
+    """Revoke the current session and clear the cookie."""
+    await run_in_threadpool(authn.end_session, request)
+    resp = JSONResponse({"ok": True})
+    authn.clear_session_cookie(resp)
+    return resp
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    """Who the current session belongs to (used by the UI to show/hide chrome)."""
+    if not authn.is_enabled():
+        return {"authenticated": True, "auth_enabled": False, "email": None}
+    email = getattr(request.state, "auth_email", None)
+    return {"authenticated": bool(email), "auth_enabled": True, "email": email}
 
 
 @app.get("/api/settings/model")
