@@ -101,6 +101,49 @@ const HermesBiz = (() => {
     onChange(() => renderSelect(selectEl, badgeEl));
   }
 
+  // ---- Render + bind the topbar's global business-scope switcher --------
+  // Replaces the old per-view <select> pattern above: one control (a color
+  // dot + name in `dotEl`/`nameEl`, plus a dropdown of rows in `menuEl`)
+  // shared by every view. Open/close state is the caller's concern (see
+  // app.js) — this only renders content and reacts to selection changes.
+  function _escape(s) {
+    return String(s).replace(/[&<>"']/g, (c) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+    ));
+  }
+  function renderTopbar(dotEl, nameEl, menuEl) {
+    const biz = find(current);
+    const color = (biz && biz.color) || "#9aa3b2";
+    if (dotEl) {
+      dotEl.style.background = color;
+      dotEl.style.boxShadow = `0 0 9px ${color}`;
+    }
+    if (nameEl) nameEl.textContent = (biz && biz.name) || "All Businesses";
+    if (menuEl) {
+      menuEl.innerHTML = list.map((b) => {
+        const active = b.slug === current;
+        const code = b.slug === "all" ? "GLOBAL SCOPE" : b.slug.toUpperCase();
+        const check = active
+          ? '<svg class="hud-biz-row-check" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.6"><polyline points="20 6 9 17 4 12"/></svg>'
+          : "";
+        return `<button type="button" class="hud-biz-row${active ? " active" : ""}" data-slug="${b.slug}" role="menuitem">` +
+          `<span class="hud-biz-row-dot" style="background:${b.color || "#9aa3b2"}"></span>` +
+          `<span class="hud-biz-row-text"><span class="hud-biz-row-name">${_escape(b.name)}</span><span class="hud-biz-row-code">${code}</span></span>` +
+          `${check}</button>`;
+      }).join("");
+    }
+  }
+  function bindTopbar(dotEl, nameEl, menuEl) {
+    renderTopbar(dotEl, nameEl, menuEl);
+    if (menuEl) {
+      menuEl.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-slug]");
+        if (btn) set(btn.dataset.slug);
+      });
+    }
+    onChange(() => renderTopbar(dotEl, nameEl, menuEl));
+  }
+
   return {
     load,
     get list() { return list; },
@@ -113,6 +156,8 @@ const HermesBiz = (() => {
     clearLock,
     renderSelect,
     bind,
+    renderTopbar,
+    bindTopbar,
   };
 })();
 

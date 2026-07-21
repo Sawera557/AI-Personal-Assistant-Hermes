@@ -616,7 +616,6 @@
 
   // ── Wiring ───────────────────────────────────────────────────────────────
   function bindOnce() {
-    HermesBiz.bind($("hermes-biz-select-tasks"), $("hermes-biz-badge-tasks"));
     HermesBiz.onChange(() => { if (inited) loadTasks(); });
 
     ["task-new-btn", "task-new-btn-m", "task-new-btn-main", "task-new-btn-empty"].forEach((id) =>

@@ -3,17 +3,77 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, interactive-widget=resizes-content" />
-  <meta name="theme-color" content="#0b0e14" />
+  <meta name="theme-color" content="#05080f" />
   <title>Hermes AI Agent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
   <link rel="stylesheet" href="/static/style.css?v={{ v }}" />
 </head>
 <body>
-  <div class="app" id="app" data-view="agent">
+  <div class="app" id="app" data-view="home">
     <div class="overlay" id="overlay"></div>
+
+    <!-- Ambient HUD chrome: animated scanning grid, scanline sweep, corner
+         brackets — always on, behind everything, regardless of which view
+         or boot state is showing. This is the mockup's signature ambiance. -->
+    <div class="hud-grid-bg" aria-hidden="true"></div>
+    <div class="hud-scanline" aria-hidden="true"></div>
+    <div class="hud-corner hud-corner-tl" aria-hidden="true"></div>
+    <div class="hud-corner hud-corner-tr" aria-hidden="true"></div>
+    <div class="hud-corner hud-corner-bl" aria-hidden="true"></div>
+    <div class="hud-corner hud-corner-br" aria-hidden="true"></div>
+
+    <!-- Boot sequence — plays once per browser tab session (see boot.js), always skippable -->
+    <div class="boot-overlay" id="boot-overlay" hidden>
+      <div class="boot-rings">
+        <div class="boot-ring boot-ring-1"></div>
+        <div class="boot-ring boot-ring-2"></div>
+        <div class="boot-ring boot-ring-3"></div>
+        <div class="boot-core"></div>
+      </div>
+      <div class="boot-lines" id="boot-lines"></div>
+      <div class="boot-bar"><div class="boot-bar-fill" id="boot-bar-fill"></div></div>
+      <button class="boot-skip" id="boot-skip" type="button">SKIP ▸</button>
+    </div>
+
+    <!-- Persistent HUD topbar: brand, global business switcher, status, clock -->
+    <header class="hud-topbar" id="hud-topbar">
+      <button class="hud-menu-btn" id="hud-menu-btn" type="button" aria-label="Open menu">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="hud-brand">
+        <div class="hud-brand-mark"></div>
+        <div class="hud-brand-text">
+          <div class="hud-brand-title">HERMES</div>
+          <div class="hud-brand-sub">JARVIS INTELLIGENCE CORE · v1.0</div>
+        </div>
+      </div>
+      <div class="hud-biz" id="hud-biz">
+        <button class="hud-biz-btn" id="hud-biz-btn" type="button" title="Switch active business" aria-haspopup="true" aria-expanded="false">
+          <span class="hud-biz-dot" id="hud-biz-dot"></span>
+          <span class="hud-biz-text">
+            <span class="hud-biz-label">ACTIVE BUSINESS</span>
+            <span class="hud-biz-name" id="hud-biz-name">All Businesses</span>
+          </span>
+          <svg class="hud-biz-chevron" id="hud-biz-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="hud-biz-menu" id="hud-biz-menu" role="menu" hidden></div>
+      </div>
+      <div class="hud-topbar-right">
+        <div class="hud-pills">
+          <span class="hud-pill"><span class="hud-pill-dot hud-pill-dot-green"></span>CLAUDE ONLINE</span>
+          <span class="hud-pill"><span class="hud-pill-dot hud-pill-dot-cyan"></span>MATON READY</span>
+        </div>
+        <div class="hud-clock">
+          <div class="hud-clock-time" id="hud-clock-time">--:--:--</div>
+          <div class="hud-clock-date" id="hud-clock-date">---</div>
+        </div>
+      </div>
+    </header>
+
+    <div class="app-body" id="app-body">
 
     <!--
       Left navigation: a narrow icon strip (always on screen) + a sliding
@@ -22,14 +82,19 @@
     -->
     <nav class="leftnav" id="leftnav">
 
-      <!-- Icon strip: brand + section tabs + collapse toggle -->
+      <!-- Icon strip: section tabs + collapse toggle (brand now lives in the persistent hud-topbar) -->
       <div class="icon-strip">
-        <div class="strip-brand">
-          <div class="logo">⚡</div>
-        </div>
 
         <div class="strip-tabs">
-          <button class="strip-tab active" type="button" data-view="agent" title="AI Agent">
+          <button class="strip-tab active" type="button" data-view="home" title="Home">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="2.4"/><ellipse cx="12" cy="12" rx="10" ry="4.4"/><ellipse cx="12" cy="12" rx="4.4" ry="10"/></svg>
+            <span>Home</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="command" title="Command Center">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>
+            <span>Core</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="agent" title="AI Agent">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="4" y="8" width="16" height="12" rx="2"/>
               <path d="M12 8V4"/>
@@ -87,6 +152,16 @@
             </svg>
             <span>Jobs</span>
           </button>
+          <button class="strip-tab" type="button" data-view="workflow" title="How I Work · Schematic">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="9" width="6" height="6" rx="1"/><rect x="15" y="3" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M9 12h3M12 5.5H12a3 3 0 0 0-3 3v0M12 18.5H12a3 3 0 0 1-3-3v0"/></svg>
+            <span>Schema</span>
+          </button>
+          {% if voice_enabled %}
+          <button class="strip-tab" type="button" id="strip-tab-voice" title="Voice">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
+            <span>Voice</span>
+          </button>
+          {% endif %}
         </div>
 
         <button class="strip-toggle" id="strip-toggle" type="button" title="Toggle sidebar">
@@ -101,13 +176,8 @@
       <div class="content-panel" id="content-panel">
 
         <!-- AI Agent panel: conversation history + settings -->
-        <div class="panel-section visible" id="panel-agent">
-          <div class="panel biz-scope-panel">
-            <h2>Business</h2>
-            <select id="hermes-biz-select-agent" class="voice-select" aria-label="Active business"></select>
-            <p class="biz-not-connected" id="hermes-biz-badge-agent" hidden></p>
-            <p class="chat-lock-note" id="chat-lock-note" hidden></p>
-          </div>
+        <div class="panel-section" id="panel-agent">
+          <p class="chat-lock-note" id="chat-lock-note" hidden></p>
 
           <button id="reset-btn" class="ghost new-convo">＋ New conversation</button>
 
@@ -169,12 +239,6 @@
 
         <!-- Billing panel: sidebar metadata for the Billing section -->
         <div class="panel-section" id="panel-bills">
-          <div class="panel biz-scope-panel">
-            <h2>Business</h2>
-            <select id="hermes-biz-select-bills" class="voice-select" aria-label="Active business"></select>
-            <p class="biz-not-connected" id="hermes-biz-badge-bills" hidden></p>
-          </div>
-
           <div class="bills-panel-head">
             <div class="bills-panel-icon">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v18l2-1 2 1 2-1 2 1 2-1 2 1V3l-2 1-2-1-2 1-2-1-2 1-2-1z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg>
@@ -209,12 +273,6 @@
 
         <!-- Meeting Copilot panel: sidebar metadata for the Meeting section -->
         <div class="panel-section" id="panel-meeting">
-          <div class="panel biz-scope-panel">
-            <h2>Business</h2>
-            <select id="hermes-biz-select-meeting" class="voice-select" aria-label="Active business"></select>
-            <p class="biz-not-connected" id="hermes-biz-badge-meeting" hidden></p>
-          </div>
-
           <button id="meeting-new-btn" class="ghost new-convo">＋ New meeting</button>
 
           <div class="panel history-panel">
@@ -234,12 +292,6 @@
 
         <!-- Business Context panel: sidebar metadata for the Context section -->
         <div class="panel-section" id="panel-context">
-          <div class="panel biz-scope-panel">
-            <h2>Business</h2>
-            <select id="hermes-biz-select-context" class="voice-select" aria-label="Active business"></select>
-            <p class="biz-not-connected" id="hermes-biz-badge-context" hidden></p>
-          </div>
-
           <div class="panel push-bottom">
             <p class="hint">Notes and files you add here are chunked, embedded, and searchable by Hermes in chat via `search_business_knowledge` — kept separate per business.</p>
           </div>
@@ -247,12 +299,6 @@
 
         <!-- Scheduled Tasks panel: sidebar metadata for the Tasks section -->
         <div class="panel-section" id="panel-tasks">
-          <div class="panel biz-scope-panel">
-            <h2>Business</h2>
-            <select id="hermes-biz-select-tasks" class="voice-select" aria-label="Active business"></select>
-            <p class="biz-not-connected" id="hermes-biz-badge-tasks" hidden></p>
-          </div>
-
           <button id="task-new-btn" class="ghost new-convo">＋ New task</button>
 
           <div class="panel">
@@ -272,12 +318,6 @@
 
         <!-- File Explorer panel: business selector + folder tree -->
         <div class="panel-section" id="panel-files">
-          <div class="panel biz-scope-panel">
-            <h2>Business</h2>
-            <select id="hermes-biz-select-files" class="voice-select" aria-label="Active business"></select>
-            <p class="biz-not-connected" id="hermes-biz-badge-files" hidden></p>
-          </div>
-
           <button id="files-refresh-btn" class="ghost new-convo">↻ Refresh</button>
 
           <div class="panel files-tree-panel">
@@ -314,20 +354,95 @@
       </div><!-- /content-panel -->
     </nav><!-- /leftnav -->
 
+    <!-- ── Main area: Home ("Orbit") ──────────────────────────────── -->
+    <main class="home-view" id="home-view">
+      <div class="home-aurora" aria-hidden="true"></div>
+      <div class="home-stars" aria-hidden="true"></div>
+      <div class="home-stars-2" aria-hidden="true"></div>
+
+      <div class="home-header">
+        <div class="home-greeting" id="home-greeting">Good to see you</div>
+        <div class="home-date" id="home-date">—</div>
+        <div class="home-chips" id="home-chips"></div>
+      </div>
+
+      <div class="home-scope-pill"><span class="home-scope-dot"></span>THE ECOSYSTEM · 30,000 FT</div>
+
+      <div class="home-orbit-wrap">
+        <div class="home-orbit-field">
+          <div class="home-orbit-glow"></div>
+          <div class="home-orbit-ring home-orbit-ring-1"></div>
+          <div class="home-orbit-ring home-orbit-ring-2"></div>
+          <div class="home-orbit-ring home-orbit-ring-3"></div>
+          <div class="home-orbit-spin home-orbit-spin-1"></div>
+          <div class="home-orbit-spin home-orbit-spin-2"></div>
+
+          <button class="home-core" id="home-core" type="button" title="Talk to Hermes">
+            <span class="home-core-glow"></span>
+            <span class="home-core-ring home-core-ring-1"></span>
+            <span class="home-core-ring home-core-ring-2"></span>
+            <span class="home-core-ring home-core-ring-3"></span>
+            <span class="home-core-spokes"></span>
+            <span class="home-core-spokes-2"></span>
+            <span class="home-core-dot"></span>
+            <span class="home-core-label"><span class="home-core-label-dot"></span>TAP TO SPEAK</span>
+          </button>
+
+          <div class="home-nodes" id="home-nodes"></div>
+        </div>
+      </div>
+
+      <div class="home-footer-hint">◆ click a business for its command center · tap Hermes to speak</div>
+    </main>
+
+    <!-- ── Main area: Command Center ──────────────────────────────── -->
+    <main class="command-view" id="command-view">
+      <div class="command-page">
+       <div class="command-inner">
+
+        <div class="command-header">
+          <div class="command-title">COMMAND CENTER</div>
+          <div class="command-sub" id="command-scope-sub">MULTI-ENTITY OPERATIONS · ALL BUSINESSES</div>
+        </div>
+
+        <div class="command-entity-bar">
+          <span class="command-entity-label">ENTITY ▸</span>
+          <div class="command-entity-chips" id="command-entity-chips"></div>
+        </div>
+
+        <div class="command-section-head">
+          <div class="command-section-title">GLOBAL SNAPSHOT</div>
+          <div class="command-hr"></div>
+        </div>
+        <div class="command-metrics" id="command-metrics"></div>
+
+        <div class="command-section-head">
+          <div class="command-section-title">CONNECTED APPS</div>
+          <div class="command-hr"></div>
+          <button class="command-toggle-btn" id="command-apps-toggle" type="button">VIEW ALL</button>
+        </div>
+        <div class="command-apps-grid" id="command-apps-grid" hidden></div>
+
+       </div>
+      </div>
+    </main>
+
     <!-- ── Main area: AI Agent (chat) ─────────────────────────────── -->
     <main class="chat">
       <header class="topbar">
-        <button class="icon-btn" id="menu-btn" aria-label="Open menu">
-          <span></span><span></span><span></span>
-        </button>
-        <div class="topbar-brand"><span class="logo-sm">⚡</span> Hermes</div>
-        <button class="icon-btn plus" id="reset-top" aria-label="New conversation">＋</button>
+        <button class="icon-btn plus" id="reset-top" aria-label="New conversation" style="margin-left:auto">＋</button>
       </header>
 
       <div id="messages" class="messages">
         <div class="msg assistant">
           <div class="bubble">Hi! I'm connected to your business apps. How can I help you?</div>
         </div>
+      </div>
+
+      <div class="chat-quick-prompts" id="chat-quick-prompts">
+        <button type="button" class="chat-quick-chip" data-prompt="How do you work?">How do you work?</button>
+        <button type="button" class="chat-quick-chip" data-prompt="Give me a business status briefing">Business briefing</button>
+        <button type="button" class="chat-quick-chip" data-prompt="What can you help me with?">What can you help me with?</button>
       </div>
 
       <form id="composer" class="composer">
@@ -354,10 +469,6 @@
     <main class="bills-view" id="bills-view">
       <!-- Mobile topbar -->
       <header class="topbar">
-        <button class="icon-btn" id="menu-btn-bills" aria-label="Open menu">
-          <span></span><span></span><span></span>
-        </button>
-        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(245,166,35,.15);font-size:15px;">🧾</span> Billing</div>
         <label class="icon-btn" for="bill-file-input-m" title="Upload" style="cursor:pointer;margin-left:auto">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           <input type="file" id="bill-file-input-m" multiple accept=".pdf,.jpg,.jpeg,.png,.heic" hidden />
@@ -455,10 +566,6 @@
     <main class="meeting-view" id="meeting-view">
       <!-- Mobile topbar -->
       <header class="topbar">
-        <button class="icon-btn" id="menu-btn-meeting" aria-label="Open menu">
-          <span></span><span></span><span></span>
-        </button>
-        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(59,130,246,.18);font-size:15px;">🎙</span> Meeting Copilot</div>
         <button class="icon-btn meeting-listen-btn-m" id="meeting-listen-btn-m" aria-label="Start listening" title="Start listening" style="margin-left:auto">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         </button>
@@ -547,14 +654,6 @@
 
     <!-- ── Main area: Business Context ────────────────────────────── -->
     <main class="context-view" id="context-view">
-      <!-- Mobile topbar -->
-      <header class="topbar">
-        <button class="icon-btn" id="menu-btn-context" aria-label="Open menu">
-          <span></span><span></span><span></span>
-        </button>
-        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(245,166,35,.15);font-size:15px;">📚</span> Context</div>
-      </header>
-
       <div class="context-page" id="context-page">
         <div class="context-pg-header">
           <div>
@@ -629,12 +728,7 @@
 
     <!-- ── Main area: Scheduled Tasks ─────────────────────────────── -->
     <main class="tasks-view" id="tasks-view">
-      <!-- Mobile topbar -->
       <header class="topbar">
-        <button class="icon-btn" id="menu-btn-tasks" aria-label="Open menu">
-          <span></span><span></span><span></span>
-        </button>
-        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(139,92,246,.18);font-size:15px;">⏰</span> Tasks</div>
         <button class="icon-btn plus" id="task-new-btn-m" aria-label="New task" style="margin-left:auto">＋</button>
       </header>
 
@@ -817,12 +911,7 @@
 
     <!-- ── Main area: File Explorer ───────────────────────────────── -->
     <main class="files-view" id="files-view">
-      <!-- Mobile topbar -->
       <header class="topbar">
-        <button class="icon-btn" id="menu-btn-files" aria-label="Open menu">
-          <span></span><span></span><span></span>
-        </button>
-        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(96,165,250,.18);font-size:15px;">📁</span> Files</div>
         <button class="icon-btn plus" id="files-refresh-m" aria-label="Refresh" style="margin-left:auto">↻</button>
       </header>
 
@@ -851,14 +940,6 @@
 
     <!-- ── Main area: Jobs ────────────────────────────────────────── -->
     <main class="jobs-view" id="jobs-view">
-      <!-- Mobile topbar -->
-      <header class="topbar">
-        <button class="icon-btn" id="menu-btn-jobs" aria-label="Open menu">
-          <span></span><span></span><span></span>
-        </button>
-        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(139,92,246,.18);font-size:15px;">⚙️</span> Jobs</div>
-      </header>
-
       <div class="tasks-page" id="jobs-page">
         <div class="tasks-pg-header">
           <div>
@@ -912,17 +993,119 @@
       </div>
     </main>
 
+    <!-- ── Main area: How I Work · Schematic ───────────────────────── -->
+    <main class="workflow-view" id="workflow-view">
+      <div class="workflow-page">
+        <div class="workflow-header">
+          <div class="workflow-title">HOW I WORK · LIVE SCHEMATIC</div>
+          <div class="workflow-sub">Your message flows through Claude, out to your apps via the Maton gateway, and back — grounded in memory, files &amp; search.</div>
+        </div>
+
+        <div class="workflow-diagram">
+          <div class="workflow-row workflow-row-top">
+            <div class="workflow-node" style="--node-color:#c9b4ff">
+              <div class="workflow-node-tag">INPUT</div>
+              <div class="workflow-node-title">You</div>
+              <div class="workflow-node-sub">Owner · voice or text</div>
+            </div>
+            <div class="workflow-arrow">→</div>
+            <div class="workflow-node workflow-node-big" style="--node-color:#38e1ff">
+              <div class="workflow-node-tag">REASONING</div>
+              <div class="workflow-node-title">Jarvis Core</div>
+              <div class="workflow-node-sub">Claude · tool-use loop</div>
+            </div>
+            <div class="workflow-arrow">→</div>
+            <div class="workflow-node" style="--node-color:#38e1ff">
+              <div class="workflow-node-tag">GATEWAY</div>
+              <div class="workflow-node-title">Maton</div>
+              <div class="workflow-node-sub">Connector gateway</div>
+            </div>
+            <div class="workflow-arrow">→</div>
+            <div class="workflow-node" style="--node-color:#35e0a0">
+              <div class="workflow-node-tag">CONNECTED APPS</div>
+              <div class="workflow-node-title">Your Apps</div>
+              <div class="workflow-node-sub">QuickBooks · Gmail · …</div>
+            </div>
+          </div>
+
+          <div class="workflow-grounded-label"><span>▾ GROUNDED IN</span></div>
+
+          <div class="workflow-row workflow-row-bottom">
+            <div class="workflow-node" style="--node-color:#5b8cff">
+              <div class="workflow-node-tag">MEMORY</div>
+              <div class="workflow-node-title">Postgres</div>
+              <div class="workflow-node-sub">History · entities</div>
+            </div>
+            <div class="workflow-node" style="--node-color:#9ae35a">
+              <div class="workflow-node-tag">FILES</div>
+              <div class="workflow-node-title">AWS S3</div>
+              <div class="workflow-node-sub">Docs · invoices</div>
+            </div>
+            <div class="workflow-node" style="--node-color:#ff8ad4">
+              <div class="workflow-node-tag">SEARCH</div>
+              <div class="workflow-node-title">Pinecone</div>
+              <div class="workflow-node-sub">RAG · embeddings</div>
+            </div>
+            <div class="workflow-node" style="--node-color:#f5a623">
+              <div class="workflow-node-tag">VOICE</div>
+              <div class="workflow-node-title">STT / TTS</div>
+              <div class="workflow-node-sub">OpenAI voice</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    </div><!-- /app-body -->
+
   </div><!-- /app -->
 
   {% if voice_enabled %}
   <div class="call" id="call" aria-hidden="true">
-    <div class="call-card">
-      <div class="call-orb" id="call-orb">
-        <span class="orb-ring"></span>
-        <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+    <div class="call-view">
+
+      <div class="call-brand">
+        <div class="call-brand-title">HERMES</div>
+        <div class="call-brand-sub">VOICE INTERFACE · ONLINE</div>
       </div>
+
+      <div class="call-stage">
+        <div class="call-readout call-readout-l">
+          <div class="call-readout-item"><span class="call-readout-k">MODEL</span><span class="call-readout-v" id="call-readout-model">—</span></div>
+          <div class="call-readout-item"><span class="call-readout-k">VOICE</span><span class="call-readout-v" id="call-readout-voice">—</span></div>
+        </div>
+
+        <div class="call-orb-wrap">
+          <div class="call-orb" id="call-orb">
+            <span class="call-orb-glow"></span>
+            <span class="call-orb-ping call-orb-ping-1"></span>
+            <span class="call-orb-ping call-orb-ping-2"></span>
+            <span class="call-orb-deco call-orb-deco-1"></span>
+            <span class="call-orb-deco call-orb-deco-2"></span>
+            <span class="call-orb-deco call-orb-deco-3"></span>
+            <span class="call-orb-spokes"></span>
+            <span class="orb-ring"></span>
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <span class="call-orb-corner call-orb-corner-tl"></span>
+            <span class="call-orb-corner call-orb-corner-tr"></span>
+            <span class="call-orb-corner call-orb-corner-bl"></span>
+            <span class="call-orb-corner call-orb-corner-br"></span>
+          </div>
+        </div>
+
+        <div class="call-readout call-readout-r">
+          <div class="call-readout-item"><span class="call-readout-k">MODE</span><span class="call-readout-v">HANDS-FREE</span></div>
+          <div class="call-readout-item"><span class="call-readout-k">GATEWAY</span><span class="call-readout-v">MATON</span></div>
+        </div>
+      </div>
+
       <h2 class="call-status" id="call-status">Connecting…</h2>
       <p class="call-caption" id="call-caption">Tap the mic to talk. I'll listen, then reply out loud.</p>
+
+      <div class="call-waveform" id="call-waveform">
+        {% for i in range(28) %}<span class="call-wave-bar" style="--i:{{ i }}"></span>{% endfor %}
+      </div>
+
       <div class="call-actions">
         <button class="call-mute" id="call-mute" type="button">Mute</button>
         <button class="call-end" id="call-end" type="button" aria-label="End call">
@@ -937,9 +1120,15 @@
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="/static/boot.js?v={{ v }}"></script>
   <script src="/static/business.js?v={{ v }}"></script>
   <script src="/static/context.js?v={{ v }}"></script>
   <script src="/static/model.js?v={{ v }}"></script>
+  <!-- home.js/command.js load before app.js: app.js's init() calls
+       setView('home') synchronously on page load, which needs
+       window._homeInit already registered. -->
+  <script src="/static/home.js?v={{ v }}"></script>
+  <script src="/static/command.js?v={{ v }}"></script>
   <script src="/static/app.js?v={{ v }}"></script>
   <script src="/static/bills.js?v={{ v }}"></script>
   <script src="/static/meeting.js?v={{ v }}"></script>

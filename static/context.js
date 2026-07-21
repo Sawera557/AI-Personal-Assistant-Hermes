@@ -382,9 +382,5 @@ if (ctxSaveBtn) {
 window._contextInit = refreshActiveSubview;
 
 if (window.HermesBiz) {
-  window.HermesBiz.bind(
-    document.getElementById("hermes-biz-select-context"),
-    document.getElementById("hermes-biz-badge-context")
-  );
   window.HermesBiz.onChange(refreshActiveSubview);
 }

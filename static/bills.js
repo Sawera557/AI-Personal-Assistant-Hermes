@@ -34,10 +34,6 @@ async function initBilling() {
   bindDropzone();
   bindConfirmOverlay();
   bindBillViewer();
-  HermesBiz.bind(
-    document.getElementById("hermes-biz-select-bills"),
-    document.getElementById("hermes-biz-badge-bills")
-  );
   HermesBiz.onChange(() => {
     renderStats();
     renderToolbar();

@@ -18,6 +18,9 @@
   const muteBtn = document.getElementById("call-mute");
   const endBtn = document.getElementById("call-end");
   const voiceSelect = document.getElementById("voice-select");
+  const modelSelect = document.getElementById("model-select");
+  const readoutModel = document.getElementById("call-readout-model");
+  const readoutVoice = document.getElementById("call-readout-voice");
 
   // ---- Voice selection (persisted) ----
   const savedVoice = localStorage.getItem("hermes_voice");
@@ -25,10 +28,24 @@
     if (savedVoice) voiceSelect.value = savedVoice;
     voiceSelect.addEventListener("change", () => {
       localStorage.setItem("hermes_voice", voiceSelect.value);
+      syncReadouts();
     });
   }
   const currentVoice = () =>
     (voiceSelect && voiceSelect.value) || savedVoice || undefined;
+
+  // ---- Voice-view readouts: mirror the real active model/voice, not fake values ----
+  function syncReadouts() {
+    if (readoutModel && modelSelect) {
+      const opt = modelSelect.options[modelSelect.selectedIndex];
+      readoutModel.textContent = (opt ? opt.textContent : modelSelect.value || "—").trim();
+    }
+    if (readoutVoice) {
+      readoutVoice.textContent = (currentVoice() || "—").toString();
+    }
+  }
+  modelSelect?.addEventListener("change", syncReadouts);
+  syncReadouts();
 
   // ---- Tunables (VAD) ----
   // Endpointing waits for a real pause and uses two thresholds (hysteresis):

@@ -28,8 +28,6 @@
   const needBizEl = document.getElementById("meeting-need-biz");
   const mainEl = document.getElementById("meeting-main");
   const bizSubEl = document.getElementById("meeting-biz-sub");
-  const selectEl = document.getElementById("hermes-biz-select-meeting");
-  const badgeEl = document.getElementById("hermes-biz-badge-meeting");
   const newBtn = document.getElementById("meeting-new-btn");
   const sessionsEl = document.getElementById("meeting-sessions");
   const sessionsEmptyEl = document.getElementById("meeting-sessions-empty");
@@ -90,7 +88,6 @@
   function initOnce() {
     if (initialized) return;
     initialized = true;
-    HermesBiz.bind(selectEl, badgeEl);
     HermesBiz.onChange(refreshBizGate);
     refreshBizGate();
   }

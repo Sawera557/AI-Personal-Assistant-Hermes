@@ -241,13 +241,23 @@ def _build_attachments(files: list[tuple[str, str, bytes]]) -> list[dict]:
 
 def _asset_version() -> int:
     """A version stamp that changes whenever a static asset changes, so browsers
-    fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
+    fetch fresh JS/CSS after a deploy instead of serving a stale cached copy.
+
+    Scans every .js/.css in static/ rather than a hardcoded list — otherwise a
+    newly added file (e.g. home.js/boot.js/command.js) whose edits don't touch a
+    listed file would never bust the cache, and browsers would keep serving a
+    stale copy (which is how a fixed-in-source bug can still look broken live)."""
     latest = 0.0
-    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js", "tasks.js", "context.js", "model.js", "files.js", "jobs.js"):
-        try:
-            latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
-        except OSError:
-            pass
+    static_dir = _BASE_DIR / "static"
+    try:
+        for pattern in ("*.js", "*.css"):
+            for path in static_dir.glob(pattern):
+                try:
+                    latest = max(latest, path.stat().st_mtime)
+                except OSError:
+                    pass
+    except OSError:
+        pass
     return int(latest)
 
 
@@ -1935,4 +1945,6 @@ if __name__ == "__main__":
         f"[Hermes] API backend starting on http://127.0.0.1:{Config.PORT}  "
         f"(model: {hermes_models.active_model()}, voice: {voice})"
     )
-    uvicorn.run("app:app", host="0.0.0.0", port=Config.PORT, reload=True)
+    #uvicorn.run("app:app", host="0.0.0.0", port=Config.PORT, reload=True)
+    uvicorn.run("app:app", host="0.0.0.0", port=5055, reload=True)
+

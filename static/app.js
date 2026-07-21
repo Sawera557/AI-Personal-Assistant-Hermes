@@ -569,6 +569,15 @@ form.addEventListener("submit", async (e) => {
 // past chats stay in the history sidebar.
 resetBtn.addEventListener("click", startNewConversation);
 
+// Quick-prompt chips above the composer — prefill + send through the exact
+// same path as typing and hitting Enter.
+document.querySelectorAll(".chat-quick-chip").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    input.value = btn.dataset.prompt || "";
+    form.requestSubmit();
+  });
+});
+
 // ---- Pin the app to the visible viewport (normal mobile chat behavior) ----
 // Anchors the layout to the area NOT covered by the keyboard, so the input
 // stays just above the keyboard and the message list scrolls above it.
@@ -612,18 +621,63 @@ const resetTop = document.getElementById("reset-top");
 const openMobileNav  = () => appEl.classList.add("mobile-open");
 const closeMobileNav = () => appEl.classList.remove("mobile-open");
 
-// Wire up every hamburger button (chat topbar + bills topbar)
-["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context", "menu-btn-tasks", "menu-btn-files", "menu-btn-jobs"].forEach((id) => {
-  document.getElementById(id)?.addEventListener("click", openMobileNav);
-});
+// Wire up the single hamburger in the persistent HUD topbar (replaces the
+// old one-per-view menu buttons — one drawer trigger for every view now).
+document.getElementById("hud-menu-btn")?.addEventListener("click", openMobileNav);
 
 // Overlay closes the mobile drawer
 overlay?.addEventListener("click", closeMobileNav);
 
+// ---- HUD topbar: global business-scope switcher (dropdown open/close) ----
+const hudBizBtn = document.getElementById("hud-biz-btn");
+const hudBizMenu = document.getElementById("hud-biz-menu");
+const hudBizDot = document.getElementById("hud-biz-dot");
+const hudBizName = document.getElementById("hud-biz-name");
+
+function closeBizMenu() {
+  if (!hudBizMenu || hudBizMenu.hidden) return;
+  hudBizMenu.hidden = true;
+  hudBizBtn?.setAttribute("aria-expanded", "false");
+}
+hudBizBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const opening = hudBizMenu.hidden;
+  hudBizMenu.hidden = !opening;
+  hudBizBtn.setAttribute("aria-expanded", String(opening));
+});
+document.addEventListener("click", (e) => {
+  if (!hudBizMenu || hudBizMenu.hidden) return;
+  if (!e.target.closest("#hud-biz")) closeBizMenu();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeBizMenu(); });
+hudBizMenu?.addEventListener("click", (e) => {
+  if (e.target.closest("[data-slug]")) closeBizMenu();
+});
+
+// ---- HUD topbar: live clock ----
+const hudClockTime = document.getElementById("hud-clock-time");
+const hudClockDate = document.getElementById("hud-clock-date");
+function tickHudClock() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  if (hudClockTime) hudClockTime.textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  if (hudClockDate) {
+    hudClockDate.textContent = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "2-digit" }).toUpperCase();
+  }
+}
+tickHudClock();
+setInterval(tickHudClock, 1000);
+
 resetTop?.addEventListener("click", startNewConversation);
 
 // ---- Section tabs (icon strip) ----
-const stripTabs = document.querySelectorAll(".strip-tab");
+// Only tabs with a data-view participate in the view switcher below — the
+// Voice tab (if present) has none: it's not a persistent view, it just opens
+// the existing full-screen call overlay (see voice.js), wired separately.
+const stripTabs = document.querySelectorAll(".strip-tab[data-view]");
+document.getElementById("strip-tab-voice")?.addEventListener("click", () => {
+  document.getElementById("voice-btn")?.click();
+});
 
 function setView(view) {
   appEl.setAttribute("data-view", view);
@@ -663,6 +717,14 @@ function setView(view) {
   if (view === "jobs" && typeof window._jobsInit === "function") {
     window._jobsInit();
   }
+  // Lazy-init home ("orbit") on first open
+  if (view === "home" && typeof window._homeInit === "function") {
+    window._homeInit();
+  }
+  // Lazy-init command center on first open
+  if (view === "command" && typeof window._commandInit === "function") {
+    window._commandInit();
+  }
 }
 
 stripTabs.forEach((t) => t.addEventListener("click", () => setView(t.dataset.view)));
@@ -699,12 +761,12 @@ connectBtn.addEventListener("click", async () => {
 // We do NOT auto-open a past conversation — the page opens fresh every time.
 // Past chats are reachable from the History sidebar.
 (async function init() {
+  setView("home"); // default landing view — the single source of truth for
+                    // which view opens first (see index.html's static
+                    // data-view="home" fallback for the pre-JS instant)
   showGreeting();
   await HermesBiz.load(); // populate the business list once, up front
-  HermesBiz.bind(
-    document.getElementById("hermes-biz-select-agent"),
-    document.getElementById("hermes-biz-badge-agent")
-  );
+  HermesBiz.bindTopbar(hudBizDot, hudBizName, hudBizMenu);
   // Switching the global business re-filters which past chats are shown, and
   // may reveal a mismatch with the open chat's actual lock.
   HermesBiz.onChange(() => { loadConversations(); updateLockNote(); });

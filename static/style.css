@@ -19,6 +19,61 @@
   --panel-w: 236px;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   HUD design tokens — the new "Jarvis" visual language.
+   Additive: everything above is untouched. Views are migrated
+   onto these one reskin phase at a time. Dark theme only for
+   now — no [data-theme="light"] variant yet.
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  --hud-bg: #05080f;
+  --hud-bg-2: #070c16;
+  --hud-glow-1: rgba(56, 225, 255, 0.10);
+  --hud-glow-2: rgba(47, 127, 240, 0.12);
+  --hud-grid: rgba(56, 225, 255, 0.05);
+  --hud-bracket: rgba(56, 225, 255, 0.4);
+  --hud-topbar-bg: rgba(5, 10, 18, 0.7);
+  --hud-rail: rgba(4, 9, 16, 0.72);
+  --hud-panel: linear-gradient(160deg, rgba(12, 24, 38, 0.66), rgba(8, 16, 28, 0.5));
+  --hud-section: rgba(9, 16, 26, 0.4);
+  --hud-node: linear-gradient(160deg, rgba(12, 26, 40, 0.92), rgba(8, 18, 30, 0.86));
+  --hud-doc: #0a1420;
+  --hud-line: rgba(56, 225, 255, 0.15);
+  --hud-line-2: rgba(56, 225, 255, 0.3);
+  --hud-faint: rgba(56, 225, 255, 0.05);
+  --hud-cyansoft: rgba(56, 225, 255, 0.08);
+  --hud-cyansoft-2: rgba(56, 225, 255, 0.12);
+  --hud-head: #eaf7fb;
+  --hud-text: #cfe8f2;
+  --hud-muted: #7f9fb2;
+  --hud-label: #5f86a0;
+  --hud-muted-2: #4d6c80;
+  --hud-dim: #3a5266;
+  --hud-cyan: #38e1ff;
+  --hud-corehot: #bff3ff;
+  --hud-coreglow: rgba(56, 225, 255, 0.55);
+  --hud-blue: #2f7ff0;
+  --hud-amber: #f5a623;
+  --hud-ambersoft: rgba(245, 166, 35, 0.08);
+  --hud-amberline: rgba(245, 166, 35, 0.22);
+  --hud-ambertext: #c9a24a;
+  --hud-green: #35e0a0;
+  --hud-greensoft: rgba(53, 224, 160, 0.06);
+  --hud-red: #ff5c6a;
+  --hud-redline: rgba(255, 92, 106, 0.28);
+  --hud-navon: rgba(56, 225, 255, 0.12);
+  --hud-navonline: rgba(56, 225, 255, 0.3);
+  --hud-strip-w: 74px;
+  --hud-bubble-a: linear-gradient(160deg, rgba(12, 26, 40, .7), rgba(8, 18, 30, .6));
+}
+
+@keyframes hud-gridpan   { from { background-position: 0 0; } to { background-position: 0 44px; } }
+@keyframes hud-corepulse { 0%, 100% { opacity: .55; transform: scale(1); } 50% { opacity: 1; transform: scale(1.05); } }
+@keyframes hud-dot       { 0%, 100% { opacity: .3; transform: scale(1); } 50% { opacity: 1; transform: scale(1.35); } }
+@keyframes hud-glowpulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(56, 225, 255, 0); } 50% { box-shadow: 0 0 22px 1px var(--hud-cyansoft-2); } }
+@keyframes hud-rise      { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
+@keyframes hud-fadein    { from { opacity: 0; } to { opacity: 1; } }
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {
@@ -1913,3 +1968,727 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
   .files-content.tiles { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   .files-folder-tree { max-height: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   HUD shared chrome — persistent topbar + widened nav rail.
+   Placed last so these overrides win the cascade over the
+   original rules above with matching selectors (e.g. .icon-strip
+   width, .strip-tab.active colors) without editing them in place.
+   ═══════════════════════════════════════════════════════════ */
+
+.app { flex-direction: column; }
+.app-body { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+
+/* ── Persistent topbar ──────────────────────────────────── */
+.hud-topbar {
+  position: relative;
+  z-index: 12;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 20px;
+  padding-top: calc(11px + env(safe-area-inset-top));
+  border-bottom: 1px solid var(--hud-line);
+  background: var(--hud-topbar-bg);
+  box-shadow: 0 2px 24px -4px var(--hud-cyansoft-2), 0 1px 0 var(--hud-line-2);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.hud-menu-btn {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 38px; height: 38px;
+  border-radius: 9px;
+  border: 1px solid var(--hud-line-2);
+  background: var(--hud-cyansoft);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0 9px;
+}
+.hud-menu-btn span { display: block; height: 2px; border-radius: 2px; background: var(--hud-cyan); }
+
+.hud-brand { display: flex; align-items: center; gap: 11px; min-width: 0; flex-shrink: 0; }
+.hud-brand-mark {
+  width: 30px; height: 30px; border-radius: 7px; flex-shrink: 0;
+  background: radial-gradient(circle, var(--hud-corehot), var(--hud-cyan) 60%);
+  box-shadow: 0 0 16px var(--hud-coreglow);
+}
+.hud-brand-title { font: 700 15px/1 "Chakra Petch", sans-serif; letter-spacing: 3px; color: var(--hud-head); }
+.hud-brand-sub { font: 500 9px/1.3 "IBM Plex Mono", monospace; letter-spacing: 2px; color: var(--hud-label); margin-top: 3px; white-space: nowrap; }
+
+/* ── Global business-scope switcher (replaces the 6 per-view selects) ── */
+.hud-biz { position: relative; flex-shrink: 0; }
+.hud-biz-btn {
+  display: flex; align-items: center; gap: 9px;
+  background: var(--hud-panel); border: 1px solid var(--hud-line-2); border-radius: 10px;
+  padding: 7px 12px; cursor: pointer; max-width: 230px; font-family: inherit;
+}
+.hud-biz-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: var(--hud-cyan); box-shadow: 0 0 9px var(--hud-cyan); }
+.hud-biz-text { text-align: left; min-width: 0; }
+.hud-biz-label { display: block; font: 600 7.5px/1 "IBM Plex Mono", monospace; letter-spacing: 1.5px; color: var(--hud-label); }
+.hud-biz-name { display: block; font: 700 12px/1.1 "Chakra Petch", sans-serif; color: var(--hud-head); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-biz-chevron { flex-shrink: 0; color: var(--hud-muted); transition: transform .15s; }
+.hud-biz-btn[aria-expanded="true"] .hud-biz-chevron { transform: rotate(180deg); }
+.hud-biz-menu {
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 40;
+  width: 270px; max-height: min(70vh, 440px); overflow-y: auto;
+  background: var(--hud-node); border: 1px solid var(--hud-line-2); border-radius: 12px;
+  padding: 7px; box-shadow: 0 18px 44px rgba(0, 0, 0, .4);
+  animation: hud-rise .15s ease both;
+}
+.hud-biz-row {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer; font-family: inherit;
+  border: 1px solid transparent; background: none; text-align: left;
+}
+.hud-biz-row:hover { background: var(--hud-faint); }
+.hud-biz-row.active { border-color: var(--hud-line-2); background: var(--hud-cyansoft); }
+.hud-biz-row-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.hud-biz-row-text { flex: 1; min-width: 0; }
+.hud-biz-row-name { display: block; font: 600 12px/1.1 "Chakra Petch", sans-serif; color: var(--hud-head); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-biz-row-code { display: block; font: 500 8.5px/1 "IBM Plex Mono", monospace; color: var(--hud-label); margin-top: 3px; }
+.hud-biz-row-check { flex-shrink: 0; color: var(--hud-cyan); }
+
+/* ── Status pills + clock ────────────────────────────────── */
+.hud-topbar-right { margin-left: auto; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
+.hud-pills { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.hud-pill {
+  display: flex; align-items: center; gap: 7px;
+  font: 600 9.5px/1 "IBM Plex Mono", monospace; letter-spacing: 1.5px; color: var(--hud-muted);
+  border: 1px solid var(--hud-line); background: var(--hud-greensoft);
+  padding: 6px 10px; border-radius: 20px; white-space: nowrap;
+}
+.hud-pill-dot { width: 6px; height: 6px; border-radius: 50%; animation: hud-dot 2s infinite; }
+.hud-pill-dot-green { background: var(--hud-green); }
+.hud-pill-dot-cyan  { background: var(--hud-cyan); }
+.hud-clock { text-align: right; font-family: "IBM Plex Mono", monospace; padding-left: 4px; }
+.hud-clock-time { font-size: 16px; font-weight: 600; color: var(--hud-head); letter-spacing: 1px; }
+.hud-clock-date { font-size: 8.5px; color: var(--hud-label); letter-spacing: 2px; margin-top: 2px; }
+
+/* ── Nav rail: widen for 11 tabs, cyan active state, disabled placeholders ── */
+.icon-strip { width: var(--hud-strip-w); overflow-y: auto; background: var(--hud-rail); }
+.strip-tab.active {
+  background: var(--hud-navon);
+  border-color: var(--hud-navonline);
+  color: var(--hud-cyan);
+  box-shadow: 0 0 14px var(--hud-cyansoft-2);
+}
+.strip-tab.active::before { background: var(--hud-cyan); }
+.strip-tab[disabled] { opacity: .32; cursor: not-allowed; }
+.strip-tab[disabled]:hover { background: none; color: var(--muted); border-color: transparent; }
+
+@media (max-width: 820px) {
+  .hud-menu-btn { display: flex; }
+  .hud-pills { display: none; }
+  .hud-brand-sub { display: none; }
+}
+@media (max-width: 560px) {
+  .hud-biz-text { display: none; }
+  .hud-clock-date { display: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Ambient HUD chrome — animated grid, scanline sweep, corner
+   brackets. Always-on background texture behind every view.
+   ═══════════════════════════════════════════════════════════ */
+.hud-grid-bg {
+  position: absolute; inset: 0; pointer-events: none; z-index: 1; opacity: .6;
+  background-image:
+    linear-gradient(var(--hud-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hud-grid) 1px, transparent 1px);
+  background-size: 44px 44px;
+  animation: hud-gridpan 7s linear infinite;
+}
+.hud-scanline {
+  position: absolute; left: 0; right: 0; height: 120px; pointer-events: none; z-index: 1;
+  background: linear-gradient(180deg, transparent, var(--hud-cyansoft), transparent);
+  animation: hud-scanmove 6.5s linear infinite;
+}
+@keyframes hud-scanmove { 0% { transform: translateY(-10vh); } 100% { transform: translateY(110vh); } }
+.hud-corner { position: absolute; z-index: 1; width: 26px; height: 26px; pointer-events: none; }
+.hud-corner-tl { top: 14px; left: 14px; border-top: 2px solid var(--hud-bracket); border-left: 2px solid var(--hud-bracket); }
+.hud-corner-tr { top: 14px; right: 14px; border-top: 2px solid var(--hud-bracket); border-right: 2px solid var(--hud-bracket); }
+.hud-corner-bl { bottom: 14px; left: 14px; border-bottom: 2px solid var(--hud-bracket); border-left: 2px solid var(--hud-bracket); }
+.hud-corner-br { bottom: 14px; right: 14px; border-bottom: 2px solid var(--hud-bracket); border-right: 2px solid var(--hud-bracket); }
+
+@keyframes hud-spin  { to { transform: rotate(360deg); } }
+@keyframes hud-rspin { to { transform: rotate(-360deg); } }
+@keyframes hud-breathe { 0%, 100% { transform: scale(1); opacity: .3; } 50% { transform: scale(1.07); opacity: .55; } }
+@keyframes hud-orbit  { to { transform: rotate(360deg); } }
+@keyframes hud-counter { to { transform: rotate(-360deg); } }
+@keyframes hud-aurora { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(30px, -20px) scale(1.1); } }
+
+/* ═══════════════════════════════════════════════════════════
+   Section switching — new views (Section switching for the
+   original 7 views lives earlier in this file, untouched)
+   ═══════════════════════════════════════════════════════════ */
+.home-view, .command-view, .workflow-view { display: none; }
+.app[data-view="home"]     .home-view     { display: flex; }
+.app[data-view="command"]  .command-view  { display: flex; }
+.app[data-view="workflow"] .workflow-view { display: flex; }
+
+/* These 3 views have no sidebar content — collapse the content-panel so
+   they render full-width instead of leaving an empty gap. */
+.app[data-view="home"] .content-panel,
+.app[data-view="command"] .content-panel,
+.app[data-view="workflow"] .content-panel { width: 0; }
+
+/* ═══════════════════════════════════════════════════════════
+   Boot sequence
+   ═══════════════════════════════════════════════════════════ */
+.boot-overlay {
+  position: fixed; inset: 0; z-index: 90;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+  background: radial-gradient(600px 600px at 50% 44%, var(--hud-cyansoft), transparent 70%), var(--hud-bg);
+  transition: opacity .35s ease;
+}
+/* Higher specificity than `.boot-overlay { display: flex }` above, so the
+   [hidden] attribute (set by default in the HTML, and by boot.js once the
+   sequence finishes or is skipped) actually hides it — without this, the
+   fixed-position overlay would silently sit on top of the whole app
+   blocking every real click even while invisible-by-opacity. */
+.boot-overlay[hidden] { display: none; }
+.boot-overlay.boot-done { opacity: 0; pointer-events: none; }
+.boot-rings { position: relative; width: 180px; height: 180px; display: grid; place-items: center; }
+.boot-ring { position: absolute; border-radius: 50%; }
+.boot-ring-1 { inset: 0; border: 1px solid var(--hud-line-2); border-top-color: var(--hud-cyan); animation: hud-spin 3.4s linear infinite; }
+.boot-ring-2 { inset: 22px; border: 1px dashed var(--hud-line-2); animation: hud-rspin 6s linear infinite; }
+.boot-ring-3 { inset: 46px; border: 1px solid var(--hud-line-2); border-bottom-color: var(--hud-cyan); animation: hud-spin 2.1s linear infinite; }
+.boot-core {
+  width: 56px; height: 56px; border-radius: 50%;
+  background: radial-gradient(circle, var(--hud-corehot), var(--hud-cyan) 55%, transparent);
+  box-shadow: 0 0 44px 10px var(--hud-coreglow);
+  animation: hud-corepulse 2.2s ease-in-out infinite;
+}
+.boot-lines {
+  font: 600 13px/1.7 "IBM Plex Mono", monospace; letter-spacing: 1px; color: var(--hud-muted);
+  min-height: 150px; text-align: left; width: min(520px, 86vw);
+}
+.boot-line { animation: hud-rise .35s ease both; }
+.boot-bar { width: min(520px, 86vw); height: 3px; background: var(--hud-cyansoft-2); border-radius: 3px; overflow: hidden; }
+.boot-bar-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--hud-blue), var(--hud-cyan)); box-shadow: 0 0 12px var(--hud-coreglow); transition: width .3s ease; }
+.boot-skip {
+  background: none; border: 1px solid var(--hud-line-2); color: var(--hud-muted);
+  font: 600 10px/1 "IBM Plex Mono", monospace; letter-spacing: 2px; padding: 9px 16px; border-radius: 4px; cursor: pointer;
+}
+.boot-skip:hover { color: var(--hud-head); border-color: var(--hud-cyan); }
+
+/* ═══════════════════════════════════════════════════════════
+   Home ("Orbit") view
+   ═══════════════════════════════════════════════════════════ */
+.home-view {
+  flex: 1; min-width: 0; position: relative; overflow: hidden;
+  background:
+    radial-gradient(1100px 620px at 78% -8%, var(--hud-glow-1), transparent 60%),
+    radial-gradient(900px 700px at -8% 108%, var(--hud-glow-2), transparent 55%),
+    linear-gradient(160deg, var(--hud-bg), var(--hud-bg-2));
+}
+.home-aurora {
+  position: absolute; inset: -22%; pointer-events: none;
+  background:
+    radial-gradient(640px 480px at 24% 28%, var(--hud-glow-1), transparent 60%),
+    radial-gradient(600px 480px at 80% 74%, var(--hud-glow-2), transparent 60%),
+    radial-gradient(520px 440px at 62% 16%, var(--hud-cyansoft-2), transparent 58%),
+    radial-gradient(460px 400px at 14% 82%, var(--hud-cyansoft), transparent 60%);
+  animation: hud-aurora 26s ease-in-out infinite alternate;
+}
+.home-header { position: absolute; top: 20px; left: 22px; z-index: 5; display: flex; flex-direction: column; gap: 12px; max-width: min(640px, 72vw); }
+.home-greeting { font: 700 20px/1 "Chakra Petch", sans-serif; letter-spacing: .5px; color: var(--hud-head); }
+.home-date { font: 500 9.5px/1.4 "IBM Plex Mono", monospace; letter-spacing: 1.3px; color: var(--hud-label); }
+.home-chips { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; }
+.home-chip {
+  display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px; min-width: 172px;
+  background: var(--hud-panel); border: 1px solid var(--chip-border, var(--hud-line)); border-left: 3px solid var(--chip-color, var(--hud-cyan));
+  box-shadow: 0 0 18px -6px var(--chip-color, var(--hud-cyan));
+}
+.home-chip-icon { font-size: 18px; line-height: 1; flex-shrink: 0; color: var(--chip-color, var(--hud-cyan)); }
+.home-chip-n { font: 700 26px/1 "Chakra Petch", sans-serif; color: var(--chip-color, var(--hud-cyan)); flex-shrink: 0; }
+.home-chip-label { font: 600 11.5px/1.1 "Inter", sans-serif; color: var(--hud-head); }
+.home-chip-sub { font: 500 8px/1 "IBM Plex Mono", monospace; color: var(--hud-label); margin-top: 3px; letter-spacing: .5px; text-transform: uppercase; }
+.home-scope-pill {
+  position: absolute; top: 20px; right: 22px; z-index: 5; display: flex; align-items: center; gap: 8px;
+  font: 500 9.5px/1 "IBM Plex Mono", monospace; letter-spacing: 1.3px; color: var(--hud-label);
+  border: 1px solid var(--hud-line); background: var(--hud-panel); padding: 8px 12px; border-radius: 20px;
+}
+.home-scope-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--hud-cyan); box-shadow: 0 0 8px var(--hud-cyan); flex-shrink: 0; }
+
+.home-orbit-wrap { position: absolute; inset: 0; display: grid; place-items: center; }
+/* Fixed intrinsic size + a JS-driven scale (see home.js) — the reference's
+   approach. Scaling the whole field keeps the fixed-px node radii perfectly
+   aligned at any viewport instead of drifting, which happens if you cap the
+   field with max-width while the inner px offsets stay full-size. */
+.home-orbit-field {
+  position: absolute; top: 50%; left: 50%; width: 660px; height: 660px; flex-shrink: 0;
+  transform: translate(-50%, -50%) scale(var(--orb-scale, 1)); transform-origin: center;
+}
+.home-orbit-glow {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 82%; height: 82%; border-radius: 50%;
+  background: radial-gradient(circle, var(--hud-cyansoft-2), transparent 66%);
+  pointer-events: none;
+}
+.home-orbit-ring { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border-radius: 50%; }
+.home-orbit-ring-1 { width: 42%; height: 42%; border: 1px solid var(--hud-line); box-shadow: 0 0 30px var(--hud-cyansoft) inset; }
+.home-orbit-ring-2 { width: 70%; height: 70%; border: 1px solid var(--hud-line); }
+.home-orbit-ring-3 { width: 97%; height: 97%; border: 1px dashed var(--hud-line); opacity: .5; }
+
+.home-core {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 40%; height: 40%; border-radius: 50%; display: grid; place-items: center; text-align: center;
+  z-index: 10; cursor: pointer; background: none; border: none; padding: 0;
+}
+.home-core-glow {
+  position: absolute; inset: 12%; border-radius: 50%;
+  background: radial-gradient(circle, var(--hud-coreglow), transparent 66%);
+  animation: hud-breathe 4.5s ease-in-out infinite;
+}
+.home-core-ring { position: absolute; border-radius: 50%; border: 1px solid var(--hud-cyan); }
+.home-core-ring-1 { inset: 0; opacity: .4; border-width: 3px; border-style: dashed; animation: hud-spin 44s linear infinite; }
+.home-core-ring-2 { inset: 9%; opacity: .28; border-style: dashed; animation: hud-rspin 30s linear infinite; }
+.home-core-ring-3 { inset: 4%; opacity: .5; border-style: dotted; border-width: 2px; animation: hud-spin 10s linear infinite; }
+.home-core-spokes {
+  position: absolute; inset: 12%; border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, var(--hud-cyan) 0deg .5deg, transparent .5deg 7.5deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent 39%, #000 42%, #000 90%, transparent 96%);
+  mask: radial-gradient(farthest-side, transparent 39%, #000 42%, #000 90%, transparent 96%);
+  opacity: .9;
+}
+.home-core-spokes-2 {
+  position: absolute; inset: 20%; border-radius: 50%;
+  background: repeating-conic-gradient(from 3.5deg, var(--hud-corehot) 0deg .4deg, transparent .4deg 15deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent 45%, #000 48%);
+  mask: radial-gradient(farthest-side, transparent 45%, #000 48%);
+  opacity: .6;
+}
+.home-core-dot {
+  position: relative; z-index: 2; width: 38%; height: 38%; border-radius: 50%;
+  background: radial-gradient(circle at 37% 31%, #ffffff, var(--hud-corehot) 30%, var(--hud-cyan) 66%, rgba(47, 127, 240, .3) 100%);
+  box-shadow: 0 0 46px var(--hud-coreglow), 0 0 20px var(--hud-corehot), inset 0 -7px 16px rgba(0, 10, 26, .3), inset 0 6px 13px rgba(255, 255, 255, .45);
+  animation: hud-corepulse 3.2s ease-in-out infinite;
+}
+.home-core-label {
+  position: absolute; bottom: -22px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+  font: 600 9px/1 "IBM Plex Mono", monospace; letter-spacing: 2px; color: var(--hud-label);
+  display: flex; align-items: center; gap: 6px;
+}
+.home-core-label-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--hud-cyan); animation: hud-dot 1.8s infinite; }
+
+.home-nodes { position: absolute; inset: 0; }
+/* Three-layer nesting — nodes genuinely orbit, but on a fixed-radius circle,
+   never drifting off it:
+   1. .home-node-orbit   — anchored at field center (size 0), ROTATES via
+                           hud-orbit (set inline per-node in home.js).
+   2. .home-node-pos     — offset to its x,y via translate, NO animation
+                           (so nothing overwrites the translate → no drift).
+   3. .home-node-counter — counter-rotates at the same rate (hud-counter) so
+                           the chip + name stay upright while the orbit
+                           carries them, AND is sized to the chip only
+                           (60px) — not the chip+labels — so the rotation
+                           center sits exactly ON the orbit point instead of
+                           being biased by the label height below it (the
+                           old bug that made the circle sag off-center). */
+.home-node-orbit { position: absolute; top: 50%; left: 50%; width: 0; height: 0; }
+.home-node-pos {
+  position: absolute; transform: translate(-50%, -50%);
+  cursor: pointer; background: none; border: none; padding: 0; z-index: 8;
+}
+/* The counter is exactly the chip's height (60px) so its rotation center — and
+   therefore the chip's center — sits ON the orbit point. The name/sub labels
+   are floated out of flow just below, so they never bias the center and the
+   nodes trace a perfect circle concentric with the rings (no downward sag). */
+.home-node-counter { width: 60px; margin: 0 auto; text-align: center; position: relative; }
+.home-node-labels {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  width: 118px; margin-top: 9px; pointer-events: none;
+}
+.home-node-chip {
+  width: 60px; height: 60px; border-radius: 50%; margin: 0 auto; display: grid; place-items: center;
+  font: 700 15px "Chakra Petch", sans-serif; color: #f4f9ff; text-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+  background: radial-gradient(circle at 36% 30%, var(--node-color), color-mix(in srgb, var(--node-color) 55%, transparent) 60%, color-mix(in srgb, var(--node-color) 15%, transparent) 100%);
+  border: 1px solid color-mix(in srgb, var(--node-color) 60%, transparent);
+  box-shadow: 0 0 26px color-mix(in srgb, var(--node-color) 35%, transparent), inset 0 2px 6px rgba(255, 255, 255, .3), inset 0 -7px 14px rgba(0, 0, 0, .28);
+  animation: hud-nodeglow 2.8s ease-in-out infinite;
+}
+@keyframes hud-nodeglow {
+  0%, 100% { filter: drop-shadow(0 0 1px transparent); }
+  50%      { filter: drop-shadow(0 0 9px var(--node-color)); }
+}
+.home-node-name { font: 600 12px/1.2 "Chakra Petch", sans-serif; color: var(--hud-head); letter-spacing: .3px; }
+.home-node-sub { font: 500 9.5px/1.3 "IBM Plex Mono", monospace; color: var(--hud-label); margin-top: 3px; }
+.home-node-pos:hover .home-node-chip { transform: scale(1.08); transition: transform .15s; }
+.home-footer-hint {
+  position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 5; white-space: nowrap;
+  font: 500 10px/1 "IBM Plex Mono", monospace; letter-spacing: 1px; color: var(--hud-label);
+  background: var(--hud-panel); border: 1px solid var(--hud-line); padding: 9px 16px; border-radius: 20px;
+}
+@media (max-width: 760px) {
+  .home-footer-hint { max-width: 90vw; overflow: hidden; text-overflow: ellipsis; }
+  .home-header { max-width: 60vw; }
+}
+@media (max-width: 480px) {
+  .home-scope-pill { display: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Command Center view
+   ═══════════════════════════════════════════════════════════ */
+.command-view { flex: 1; min-width: 0; overflow-y: auto; }
+.command-page { padding: 24px 26px 44px; }
+.command-inner { max-width: 1200px; margin: 0 auto; }
+.command-title { font: 700 24px/1 "Chakra Petch", sans-serif; letter-spacing: 1px; color: var(--hud-head); }
+.command-sub { font: 500 11px/1 "IBM Plex Mono", monospace; letter-spacing: 1.4px; color: var(--hud-label); margin-top: 9px; }
+.command-entity-bar {
+  display: flex; align-items: center; gap: 10px; margin-top: 22px; padding: 12px 14px;
+  background: var(--hud-section); border: 1px solid var(--hud-line); border-radius: 10px; flex-wrap: wrap;
+}
+.command-entity-label { font: 600 9px/1 "IBM Plex Mono", monospace; letter-spacing: 2px; color: var(--hud-label); margin-right: 4px; }
+.command-entity-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.command-chip {
+  display: inline-flex; align-items: center; gap: 7px; font: 600 10px/1 "IBM Plex Mono", monospace; letter-spacing: 1px;
+  padding: 8px 13px; border-radius: 20px; cursor: pointer; color: var(--hud-muted); background: transparent;
+  border: 1px solid var(--hud-line); font-family: inherit;
+}
+.command-chip.active { color: var(--hud-head); background: var(--hud-cyansoft-2); border-color: var(--hud-line-2); }
+.command-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--chip-color, var(--hud-cyan)); flex-shrink: 0; }
+.command-section-head { display: flex; align-items: center; gap: 12px; margin-top: 26px; flex-wrap: wrap; }
+.command-section-title { font: 700 13px/1 "Chakra Petch", sans-serif; letter-spacing: 1.4px; color: var(--hud-head); white-space: nowrap; }
+.command-hr { flex: 1; height: 1px; background: linear-gradient(90deg, var(--hud-line-2), transparent); min-width: 16px; }
+.command-toggle-btn {
+  font: 600 9px/1 "IBM Plex Mono", monospace; letter-spacing: 1px; color: var(--hud-cyan);
+  background: var(--hud-cyansoft); border: 1px solid var(--hud-line-2); border-radius: 6px; padding: 7px 12px; cursor: pointer;
+}
+.command-metrics {
+  background: var(--hud-panel); border: 1px solid var(--hud-line); border-radius: 12px; margin-top: 15px; overflow: hidden;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+.command-metric-loading { padding: 16px; font: 500 12px "Inter"; color: var(--hud-muted); }
+.command-metric-row { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--hud-line); }
+.command-metric-label { flex: 1; min-width: 0; font: 600 12.5px/1.2 "Inter", sans-serif; color: var(--hud-head); }
+.command-metric-source { font: 500 9px/1 "IBM Plex Mono", monospace; color: var(--hud-muted-2); margin-left: 8px; }
+.command-metric-status {
+  display: inline-flex; align-items: center; font: 600 8px/1 "IBM Plex Mono", monospace; letter-spacing: .5px;
+  padding: 4px 8px; border-radius: 5px; flex-shrink: 0;
+}
+.command-metric-status-ok { color: var(--hud-green); background: var(--hud-greensoft); border: 1px solid var(--hud-line-2); }
+.command-metric-status-muted { color: var(--hud-muted); background: var(--hud-faint); border: 1px solid var(--hud-line); }
+.command-apps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 9px; margin-top: 15px; }
+.command-apps-empty { grid-column: 1 / -1; font: 500 12px "Inter"; color: var(--hud-muted); padding: 12px 4px; }
+.command-app-card { background: var(--hud-panel); border: 1px solid var(--hud-line); border-radius: 7px; padding: 10px 11px; }
+.command-app-name { font: 600 11.5px/1 "Chakra Petch", sans-serif; color: var(--hud-head); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.command-app-status { display: inline-block; font: 600 8px/1 "IBM Plex Mono", monospace; letter-spacing: .8px; margin-top: 8px; }
+.command-app-status-ok { color: var(--hud-green); }
+.command-app-status-muted { color: var(--hud-muted); }
+
+/* ═══════════════════════════════════════════════════════════
+   Workflow / Schematic view
+   ═══════════════════════════════════════════════════════════ */
+.workflow-view { flex: 1; min-width: 0; overflow: auto; }
+.workflow-page { padding: 22px 26px 40px; min-width: min-content; }
+.workflow-title { font: 700 22px/1 "Chakra Petch", sans-serif; letter-spacing: 1px; color: var(--hud-head); }
+.workflow-sub { font: 500 11px/1.5 "IBM Plex Mono", monospace; color: var(--hud-muted); margin-top: 9px; max-width: 640px; }
+.workflow-diagram { margin-top: 30px; display: flex; flex-direction: column; gap: 20px; align-items: center; }
+.workflow-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center; }
+.workflow-node {
+  width: 150px; padding: 12px 13px; text-align: center;
+  background: var(--hud-node); border: 1px solid var(--hud-line-2); border-radius: 8px;
+  box-shadow: 0 0 14px var(--hud-cyansoft-2);
+}
+.workflow-node-big { width: 180px; padding: 16px; border-color: var(--hud-cyan); box-shadow: 0 0 26px var(--hud-cyansoft-2); animation: hud-glowpulse 2.6s ease-in-out infinite; }
+.workflow-node-tag { font: 600 8.5px/1 "IBM Plex Mono", monospace; letter-spacing: 1.5px; color: var(--node-color, var(--hud-cyan)); }
+.workflow-node-title { font: 700 14px/1.1 "Chakra Petch", sans-serif; color: var(--hud-head); margin-top: 7px; }
+.workflow-node-sub { font: 500 10px/1.4 "IBM Plex Mono", monospace; color: var(--hud-muted); margin-top: 5px; }
+.workflow-arrow { font: 700 18px/1 "Chakra Petch", sans-serif; color: var(--hud-line-2); }
+.workflow-grounded-label { font: 600 9px/1 "IBM Plex Mono", monospace; letter-spacing: 2px; color: var(--hud-label); }
+@media (max-width: 900px) {
+  .workflow-arrow { transform: rotate(90deg); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Chat view — reskinned onto HUD tokens. Every id/class here is
+   generated or queried by app.js — only values changed, nothing
+   renamed or restructured.
+   ═══════════════════════════════════════════════════════════ */
+.app {
+  background:
+    radial-gradient(1200px 600px at 80% -10%, var(--hud-glow-1), transparent 60%),
+    radial-gradient(1000px 700px at -10% 110%, var(--hud-glow-2), transparent 55%),
+    linear-gradient(160deg, var(--hud-bg), var(--hud-bg-2));
+}
+.bubble { box-shadow: none; font-family: "Inter", sans-serif; }
+.msg.assistant .bubble {
+  background: var(--hud-bubble-a); border: 1px solid var(--hud-line-2);
+  border-top-left-radius: 6px; color: var(--hud-text);
+  box-shadow: 0 0 20px var(--hud-cyansoft);
+}
+.msg.user .bubble {
+  background: linear-gradient(135deg, rgba(47, 127, 240, .22), rgba(56, 225, 255, .16));
+  border: 1px solid rgba(56, 225, 255, .32);
+  border-top-right-radius: 6px; color: var(--hud-head);
+}
+.bubble a { color: var(--hud-cyan); }
+.bubble blockquote { border-left-color: var(--hud-cyan); color: var(--hud-muted); }
+.bubble th { background: var(--hud-cyansoft); }
+
+.tools details { background: var(--hud-cyansoft); border: 1px solid var(--hud-line); }
+.tools summary { color: var(--hud-muted); }
+.tools pre { color: var(--hud-cyan); }
+.tool-ok { color: var(--hud-green); }
+.tool-err { color: #ff5c6a; }
+.tool-media-img { border-color: var(--hud-line); background: var(--hud-doc); }
+.tool-media-file { color: var(--hud-cyan); }
+
+.thinking { color: var(--hud-muted); }
+.thinking-live { background: var(--hud-cyansoft); border: 1px solid var(--hud-line); color: var(--hud-muted); }
+
+.typing span { background: var(--hud-cyan); }
+
+.chat-quick-prompts { padding: 0 28px; display: flex; gap: 8px; flex-wrap: wrap; }
+.chat-quick-chip {
+  background: var(--hud-cyansoft); border: 1px solid var(--hud-line-2); color: var(--hud-muted);
+  font: 500 11.5px/1 "Inter", sans-serif; padding: 8px 13px; border-radius: 16px; cursor: pointer;
+}
+.chat-quick-chip:hover { color: var(--hud-head); border-color: var(--hud-cyan); }
+
+.composer {
+  border-top: 1px solid var(--hud-line);
+  background: transparent;
+}
+.composer-row {
+  background: var(--hud-panel); border: 1px solid var(--hud-line-2); border-radius: 12px;
+  padding: 10px 12px; box-shadow: 0 0 24px var(--hud-cyansoft);
+}
+.attach-btn, .voice-btn { background: var(--hud-cyansoft); border: 1px solid var(--hud-line-2); color: var(--hud-muted); border-radius: 9px; }
+.voice-btn:hover { border-color: var(--hud-cyan); color: var(--hud-cyan); background: var(--hud-cyansoft-2); }
+#input { background: transparent; border: none; color: var(--hud-head); font-family: "Inter", sans-serif; }
+#input:focus { outline: none; border: none; box-shadow: none; }
+#send-btn {
+  background: linear-gradient(135deg, var(--hud-blue), var(--hud-cyan)); color: #04121a; border-radius: 9px;
+  box-shadow: 0 4px 16px var(--hud-coreglow);
+}
+
+/* Chat history sidebar + model/voice pickers (panel-agent) */
+.chat-lock-note { color: var(--hud-ambertext); background: var(--hud-ambersoft); }
+#panel-agent .voice-select, #panel-meeting .voice-select {
+  background: var(--hud-doc); border: 1px solid var(--hud-line); color: var(--hud-head);
+}
+#panel-agent .voice-select:focus, #panel-meeting .voice-select:focus { border-color: var(--hud-cyan); }
+.convo.active { background: var(--hud-cyansoft); border-color: var(--hud-line-2); }
+
+/* ═══════════════════════════════════════════════════════════
+   Phase 4/5 — foundation remap for the remaining views (Billing,
+   Meeting, Context, Tasks, Files, Jobs). These views are already
+   consistently built on the shared --surface/--border/--text/
+   --muted/--blue tokens (confirmed by grep — no background-color
+   usage that would break on a translucent value), so remapping
+   the token VALUES here cascades the HUD look across all of them
+   at once, instead of hundreds of one-off class overrides.
+   --accent/--accent-2/--ok/--err stay unchanged on purpose: amber/
+   green/red already carry real semantic meaning (due-soon/paid/
+   overdue) that both the old design and the new HUD palette agree
+   on, so leaving them is more correct, not just less work.
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  --bg-1: #05080f;
+  --bg-2: #070c16;
+  --surface: rgba(12, 24, 38, .6);
+  --surface-2: rgba(20, 34, 50, .75);
+  --border: rgba(56, 225, 255, .15);
+  --border-strong: rgba(56, 225, 255, .3);
+  --text: #cfe8f2;
+  --muted: #7f9fb2;
+  --blue: #2f7ff0;
+  --blue-2: #2568c9;
+  --tk: #38e1ff;   /* Scheduled Tasks' accent — was purple, now matches the app-wide cyan/blue CTA gradient */
+  --tk-2: #2f7ff0;
+}
+
+/* Highest-visibility branded elements: headings onto Chakra Petch, primary
+   CTAs and modal chrome onto the cyan/blue gradient + HUD surfaces instead
+   of the old amber gradient + flat navy. */
+.bills-pg-title, .tasks-pg-title, .context-page .bills-panel-title,
+h2.bills-pg-title, .cx-edit-title {
+  font-family: "Chakra Petch", sans-serif;
+}
+.bills-upload-btn, #context-upload-btn, .tasks-new-btn, .badge {
+  background: linear-gradient(135deg, var(--hud-blue), var(--hud-cyan));
+  box-shadow: 0 6px 18px var(--hud-cyansoft-2);
+}
+.ai-confirm-card, .bv-modal, .cx-modal, .tk-modal {
+  background: var(--hud-doc); border-color: var(--hud-line-2);
+}
+.insights-live-badge, .insights-live-badge::before { color: var(--hud-green); background: var(--hud-green); }
+.bstat-val { color: var(--hud-head); }
+.call-orb {
+  background: linear-gradient(135deg, var(--hud-blue), var(--hud-cyan));
+  box-shadow: 0 0 40px var(--hud-coreglow);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Boot rings — sized to match the reference more closely
+   ═══════════════════════════════════════════════════════════ */
+.boot-rings { width: 230px; height: 230px; }
+.boot-ring-1 { inset: 0; }
+.boot-ring-2 { inset: 26px; }
+.boot-ring-3 { inset: 56px; }
+.boot-core { width: 70px; height: 70px; }
+
+/* ═══════════════════════════════════════════════════════════
+   Home — starfield texture + large slowly-rotating outer rings
+   (the reference's cosmic orbit-field backdrop, missing before)
+   ═══════════════════════════════════════════════════════════ */
+.home-stars {
+  position: absolute; inset: 0; pointer-events: none; opacity: .55;
+  background-image:
+    radial-gradient(1.4px 1.4px at 12% 22%, rgba(150, 190, 220, .9), transparent),
+    radial-gradient(1.2px 1.2px at 82% 33%, rgba(150, 190, 220, .8), transparent),
+    radial-gradient(1.5px 1.5px at 66% 78%, rgba(150, 190, 220, .9), transparent),
+    radial-gradient(1.1px 1.1px at 32% 66%, rgba(150, 190, 220, .7), transparent),
+    radial-gradient(1.3px 1.3px at 48% 12%, rgba(150, 190, 220, .8), transparent),
+    radial-gradient(1.2px 1.2px at 90% 84%, rgba(150, 190, 220, .7), transparent),
+    radial-gradient(1px 1px at 22% 88%, rgba(150, 190, 220, .6), transparent),
+    radial-gradient(1.4px 1.4px at 73% 14%, rgba(150, 190, 220, .8), transparent),
+    radial-gradient(1.1px 1.1px at 8% 48%, rgba(150, 190, 220, .6), transparent),
+    radial-gradient(1.3px 1.3px at 55% 92%, rgba(150, 190, 220, .7), transparent);
+}
+.home-stars-2 {
+  position: absolute; inset: 0; pointer-events: none; opacity: .4;
+  background-image:
+    radial-gradient(1.2px 1.2px at 5% 14%, rgba(150, 190, 220, .8), transparent),
+    radial-gradient(1.5px 1.5px at 38% 8%, rgba(150, 190, 220, .9), transparent),
+    radial-gradient(1.1px 1.1px at 60% 44%, rgba(150, 190, 220, .7), transparent),
+    radial-gradient(1.3px 1.3px at 88% 58%, rgba(150, 190, 220, .8), transparent),
+    radial-gradient(1.2px 1.2px at 18% 74%, rgba(150, 190, 220, .7), transparent),
+    radial-gradient(1.4px 1.4px at 44% 92%, rgba(150, 190, 220, .9), transparent),
+    radial-gradient(1px 1px at 70% 20%, rgba(150, 190, 220, .6), transparent),
+    radial-gradient(1.3px 1.3px at 94% 12%, rgba(150, 190, 220, .8), transparent);
+  animation: hud-twinkle 4.5s ease-in-out infinite alternate;
+}
+@keyframes hud-twinkle { 0% { opacity: .25; } 100% { opacity: .6; } }
+.home-orbit-spin {
+  position: absolute; top: 50%; left: 50%; border-radius: 50%; pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+/* Two slow, continuously rotating rings matching the reference's SVG orbit
+   lines: an outer dotted ring (r≈320 → 640px) and an inner dashed ring
+   (r≈230 → 460px), counter-rotating. */
+.home-orbit-spin-1 {
+  width: 97%; height: 97%; border: 2px dotted var(--hud-cyan);
+  opacity: .3; animation: hud-spin 60s linear infinite;
+}
+.home-orbit-spin-2 {
+  width: 70%; height: 70%; border: 1px dashed var(--hud-cyan); opacity: .22;
+  animation: hud-rspin 48s linear infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Voice call overlay — full HUD reskin: multi-ring rotation +
+   per-state coloring (listening=cyan, thinking=purple,
+   speaking=green, muted=dim), matching voice.js's existing
+   `orb.dataset.state` mechanism (untouched — only visuals here).
+   ═══════════════════════════════════════════════════════════ */
+.call { background: rgba(5, 8, 15, .85); }
+.call-card { gap: 10px; }
+.call-status { font-family: "Chakra Petch", sans-serif; letter-spacing: .5px; color: var(--hud-head); }
+.call-caption { color: var(--hud-muted); font-family: "Inter", sans-serif; }
+.call-orb {
+  color: #04121a;
+  box-shadow: 0 0 60px var(--hud-coreglow), 0 0 24px var(--hud-corehot);
+}
+.call-orb-deco { position: absolute; border-radius: 50%; pointer-events: none; border: 1px solid var(--hud-line-2); }
+.call-orb-deco-1 { inset: -8%; animation: hud-spin 18s linear infinite; }
+.call-orb-deco-2 { inset: -16%; border-style: dashed; opacity: .6; animation: hud-rspin 26s linear infinite; }
+.call-orb-deco-3 { inset: -24%; opacity: .32; animation: hud-spin 42s linear infinite; }
+.orb-ring { border-color: var(--hud-cyan); }
+
+/* ── Voice view chrome: brand, readouts, stage, waveform ── */
+.call-view {
+  width: 100%; max-width: 1000px; margin: 0 auto; max-height: 100%; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 14px 0;
+}
+.call-brand-title { font: 700 26px/1 "Chakra Petch", sans-serif; letter-spacing: 11px; color: var(--hud-head); text-indent: 11px; text-align: center; }
+.call-brand-sub { font: 600 9px/1 "IBM Plex Mono", monospace; letter-spacing: 4px; color: var(--hud-label); margin-top: 9px; text-align: center; }
+
+.call-stage { display: flex; align-items: center; justify-content: center; gap: 24px; width: 100%; max-width: 920px; }
+.call-readout { display: flex; flex-direction: column; gap: 13px; min-width: 112px; }
+.call-readout-l { text-align: right; }
+.call-readout-k { display: block; font: 600 8px/1 "IBM Plex Mono", monospace; letter-spacing: 1.5px; color: var(--hud-label); }
+.call-readout-v { display: block; font: 600 12px/1 "Chakra Petch", sans-serif; color: var(--hud-head); margin-top: 4px; }
+@media (max-width: 760px) { .call-readout { display: none; } }
+
+.call-orb-wrap { position: relative; width: min(58vw, 320px); aspect-ratio: 1; flex-shrink: 0; display: grid; place-items: center; }
+.call-orb-wrap .call-orb { width: 100%; height: 100%; margin-bottom: 0; }
+.call-orb-wrap svg { width: 22%; height: 22%; }
+.call-orb-glow {
+  position: absolute; inset: 6%; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, var(--hud-coreglow), transparent 62%);
+}
+.call-orb-ping {
+  position: absolute; inset: 31%; border-radius: 50%; border: 1px solid var(--hud-cyan); pointer-events: none; opacity: 0;
+}
+.call.open .call-orb-ping { opacity: 1; animation: hud-ping 2.8s ease-out infinite; }
+.call-orb-ping-2 { animation-delay: 1.4s !important; }
+@keyframes hud-ping { 0% { transform: scale(.62); opacity: .7; } 100% { transform: scale(1.9); opacity: 0; } }
+.call-orb-spokes {
+  position: absolute; inset: 12%; border-radius: 50%; pointer-events: none;
+  background: repeating-conic-gradient(var(--hud-cyan) 0deg 2deg, transparent 2deg 13deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent 55%, #000 57%);
+  mask: radial-gradient(farthest-side, transparent 55%, #000 57%);
+  opacity: .75; animation: hud-spin 16s linear infinite;
+}
+.call-orb-corner { position: absolute; width: 16px; height: 16px; opacity: .6; pointer-events: none; }
+.call-orb-corner-tl { top: 1%; left: 1%; border-top: 2px solid var(--hud-cyan); border-left: 2px solid var(--hud-cyan); }
+.call-orb-corner-tr { top: 1%; right: 1%; border-top: 2px solid var(--hud-cyan); border-right: 2px solid var(--hud-cyan); }
+.call-orb-corner-bl { bottom: 1%; left: 1%; border-bottom: 2px solid var(--hud-cyan); border-left: 2px solid var(--hud-cyan); }
+.call-orb-corner-br { bottom: 1%; right: 1%; border-bottom: 2px solid var(--hud-cyan); border-right: 2px solid var(--hud-cyan); }
+
+.call-waveform { display: flex; align-items: center; justify-content: center; gap: 3px; height: 40px; width: 100%; max-width: 560px; }
+.call-wave-bar {
+  width: 3px; height: 30px; border-radius: 2px; background: var(--hud-cyan); flex-shrink: 0; opacity: .55;
+  transform-origin: bottom;
+  animation: hud-wavebar calc(.6s + (var(--i, 0) * 1%)) ease-in-out infinite calc(var(--i, 0) * .05s);
+}
+@keyframes hud-wavebar { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+
+.call-orb[data-state="listening"] {
+  background: radial-gradient(circle at 37% 31%, #fff, var(--hud-corehot) 30%, var(--hud-cyan) 66%, rgba(47, 127, 240, .3) 100%);
+  color: #04121a;
+  box-shadow: 0 0 60px var(--hud-coreglow), 0 0 24px var(--hud-corehot);
+}
+.call-orb[data-state="thinking"] {
+  background: linear-gradient(135deg, #c9b4ff, #8b7bd8); color: #1a1030;
+  box-shadow: 0 0 60px rgba(201, 180, 255, .5);
+}
+.call-orb[data-state="thinking"] .call-orb-deco { border-color: rgba(201, 180, 255, .5); }
+.call-orb[data-state="speaking"] {
+  background: linear-gradient(135deg, var(--hud-green), #1c9e6a); color: #04160f;
+  box-shadow: 0 0 60px rgba(53, 224, 160, .5);
+}
+.call-orb[data-state="speaking"] .call-orb-deco { border-color: rgba(53, 224, 160, .5); }
+.call-orb[data-state="speaking"] .orb-ring { border-color: var(--hud-green); }
+.call-orb[data-state="muted"] {
+  background: var(--hud-doc); color: var(--hud-muted); box-shadow: none;
+}
+.call-orb[data-state="muted"] .call-orb-deco { opacity: .15; animation-play-state: paused; }
+
+.call-mute {
+  background: var(--hud-cyansoft); border: 1px solid var(--hud-line-2); color: var(--hud-head);
+  font-family: "Inter", sans-serif;
+}
+.call-mute:hover { border-color: var(--hud-cyan); background: var(--hud-cyansoft-2); }
+.call-mute.is-muted { color: var(--hud-amber); border-color: var(--hud-amberline); }
+
+/* ═══════════════════════════════════════════════════════════
+   Workflow / Schematic — animated flowing connectors between
+   nodes, replacing the static "→" glyph.
+   ═══════════════════════════════════════════════════════════ */
+.workflow-arrow {
+  color: transparent; width: 40px; height: 3px; border-radius: 2px; flex-shrink: 0;
+  background-image: repeating-linear-gradient(90deg, var(--hud-cyan) 0 8px, transparent 8px 16px);
+  background-size: 32px 100%;
+  animation: hud-flowline .8s linear infinite;
+}
+@keyframes hud-flowline { from { background-position: 0 0; } to { background-position: -32px 0; } }

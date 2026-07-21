@@ -396,10 +396,6 @@ window._filesInit = function () {
     filesInited = true;
     setViewMode(viewMode); // reflect persisted mode in the toggle buttons
     if (window.HermesBiz) {
-      window.HermesBiz.bind(
-        document.getElementById("hermes-biz-select-files"),
-        document.getElementById("hermes-biz-badge-files")
-      );
       window.HermesBiz.onChange(() => { if (filesInited) loadFiles(); });
     }
   }
