@@ -1945,6 +1945,6 @@ if __name__ == "__main__":
         f"[Hermes] API backend starting on http://127.0.0.1:{Config.PORT}  "
         f"(model: {hermes_models.active_model()}, voice: {voice})"
     )
-    #uvicorn.run("app:app", host="0.0.0.0", port=Config.PORT, reload=True)
-    uvicorn.run("app:app", host="0.0.0.0", port=5055, reload=True)
+    uvicorn.run("app:app", host="0.0.0.0", port=Config.PORT, reload=True)
+    #uvicorn.run("app:app", host="0.0.0.0", port=5055, reload=True)
 

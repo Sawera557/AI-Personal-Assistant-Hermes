@@ -371,22 +371,48 @@
       <div class="home-orbit-wrap">
         <div class="home-orbit-field">
           <div class="home-orbit-glow"></div>
-          <div class="home-orbit-ring home-orbit-ring-1"></div>
-          <div class="home-orbit-ring home-orbit-ring-2"></div>
-          <div class="home-orbit-ring home-orbit-ring-3"></div>
-          <div class="home-orbit-spin home-orbit-spin-1"></div>
-          <div class="home-orbit-spin home-orbit-spin-2"></div>
+          <div class="home-reference-rings" aria-hidden="true">
+            <div class="home-orbit-ring home-orbit-ring-1"></div>
+            <div class="home-orbit-ring home-orbit-ring-2"></div>
+            <div class="home-orbit-ring home-orbit-ring-3"></div>
+            <svg class="home-orbit-svg" viewBox="0 0 660 660" focusable="false">
+              <g class="home-orbit-svg-spin home-orbit-svg-spin-outer">
+                <circle class="home-orbit-svg-outer" cx="330" cy="330" r="320"></circle>
+              </g>
+              <g class="home-orbit-svg-spin home-orbit-svg-spin-mid">
+                <circle class="home-orbit-svg-mid" cx="330" cy="330" r="230"></circle>
+              </g>
+            </svg>
+          </div>
+          <div class="home-reference-sweep" aria-hidden="true"></div>
 
           <button class="home-core" id="home-core" type="button" title="Talk to Hermes">
             <span class="home-core-glow"></span>
-            <span class="home-core-ring home-core-ring-1"></span>
-            <span class="home-core-ring home-core-ring-2"></span>
-            <span class="home-core-ring home-core-ring-3"></span>
+            <svg class="home-core-svg" viewBox="0 0 264 264" aria-hidden="true" focusable="false">
+              <g class="home-core-svg-spin home-core-svg-spin-slow">
+                <circle cx="132" cy="132" r="126" fill="none"></circle>
+              </g>
+              <g class="home-core-svg-spin home-core-svg-spin-reverse">
+                <circle cx="132" cy="132" r="108" fill="none"></circle>
+              </g>
+              <g class="home-core-svg-spin home-core-svg-spin-fast">
+                <circle cx="132" cy="132" r="118" fill="none"></circle>
+                <circle cx="132" cy="132" r="118" fill="none" stroke-dashoffset="-360"></circle>
+              </g>
+              <g class="home-core-svg-spin home-core-svg-dot-a">
+                <circle cx="132" cy="10" r="3.2"></circle>
+              </g>
+              <g class="home-core-svg-spin home-core-svg-dot-b">
+                <circle cx="132" cy="16" r="2.4"></circle>
+              </g>
+            </svg>
             <span class="home-core-spokes"></span>
             <span class="home-core-spokes-2"></span>
-            <span class="home-core-dot"></span>
+            <span class="home-core-hotspot"></span>
+            <span class="home-core-dot"><span class="home-core-highlight"></span></span>
             <span class="home-core-label"><span class="home-core-label-dot"></span>TAP TO SPEAK</span>
           </button>
+          <div class="home-reference-brand" aria-hidden="true">HERMES</div>
 
           <div class="home-nodes" id="home-nodes"></div>
         </div>
@@ -1065,14 +1091,16 @@
     <div class="call-view">
 
       <div class="call-brand">
-        <div class="call-brand-title">HERMES</div>
-        <div class="call-brand-sub">VOICE INTERFACE · ONLINE</div>
+        <div class="call-brand-title">J.A.R.V.I.S.</div>
+        <div class="call-brand-sub">VOICE INTERFACE &middot; ONLINE</div>
       </div>
 
       <div class="call-stage">
         <div class="call-readout call-readout-l">
-          <div class="call-readout-item"><span class="call-readout-k">MODEL</span><span class="call-readout-v" id="call-readout-model">—</span></div>
-          <div class="call-readout-item"><span class="call-readout-k">VOICE</span><span class="call-readout-v" id="call-readout-voice">—</span></div>
+          <div class="call-readout-item"><span class="call-readout-k">MODEL</span><span class="call-readout-v" id="call-readout-model">&mdash;</span></div>
+          <div class="call-readout-item"><span class="call-readout-k">VOICE</span><span class="call-readout-v" id="call-readout-voice">&mdash;</span></div>
+          <div class="call-readout-item"><span class="call-readout-k">STT</span><span class="call-readout-v" id="call-readout-stt">whisper-1</span></div>
+          <div class="call-readout-item"><span class="call-readout-k">SAMPLE</span><span class="call-readout-v" id="call-readout-sample">48 kHz</span></div>
         </div>
 
         <div class="call-orb-wrap">
@@ -1080,12 +1108,35 @@
             <span class="call-orb-glow"></span>
             <span class="call-orb-ping call-orb-ping-1"></span>
             <span class="call-orb-ping call-orb-ping-2"></span>
-            <span class="call-orb-deco call-orb-deco-1"></span>
-            <span class="call-orb-deco call-orb-deco-2"></span>
-            <span class="call-orb-deco call-orb-deco-3"></span>
+            <svg class="call-orb-radar" viewBox="0 0 400 400" aria-hidden="true" focusable="false">
+              <circle class="call-orb-radar-base" cx="200" cy="200" r="196"></circle>
+              <g class="call-orb-radar-spin call-orb-radar-spin-outer">
+                <circle class="call-orb-radar-dots" cx="200" cy="200" r="184"></circle>
+              </g>
+              <g class="call-orb-radar-spin call-orb-radar-spin-mid">
+                <circle class="call-orb-radar-dash" cx="200" cy="200" r="150"></circle>
+              </g>
+              <g class="call-orb-radar-spin call-orb-radar-spin-fast">
+                <circle class="call-orb-radar-arc" cx="200" cy="200" r="168"></circle>
+                <circle class="call-orb-radar-arc call-orb-radar-arc-short" cx="200" cy="200" r="168"></circle>
+              </g>
+              <g class="call-orb-radar-spin call-orb-radar-spin-inner">
+                <circle class="call-orb-radar-inner" cx="200" cy="200" r="122"></circle>
+              </g>
+              <g class="call-orb-radar-spin call-orb-radar-sweep">
+                <path d="M200 200 L200 22 A178 178 0 0 1 292 52 Z"></path>
+                <line x1="200" y1="200" x2="200" y2="22"></line>
+              </g>
+              <g class="call-orb-radar-spin call-orb-radar-beacons-a">
+                <circle cx="200" cy="40" r="3.5"></circle>
+                <circle cx="360" cy="200" r="2.5"></circle>
+              </g>
+              <g class="call-orb-radar-spin call-orb-radar-beacons-b">
+                <circle cx="40" cy="200" r="3"></circle>
+              </g>
+            </svg>
             <span class="call-orb-spokes"></span>
-            <span class="orb-ring"></span>
-            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <span class="call-orb-core"></span>
             <span class="call-orb-corner call-orb-corner-tl"></span>
             <span class="call-orb-corner call-orb-corner-tr"></span>
             <span class="call-orb-corner call-orb-corner-bl"></span>
@@ -1094,16 +1145,19 @@
         </div>
 
         <div class="call-readout call-readout-r">
-          <div class="call-readout-item"><span class="call-readout-k">MODE</span><span class="call-readout-v">HANDS-FREE</span></div>
-          <div class="call-readout-item"><span class="call-readout-k">GATEWAY</span><span class="call-readout-v">MATON</span></div>
+          <div class="call-readout-item"><span class="call-readout-k">SESSION</span><span class="call-readout-v" id="call-readout-session">LIVE</span></div>
+          <div class="call-readout-item"><span class="call-readout-k">CHANNEL</span><span class="call-readout-v" id="call-readout-channel">DUPLEX</span></div>
+          <div class="call-readout-item"><span class="call-readout-k">ENCRYPT</span><span class="call-readout-v" id="call-readout-encrypt">AES-256</span></div>
+          <div class="call-readout-item"><span class="call-readout-k">UPLINK</span><span class="call-readout-v" id="call-readout-uplink">STABLE</span></div>
         </div>
       </div>
 
       <h2 class="call-status" id="call-status">Connecting…</h2>
       <p class="call-caption" id="call-caption">Tap the mic to talk. I'll listen, then reply out loud.</p>
+      <div class="call-transcript" id="call-transcript">&ldquo; ...go ahead, I'm listening. &rdquo;</div>
 
       <div class="call-waveform" id="call-waveform">
-        {% for i in range(28) %}<span class="call-wave-bar" style="--i:{{ i }}"></span>{% endfor %}
+        {% for i in range(30) %}<span class="call-wave-bar" style="--i:{{ i }}"></span>{% endfor %}
       </div>
 
       <div class="call-actions">

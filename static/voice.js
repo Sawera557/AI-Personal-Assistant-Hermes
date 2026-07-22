@@ -15,6 +15,7 @@
   const orb = document.getElementById("call-orb");
   const statusEl = document.getElementById("call-status");
   const captionEl = document.getElementById("call-caption");
+  const callTranscript = document.getElementById("call-transcript");
   const muteBtn = document.getElementById("call-mute");
   const endBtn = document.getElementById("call-end");
   const voiceSelect = document.getElementById("voice-select");
@@ -88,8 +89,16 @@
 
   const setPhase = (p) => {
     phase = p;
-    orb.dataset.state = muted ? "muted" : p;
+    const visualState = muted ? "muted" : p;
+    orb.dataset.state = visualState;
+    callEl.dataset.state = visualState;
   };
+
+  function setVoiceText(status, caption, transcript) {
+    if (statusEl) statusEl.textContent = status;
+    if (captionEl) captionEl.textContent = caption;
+    if (callTranscript && transcript !== undefined) callTranscript.textContent = transcript;
+  }
 
   const pickMime = () => {
     const types = [
@@ -130,8 +139,7 @@
     source.connect(analyser);
 
     setPhase("listening");
-    statusEl.textContent = "Listening…";
-    captionEl.textContent = "Go ahead — I'm listening.";
+    setVoiceText("LISTENING", "I'm listening. Speak naturally and I'll answer out loud.", "“ ...go ahead, I'm listening. ”");
     beginListening();
   }
 
@@ -149,6 +157,7 @@
     callEl.classList.remove("open");
     callEl.setAttribute("aria-hidden", "true");
     setPhase("idle");
+    setVoiceText("CONNECTING", "Tap the mic to talk. I'll listen, then reply out loud.", "“ ...go ahead, I'm listening. ”");
   }
 
   function stopRaf() {
@@ -172,7 +181,7 @@
   function beginListening() {
     if (!active || muted) return;
     setPhase("listening");
-    statusEl.textContent = "Listening…";
+    setVoiceText("LISTENING", "Go ahead. I'm listening.", "“ ...go ahead, I'm listening. ”");
 
     chunks = [];
     const mime = pickMime();
@@ -180,7 +189,7 @@
       recorder = mime ? new MediaRecorder(stream, { mimeType: mime })
                       : new MediaRecorder(stream);
     } catch (err) {
-      captionEl.textContent = "Recorder error: " + err;
+      setVoiceText("ERROR", "Recorder error: " + err, "audio recorder unavailable");
       return;
     }
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -256,14 +265,13 @@
     if (!blob.size || !speechStartedAt) { beginListening(); return; }
 
     setPhase("thinking");
-    statusEl.textContent = "Thinking…";
-    captionEl.textContent = "…";
+    setVoiceText("THINKING", "Working through it with Claude and your connected sources.", "cross-referencing Claude with your connected sources ...");
 
     try {
       // 1) Speech -> text
       const transcript = await transcribe(blob);
       if (!transcript) { resumeAfterTurn(); return; }
-      captionEl.textContent = `“${transcript}”`;
+      setVoiceText("THINKING", "Working through it with Claude and your connected sources.", `“ ${transcript} ”`);
       addMessage("user", renderUserText(transcript));
 
       // 2) Run the SAME agent the typed chat uses
@@ -272,7 +280,7 @@
       // 3) Text -> speech
       await speak(reply);
     } catch (err) {
-      captionEl.textContent = "Error: " + (err && err.message ? err.message : err);
+      setVoiceText("ERROR", "Error: " + (err && err.message ? err.message : err), "voice turn failed");
       resumeAfterTurn();
     }
   }
@@ -322,7 +330,7 @@
         body: JSON.stringify({ text: clean, voice: currentVoice() }),
       });
     } catch (err) {
-      captionEl.textContent = "Couldn't reach the voice service.";
+      setVoiceText("ERROR", "Couldn't reach the voice service.", "voice service unreachable");
       resumeAfterTurn();
       return;
     }
@@ -330,7 +338,7 @@
     if (!res.ok) {
       let msg = "Voice playback unavailable (the reply is shown in the chat).";
       try { const j = await res.json(); if (j.error) msg = j.error; } catch (_) {}
-      captionEl.textContent = msg;
+      setVoiceText("ERROR", msg, "voice playback unavailable");
       resumeAfterTurn(1600);
       return;
     }
@@ -340,8 +348,7 @@
     player = new Audio(playerUrl);
 
     setPhase("speaking");
-    statusEl.textContent = "Speaking…";
-    captionEl.textContent = shorten(clean) + "   (just talk to interrupt)";
+    setVoiceText("SPEAKING", "Here's what I found. Just talk to interrupt.", `“ ${shorten(clean)} ”`);
 
     const done = () => { stopPlayback(); resumeAfterTurn(); };
     player.onended = done;
@@ -384,7 +391,11 @@
 
   function resumeAfterTurn(delay = 250) {
     if (!active) return;
-    if (muted) { setPhase("listening"); statusEl.textContent = "Muted"; return; }
+    if (muted) {
+      setPhase("listening");
+      setVoiceText("MUTED", "Mic off. Tap Unmute to keep talking.", "microphone channel paused");
+      return;
+    }
     setTimeout(() => { if (active && !muted) beginListening(); }, delay);
   }
 
@@ -406,8 +417,8 @@
       }
       setPhase("listening");
       orb.dataset.state = "muted";
-      statusEl.textContent = "Muted";
-      captionEl.textContent = "Mic off. Tap Unmute to keep talking.";
+      callEl.dataset.state = "muted";
+      setVoiceText("MUTED", "Mic off. Tap Unmute to keep talking.", "microphone channel paused");
     } else if (phase !== "speaking" && phase !== "thinking") {
       beginListening();
     }

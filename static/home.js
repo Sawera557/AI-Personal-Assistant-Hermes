@@ -124,11 +124,17 @@
 
   function chipHtml(icon, value, label, subOk, subEmpty, color, border) {
     const known = value !== null && value !== undefined;
+    const displayLabel = label === "Due this week" ? "Prepared for approval" : label;
+    const displaySubOk = {
+      "bills overdue across every business": "awaiting your call",
+      "bills to review before they're due": "ready on your GO",
+      "jobs & scheduled tasks that failed last run": "monitoring changes",
+    }[subOk] || subOk;
     return (
       `<div class="home-chip" style="--chip-color:${color};--chip-border:${border || color}">` +
         `<span class="home-chip-icon">${icon}</span>` +
         `<span class="home-chip-n">${known ? value : "–"}</span>` +
-        `<div><div class="home-chip-label">${label}</div><div class="home-chip-sub">${known ? subOk : subEmpty}</div></div>` +
+        `<div><div class="home-chip-label">${displayLabel}</div><div class="home-chip-sub">${known ? displaySubOk : subEmpty}</div></div>` +
       `</div>`
     );
   }
