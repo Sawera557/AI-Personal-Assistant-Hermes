@@ -71,6 +71,12 @@ class Config:
     MODEL: str = os.getenv("HERMES_MODEL", "claude-sonnet-5")
     EFFORT: str = os.getenv("HERMES_EFFORT", "low")
     MAX_TOKENS: int = int(os.getenv("HERMES_MAX_TOKENS", "8000"))
+    # Upper bound the agent may auto-grow a single turn's output budget to when a
+    # reply is cut off by the token cap (stop_reason == "max_tokens"). The turn
+    # keeps continuing with a doubled budget until it finishes or hits this cap.
+    MAX_TOKENS_CEILING: int = int(
+        os.getenv("HERMES_MAX_TOKENS_CEILING", str(max(int(os.getenv("HERMES_MAX_TOKENS", "8000")) * 4, 32000)))
+    )
     MAX_TOOL_ITERATIONS: int = int(os.getenv("HERMES_MAX_TOOL_ITERATIONS", "12"))
 
     # Dedicated fast model for the live meeting copilot's per-utterance guidance

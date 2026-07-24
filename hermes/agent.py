@@ -79,6 +79,7 @@ def _system_prompt(
     active_business: str | None = None,
     memory_block: str = "",
     attachments: list[dict[str, Any]] | None = None,
+    context_pack: str = "",
 ) -> str:
     today = datetime.date.today().isoformat()
     base = (
@@ -141,6 +142,12 @@ def _system_prompt(
             f"\n\nBusiness scope: this conversation is locked to business '{active_business}'. "
             "All Maton tool calls automatically use that business's connected account."
         )
+    if context_pack:
+        base += (
+            "\n\nBUSINESS CONTEXT PACK (authoritative standing facts and rules — "
+            "trust these over memory or retrieval; if a tool result contradicts "
+            "them, say so explicitly):\n" + context_pack
+        )
     if memory_block:
         base += f"\n\nMEMORY (what you already know — preferences, business rules, standing decisions):\n{memory_block}"
     base += _attachments_block(attachments)
@@ -166,6 +173,27 @@ def _text_of(content: list[dict[str, Any]]) -> str:
 def _thinking_of(content: list[dict[str, Any]]) -> str:
     parts = [b.get("thinking", "") for b in content if b.get("type") == "thinking"]
     return "\n".join(p for p in parts if p).strip()
+
+
+def _strip_thinking(content: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop thinking blocks — required before prefilling a partial assistant turn
+    for continuation, since extended thinking forbids prefilled assistant turns."""
+    return [b for b in content if b.get("type") != "thinking"]
+
+
+def _merge_continuation(prev: list[dict[str, Any]], new: list[dict[str, Any]]) -> None:
+    """Fold a continuation's content into the truncated assistant message in place
+    so the resumed reply reads as one message. Trailing text of `prev` is joined
+    with the continuation's text; any non-text continuation blocks are appended."""
+    for block in new:
+        if block.get("type") == "text":
+            last_text = next((b for b in reversed(prev) if b.get("type") == "text"), None)
+            if last_text is not None:
+                last_text["text"] = f"{last_text.get('text', '')}{block.get('text', '')}"
+            else:
+                prev.append(block)
+        else:
+            prev.append(block)
 
 
 # ---- OpenAI translation --------------------------------------------------
@@ -290,11 +318,75 @@ _OPENAI_STOP_MAP = {
 }
 
 
+#: Valid per-request reasoning-effort levels the frontend may pass. Anything
+#: else (None, "", a typo) falls back to the platform default Config.EFFORT.
+_VALID_EFFORTS = frozenset({"low", "medium", "high"})
+
+
+def normalize_effort(effort: str | None) -> str:
+    """Coerce a caller-supplied effort to a valid level, else Config.EFFORT."""
+    if isinstance(effort, str) and effort.strip().lower() in _VALID_EFFORTS:
+        return effort.strip().lower()
+    return Config.EFFORT
+
+
+#: Words that signal a turn wants deeper reasoning — bumps auto-effort to "high".
+_HIGH_EFFORT_HINTS = (
+    "analyz", "compare", "comparison", "evaluate", "assess", "strateg", "plan",
+    "forecast", "project", "model", "reconcile", "debug", "diagnos", "root cause",
+    "design", "architect", "trade-off", "tradeoff", "pros and cons", "step by step",
+    "comprehensive", "in depth", "in-depth", "why ", "explain how", "optimi",
+    "recommend", "draft a", "write a", "summarize", "reason", "calculate", "research",
+)
+#: Words that signal a quick, shallow turn — pulls auto-effort down to "low".
+_LOW_EFFORT_HINTS = (
+    "hi", "hello", "hey", "thanks", "thank you", "yes", "no", "ok", "okay",
+    "what time", "when is", "list ", "show me", "status", "is ", "are ", "how many",
+)
+
+
+def _auto_effort(user_content: list[dict[str, Any]] | None, has_attachments: bool) -> str:
+    """Pick a reasoning-effort level from the turn's own signals, when the caller
+    didn't set one explicitly. Heuristic and deliberately conservative — it only
+    moves off the platform default for clearly-simple or clearly-hard turns.
+
+    Signals: attachments (files/images to reason over → at least medium),
+    message length, and depth-hint keywords. Returns a valid effort level."""
+    text = _text_of(user_content or []).lower()
+    words = len(text.split())
+
+    # Attachments almost always mean "reason over this content" — never trivial.
+    if has_attachments:
+        return "high" if (words > 40 or any(h in text for h in _HIGH_EFFORT_HINTS)) else "medium"
+
+    if any(hint in text for hint in _HIGH_EFFORT_HINTS) or words > 80:
+        return "high"
+    # Short and hint-free (a greeting, a one-line lookup) — keep it fast/cheap.
+    if words <= 12 and (words == 0 or any(text.startswith(h) for h in _LOW_EFFORT_HINTS)):
+        return "low"
+    return Config.EFFORT
+
+
+def resolve_effort(
+    effort: str | None,
+    user_content: list[dict[str, Any]] | None = None,
+    has_attachments: bool = False,
+) -> str:
+    """Resolve the effort for a turn: an explicit low/medium/high from the caller
+    wins; "auto" (or None / anything unrecognized) defers to _auto_effort()."""
+    if isinstance(effort, str) and effort.strip().lower() in _VALID_EFFORTS:
+        return effort.strip().lower()
+    return _auto_effort(user_content, has_attachments)
+
+
 def _anthropic_turn(
     model_id: str,
     tools: list[dict[str, Any]],
     system: str,
     messages: list[dict[str, Any]],
+    effort: str | None = None,
+    max_tokens: int | None = None,
+    continuation: bool = False,
 ):
     """Stream one Claude API call. Yields text deltas AND, for models that
     support it, live thinking deltas ({"type": "thinking", "text": "<delta>"})
@@ -311,14 +403,18 @@ def _anthropic_turn(
     # Haiku rejects adaptive thinking outright ("adaptive thinking is not
     # supported on this model") — only the more capable tiers support it, so
     # only those models ever produce a live "thinking" event.
+    # `continuation` means we're resuming a reply that the token cap cut off, by
+    # prefilling the partial assistant turn. Extended thinking forbids prefilling
+    # an assistant turn, so continuation calls run with thinking (and effort) off;
+    # the caller strips the partial's thinking blocks to match.
     extra: dict[str, Any] = {}
-    if "haiku" not in model_id.lower():
+    if "haiku" not in model_id.lower() and not continuation:
         extra["thinking"] = {"type": "adaptive", "display": "summarized"}
-        extra["output_config"] = {"effort": Config.EFFORT}
+        extra["output_config"] = {"effort": normalize_effort(effort)}
 
     with _anthropic().messages.stream(
         model=model_id,
-        max_tokens=Config.MAX_TOKENS,
+        max_tokens=max_tokens or Config.MAX_TOKENS,
         system=system,
         tools=tools,
         messages=messages,
@@ -338,6 +434,7 @@ def _openai_turn(
     tools: list[dict[str, Any]],
     system: str,
     messages: list[dict[str, Any]],
+    max_tokens: int | None = None,
 ):
     """Stream one OpenAI chat-completions call. Same event shape as
     `_anthropic_turn`, with the assistant content normalized into Anthropic's
@@ -345,7 +442,7 @@ def _openai_turn(
     openai_tools = _to_openai_tools(tools)
     stream = _openai().chat.completions.create(
         model=model_id,
-        max_completion_tokens=Config.MAX_TOKENS,
+        max_completion_tokens=max_tokens or Config.MAX_TOKENS,
         messages=_to_openai_messages(system, messages),
         tools=openai_tools or openai.NOT_GIVEN,
         stream=True,
@@ -407,6 +504,7 @@ def stream_turn(
     voice: bool = False,
     active_business: str | None = None,
     allowed_apps: list[str] | None = None,
+    effort: str | None = None,
 ):
     """Generator version of the agent loop — yields incremental events instead
     of blocking until the whole turn (every tool round-trip included) is done.
@@ -432,6 +530,11 @@ def stream_turn(
     if isinstance(user_content, str):
         user_content = [{"type": "text", "text": user_content}]
 
+    # Resolve reasoning effort once for the whole turn: an explicit low/medium/high
+    # from the frontend wins; "auto" (or nothing) is chosen from the turn's signals.
+    has_attachments = any(b.get("type") != "text" for b in user_content)
+    effort = resolve_effort(effort, user_content, has_attachments)
+
     messages = store.get(session_id)
     messages.append({"role": "user", "content": user_content})
 
@@ -443,6 +546,12 @@ def stream_turn(
         )
     except Exception:  # noqa: BLE001 — a memory-retrieval failure must never break the turn
         memory_block = ""
+    # B2: always-present per-business context pack (fail-open to "").
+    try:
+        from .context_packs import packs_for
+        context_pack = packs_for(active_business)
+    except Exception:  # noqa: BLE001 — a pack failure must never break the turn
+        context_pack = ""
     # Files shared earlier in this chat, so the model can read them on any turn
     # (see _attachments_block). Tolerate stores without the method / a failure.
     try:
@@ -454,13 +563,19 @@ def stream_turn(
     reply = ""
     thinking_summary = ""
     stop_reason = None
+    # Per-turn output budget that auto-grows when a reply is cut off by the token
+    # cap; `continuing` marks that this iteration is resuming a truncated reply.
+    turn_max_tokens = Config.MAX_TOKENS
+    continuing = False
 
     for _ in range(Config.MAX_TOOL_ITERATIONS):
-        system_prompt = _system_prompt(voice, active_business, memory_block, attachments)
+        system_prompt = _system_prompt(voice, active_business, memory_block, attachments, context_pack)
         turn = (
-            _anthropic_turn(model_id, tools, system_prompt, messages)
+            _anthropic_turn(
+                model_id, tools, system_prompt, messages, effort, turn_max_tokens, continuing
+            )
             if provider == "anthropic"
-            else _openai_turn(model_id, tools, system_prompt, messages)
+            else _openai_turn(model_id, tools, system_prompt, messages, turn_max_tokens)
         )
 
         assistant_content: list[dict[str, Any]] = []
@@ -471,10 +586,30 @@ def stream_turn(
             else:
                 yield event
 
-        messages.append({"role": "assistant", "content": assistant_content})
+        if continuing:
+            # Resuming a cut-off reply: fold the continuation into the truncated
+            # assistant message rather than appending a second assistant turn.
+            _merge_continuation(messages[-1]["content"], assistant_content)
+        else:
+            messages.append({"role": "assistant", "content": assistant_content})
+        continuing = False
 
         if t := _thinking_of(assistant_content):
             thinking_summary = t
+
+        # Reply cut off purely by the token cap (no tool call to make): grow the
+        # budget and continue the same assistant message instead of returning a
+        # truncated answer. Strip the partial's thinking blocks first so the
+        # prefilled continuation call is valid under extended thinking.
+        if (
+            stop_reason == "max_tokens"
+            and turn_max_tokens < Config.MAX_TOKENS_CEILING
+            and not any(b.get("type") == "tool_use" for b in assistant_content)
+        ):
+            messages[-1]["content"] = _strip_thinking(messages[-1]["content"])
+            turn_max_tokens = min(Config.MAX_TOKENS_CEILING, turn_max_tokens * 2)
+            continuing = True
+            continue
 
         if stop_reason == "tool_use":
             tool_results = []
@@ -542,8 +677,10 @@ def stream_turn(
             )
             break
 
-        # end_turn / max_tokens / stop_sequence
-        reply = _text_of(assistant_content)
+        # end_turn / max_tokens / stop_sequence. Read the stored assistant message
+        # (not just this chunk) so a reply resumed after a token-cap cutoff — or
+        # one that stayed truncated at the ceiling — returns its full text.
+        reply = _text_of(messages[-1]["content"])
         break
 
     store.set(session_id, messages)
@@ -565,6 +702,7 @@ def run_turn(
     voice: bool = False,
     active_business: str | None = None,
     allowed_apps: list[str] | None = None,
+    effort: str | None = None,
 ) -> dict[str, Any]:
     """Run one user turn through the agent loop and return a structured result.
 
@@ -580,7 +718,7 @@ def run_turn(
     final event. Use stream_turn() directly for incremental output.
     """
     result: dict[str, Any] = {}
-    for event in stream_turn(session_id, user_content, voice, active_business, allowed_apps):
+    for event in stream_turn(session_id, user_content, voice, active_business, allowed_apps, effort):
         if event["type"] == "done":
             result = event["result"]
     return result

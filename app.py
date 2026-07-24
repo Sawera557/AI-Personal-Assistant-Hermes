@@ -261,6 +261,7 @@ def index(request: Request):
             "apps": Config.apps(),
             "model_options": hermes_models.options(),
             "active_model": hermes_models.active_model(),
+            "active_effort": Config.EFFORT,
             "web_search": Config.WEB_SEARCH,
             "voice_enabled": Config.voice_enabled(),
             "voices": Config.voice_voices(),
@@ -358,6 +359,7 @@ async def chat(request: Request):
         message = (form.get("message") or "").strip()
         voice = _truthy(form.get("voice"))
         attachment_ids = [a for a in form.getlist("attachment_ids") if isinstance(a, str)]
+        effort = form.get("effort")
         files: list[tuple[str, str, bytes]] = []
         for upload in form.getlist("files"):
             if isinstance(upload, FormUploadFile) and upload.filename:
@@ -374,6 +376,7 @@ async def chat(request: Request):
         message = (data.get("message") or "").strip()
         voice = _truthy(data.get("voice"))
         attachment_ids = data.get("attachment_ids") or []
+        effort = data.get("effort")
         attachments = []
 
     if not message and not attachments and not attachment_ids:
@@ -408,7 +411,9 @@ async def chat(request: Request):
         active_business = (entity_id or "").strip() or "all"
 
     try:
-        result = await run_in_threadpool(run_turn, key, content, voice, active_business)
+        result = await run_in_threadpool(
+            run_turn, key, content, voice, active_business, None, effort
+        )
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the client
         return JSONResponse({"error": f"Agent error: {exc}"}, status_code=500)
 
@@ -468,6 +473,7 @@ async def chat_stream(request: Request):
         message = (form.get("message") or "").strip()
         voice = _truthy(form.get("voice"))
         attachment_ids = [a for a in form.getlist("attachment_ids") if isinstance(a, str)]
+        effort = form.get("effort")
         files: list[tuple[str, str, bytes]] = []
         for upload in form.getlist("files"):
             if isinstance(upload, FormUploadFile) and upload.filename:
@@ -484,6 +490,7 @@ async def chat_stream(request: Request):
         message = (data.get("message") or "").strip()
         voice = _truthy(data.get("voice"))
         attachment_ids = data.get("attachment_ids") or []
+        effort = data.get("effort")
         attachments = []
         files = []
 
@@ -525,7 +532,7 @@ async def chat_stream(request: Request):
         result: dict = {}
         try:
             async for event in iterate_in_threadpool(
-                stream_turn(key, content, voice, active_business)
+                stream_turn(key, content, voice, active_business, None, effort)
             ):
                 if event["type"] == "done":
                     result = event["result"]

@@ -131,6 +131,17 @@
             <p class="hint" id="model-select-status" hidden></p>
           </div>
 
+          <div class="panel">
+            <h2>Reasoning effort</h2>
+            <select id="effort-select" class="voice-select" aria-label="Reasoning effort" data-default="{{ active_effort }}">
+              <option value="auto" selected>Auto — pick per message</option>
+              <option value="low">Low — fastest</option>
+              <option value="medium">Medium — balanced</option>
+              <option value="high">High — deepest</option>
+            </select>
+            <p class="hint">Auto sizes thinking to each question. Pick a fixed level to override. Applies to your next message.</p>
+          </div>
+
           {% if voice_enabled %}
           <div class="panel">
             <h2>Voice</h2>

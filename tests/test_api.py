@@ -33,11 +33,11 @@ client = TestClient(app_module.app)
 _last_turn: dict = {}
 
 
-def _fake_run_turn(session_id, content, voice=False, active_business=None, allowed_apps=None):
+def _fake_run_turn(session_id, content, voice=False, active_business=None, allowed_apps=None, effort=None):
     _last_turn.clear()
     _last_turn.update(
         session_id=session_id, content=content, voice=voice,
-        active_business=active_business, allowed_apps=allowed_apps,
+        active_business=active_business, allowed_apps=allowed_apps, effort=effort,
     )
     return {"reply": "ok", "thinking": None, "tool_calls": [], "stop_reason": "end_turn"}
 

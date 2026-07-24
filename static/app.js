@@ -526,6 +526,24 @@ async function sendStreaming(body, bubble) {
   }
 }
 
+// Reasoning-effort picker (low | medium | high). A per-browser preference sent
+// with every message; the backend falls back to its default for anything else.
+const effortSelect = document.getElementById("effort-select");
+const EFFORT_KEY = "hermes_effort";
+function currentEffort() {
+  if (!effortSelect) return "";
+  return effortSelect.value || "";
+}
+if (effortSelect) {
+  const saved = localStorage.getItem(EFFORT_KEY);
+  if (saved && [...effortSelect.options].some((o) => o.value === saved)) {
+    effortSelect.value = saved;
+  }
+  effortSelect.addEventListener("change", () => {
+    localStorage.setItem(EFFORT_KEY, effortSelect.value);
+  });
+}
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = input.value.trim();
@@ -541,6 +559,7 @@ form.addEventListener("submit", async (e) => {
   body.append("session_id", sessionId);
   body.append("entity_id", entityIdForSend());
   body.append("message", text);
+  body.append("effort", currentEffort());
   pendingFiles.forEach((f) => body.append("files", f));
 
   input.value = "";
