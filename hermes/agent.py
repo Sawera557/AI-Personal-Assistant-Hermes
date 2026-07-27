@@ -129,6 +129,10 @@ def _system_prompt(
         "get a real download link — never invent a URL, and always share the returned link "
         "back to the user in your reply.\n"
         "- When you use web search, cite the sources.\n"
+        "- If a tool result is marked truncated (a `_truncation` key or a <<TRUNCATED>> "
+        "marker), you have not seen the omitted part. Never describe, quote, count, or "
+        "answer questions about content past the marker or beyond a listed cut — say the "
+        "result was truncated and fetch the rest before answering.\n"
         "- Lead with the answer; be concise and practical.\n"
         f"Today's date is {today}."
     )
