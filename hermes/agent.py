@@ -155,7 +155,14 @@ def _system_prompt(
             "them, say so explicitly):\n" + context_pack
         )
     if memory_block:
-        base += f"\n\nMEMORY (what you already know — preferences, business rules, standing decisions):\n{memory_block}"
+        base += (
+            "\n\nMEMORY — saved facts from PAST conversations (preferences, business "
+            "rules, standing decisions). Preferences and standing decisions are "
+            "reliable. But anything here that can change over time — contact numbers, "
+            "balances, message contents, current status, who said what — may be STALE: "
+            "treat it as background, NOT as a live retrieval, and confirm it with a tool "
+            "call before stating it as a current fact.\n" + memory_block
+        )
     if retrieved_context:
         base += f"\n\n{retrieved_context}"
     base += _attachments_block(attachments)
