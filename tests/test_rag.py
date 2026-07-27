@@ -23,8 +23,9 @@ import os
 import sys
 
 os.environ.setdefault("HERMES_DISABLE_DB", "1")
-# Ensure the feature is OFF for the default-state assertions regardless of the
-# developer's own .env (config reads these lazily, so setting them here wins).
+# First line of defence for the default-state assertions. NOTE: config.py runs
+# load_dotenv(override=True) at import, so a developer's .env re-populates these
+# right after — test_flags_default_off therefore clears them again at call time.
 os.environ.pop("HERMES_RAG_PINECONE", None)
 os.environ.pop("HERMES_RAG_CONTEXT_INJECTION", None)
 
@@ -58,8 +59,19 @@ def test_restricted_never_allowed():
 
 # ---- Flags default OFF (dark merge) ---------------------------------------
 def test_flags_default_off():
-    check("rag_pinecone_enabled off by default", Config.rag_pinecone_enabled() is False)
-    check("rag_context_injection off by default", Config.rag_context_injection() is False)
+    # config.py runs load_dotenv(override=True) AT IMPORT, which re-populates
+    # these from a developer's .env even after the module-level pop above — so
+    # the readers must be cleared here, at call time, where they look lazily.
+    # Save and restore so the rest of the suite is unaffected.
+    saved = {k: os.environ.pop(k, None)
+             for k in ("HERMES_RAG_PINECONE", "HERMES_RAG_CONTEXT_INJECTION")}
+    try:
+        check("rag_pinecone_enabled off by default", Config.rag_pinecone_enabled() is False)
+        check("rag_context_injection off by default", Config.rag_context_injection() is False)
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
 
 
 def test_pinecone_key_gates_enable():
