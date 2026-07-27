@@ -8,75 +8,157 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-import requests
-
 from .config import Config
 from .db.bills import insert_bill, source_ref_exists, update_bill
 from .maton import MatonClient, MatonError
 
 log = logging.getLogger("hermes.bills")
 
-_NUEXTRACT_TIMEOUT = 60
-
 
 # ── NuExtract client ─────────────────────────────────────────────────────────
 
+# NuExtract template. Values are TYPE placeholders, not empty strings — the API
+# rejects "" with 'Not a valid NuExtract template. Invalid Format'. Fields the
+# document states literally use "verbatim-string" so _normalise gets the text as
+# written (it does its own currency/date parsing); `category` is inferred rather
+# than quoted, so it's a generated "string".
 _BILL_SCHEMA = {
-    "vendor_name": "",
-    "invoice_number": "",
-    "issue_date": "",
-    "due_date": "",
-    "total_amount": "",
-    "currency": "",
-    "category": "",
+    "vendor_name": "verbatim-string",
+    "invoice_number": "verbatim-string",
+    "issue_date": "verbatim-string",
+    "due_date": "verbatim-string",
+    "total_amount": "verbatim-string",
+    "currency": "verbatim-string",
+    "category": "string",
     "line_items": [
-        {"description": "", "quantity": "", "unit_price": "", "total": ""}
+        {
+            "description": "verbatim-string",
+            "quantity": "verbatim-string",
+            "unit_price": "verbatim-string",
+            "total": "verbatim-string",
+        }
     ],
 }
 
 
-def nuextract(filename: str, raw: bytes, mime: str, schema: dict[str, Any]) -> dict[str, Any]:
-    """POST a file + JSON schema to NuExtract and return the raw JSON response.
+_numind_client = None
 
-    Shared transport used by both bill extraction (`_BILL_SCHEMA`) and generic
-    document text extraction (see `hermes.extract`). Keeps the /api/extract →
-    /v1/extract 404/405 fallback, the Bearer header, and the 60s timeout in one
-    place. Raises RuntimeError with a user-relayable message on failure.
-    """
+
+def _numind():
+    """Lazily build (and cache) the NuMind SDK client. Raises RuntimeError with a
+    user-relayable message when the API key is missing. The SDK targets
+    https://nuextract.ai by default; NUEXTRACT_BASE_URL overrides the host."""
+    global _numind_client
+    if _numind_client is not None:
+        return _numind_client
     api_key = Config.NUEXTRACT_API_KEY
-    base = Config.NUEXTRACT_BASE_URL
     if not api_key:
         raise RuntimeError("NUEXTRACT_API_KEY is not configured.")
-
-    import json
-
-    headers = {"Authorization": f"Bearer {api_key}"}
-    files = {"file": (filename, raw, mime or "application/octet-stream")}
-    data = {"schema": json.dumps(schema)}
-
     try:
-        resp = requests.post(
-            f"{base}/api/extract", headers=headers, files=files, data=data,
-            timeout=_NUEXTRACT_TIMEOUT,
+        from numind import Configuration, NuMind
+    except ImportError as exc:  # pragma: no cover — dependency must be installed
+        raise RuntimeError(f"numind SDK is not installed: {exc}") from exc
+    if Config.NUEXTRACT_BASE_URL:
+        _numind_client = NuMind(
+            api_key=api_key, configuration=Configuration(host=Config.NUEXTRACT_BASE_URL)
         )
-        resp.raise_for_status()
-        return resp.json()
-    except requests.HTTPError as exc:
-        if exc.response is not None and exc.response.status_code in (404, 405):
-            try:
-                resp2 = requests.post(
-                    f"{base}/v1/extract", headers=headers, files=files, data=data,
-                    timeout=_NUEXTRACT_TIMEOUT,
-                )
-                resp2.raise_for_status()
-                return resp2.json()
-            except Exception as exc2:
-                raise RuntimeError(f"NuExtract extraction failed: {exc2}") from exc2
-        raise RuntimeError(
-            f"NuExtract extraction failed ({exc.response.status_code}): {exc}"
-        ) from exc
-    except requests.RequestException as exc:
-        raise RuntimeError(f"NuExtract network error: {exc}") from exc
+    else:
+        _numind_client = NuMind(api_key=api_key)
+    return _numind_client
+
+
+def _with_timeout(fn, *args, **kwargs):
+    """Run a blocking NuExtract SDK call under a hard wall-clock bound.
+
+    The SDK submits a job and then blocks on an SSE stream whose call takes no
+    timeout argument (`_request_timeout` only reaches the job-submission POST),
+    so a slow or stuck job would otherwise hang the request indefinitely — long
+    enough for a serverless platform to kill the function BEFORE the Claude-vision
+    fallback can run. Bounding it here guarantees the caller regains control and
+    can degrade. A timed-out call's thread is abandoned (Python can't kill
+    threads); it is a daemon worker that dies with the process.
+    """
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(fn, *args, **kwargs)
+        try:
+            return future.result(timeout=Config.NUEXTRACT_TIMEOUT)
+        except FuturesTimeout as exc:
+            future.cancel()
+            raise RuntimeError(
+                f"NuExtract timed out after {Config.NUEXTRACT_TIMEOUT}s"
+            ) from exc
+    finally:
+        # Don't block on an abandoned worker; let it finish in the background.
+        executor.shutdown(wait=False)
+
+
+def _result_dict(result: Any) -> dict[str, Any]:
+    """Coerce a NuExtract structured `.result` (dict / pydantic model / JSON str)
+    into a plain dict for downstream normalisation."""
+    if isinstance(result, dict):
+        return result
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+    if isinstance(result, str):
+        try:
+            import json
+
+            parsed = json.loads(result)
+            return parsed if isinstance(parsed, dict) else {}
+        except ValueError:
+            return {}
+    return {}
+
+
+def nuextract(filename: str, raw: bytes, mime: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """Run NuExtract STRUCTURED extraction on a file, returning the extracted
+    fields as a dict (wrapped as {"result": ...} for bills._normalise).
+
+    Uses the official `numind` SDK's structured-extraction API. When
+    NUEXTRACT_PROJECT_ID is configured the file is extracted against that project
+    (its template defined in the dashboard); otherwise `schema` is sent as an
+    on-the-fly template. Raises RuntimeError with a user-relayable message on
+    failure so callers can fall back (e.g. to Claude vision).
+    """
+    client = _numind()
+    project_id = Config.NUEXTRACT_PROJECT_ID or None
+    try:
+        resp = _with_timeout(
+            client.extract_structured_data,
+            project_id=project_id,
+            template=None if project_id else schema,
+            # Template mode makes the SDK create a temporary project, whose
+            # CreateStructuredProjectRequest rejects a None `instructions` with a
+            # pydantic validation error — so always pass a string.
+            instructions="",
+            input_file=raw,
+            _request_timeout=Config.NUEXTRACT_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001 — normalise every SDK/network error
+        raise RuntimeError(f"NuExtract extraction failed: {exc}") from exc
+
+    if getattr(resp, "error", None):
+        raise RuntimeError(f"NuExtract extraction error: {resp.error}")
+    return {"result": _result_dict(getattr(resp, "result", None))}
+
+
+def nuextract_content(filename: str, raw: bytes, mime: str) -> str:
+    """Run NuExtract CONTENT extraction on a file, returning verbatim Markdown
+    text. Raises RuntimeError with a user-relayable message on failure so callers
+    can fall back (e.g. to Claude vision)."""
+    client = _numind()
+    try:
+        resp = _with_timeout(
+            client.extract_content, input_file=raw, _request_timeout=Config.NUEXTRACT_TIMEOUT
+        )
+    except Exception as exc:  # noqa: BLE001 — normalise every SDK/network error
+        raise RuntimeError(f"NuExtract content extraction failed: {exc}") from exc
+
+    result = getattr(resp, "result", None)
+    return result if isinstance(result, str) else str(result or "")
 
 
 def extract_bill(filename: str, raw: bytes, mime: str) -> dict[str, Any]:

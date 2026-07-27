@@ -341,6 +341,17 @@ def build_run_prompt(task: dict[str, Any]) -> str:
     ]
     if window:
         parts.append(window)
+    # D1: if this task is linked to a playbook, prepend the procedure.
+    try:
+        from .db.playbooks import playbook_for_task
+        _pb = playbook_for_task(task.get("task_id"))
+    except Exception:  # noqa: BLE001 — a playbook failure must never break a run
+        _pb = None
+    if _pb and _pb.get("content_md"):
+        parts.append(
+            "PLAYBOOK — follow this procedure exactly; deviate only if a step is "
+            "impossible, and say so in the report:\n" + _pb["content_md"]
+        )
     parts.append(f"Your task:\n{task.get('prompt') or ''}")
     return "\n\n".join(parts)
 

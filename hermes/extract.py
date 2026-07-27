@@ -15,9 +15,7 @@ active chat model is Claude or OpenAI.
 """
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any
 
 log = logging.getLogger("hermes.extract")
 
@@ -27,17 +25,6 @@ PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presen
 
 # Text-like MIME hints we can decode without OCR (mirrors ingest._extract_text).
 _TEXT_HINTS = ("text/", "json", "csv", "xml", "markdown", "yaml", "html")
-
-# Full-document transcription schema for NuExtract. `full_text` is the verbatim
-# transcription; the structured fields are a fallback when the model returns an
-# empty transcription (some scans yield fields but no clean full text).
-_DOC_SCHEMA: dict[str, Any] = {
-    "document_type": "",
-    "full_text": "",
-    "summary": "",
-    "key_fields": [{"label": "", "value": ""}],
-}
-
 
 class ExtractionError(RuntimeError):
     """Raised with a message meant to be relayed to the user."""
@@ -214,32 +201,19 @@ def _extract_pdf_or_image(filename: str, raw: bytes, mime: str) -> str:
 
 
 def _extract_via_nuextract(filename: str, raw: bytes, mime: str) -> str:
-    # Lazy import: the NuExtract HTTP transport lives in bills, which pulls in the
-    # DB layer — no need to load that just to import this module.
+    # Lazy import: the NuExtract transport lives in bills, which pulls in the DB
+    # layer — no need to load that just to import this module.
     from . import bills
 
+    # Content extraction returns verbatim Markdown — exactly the transcription
+    # this OCR path wants, so use it directly instead of a structured schema.
     try:
-        result = bills.nuextract(filename, raw, mime, _DOC_SCHEMA)
+        text = bills.nuextract_content(filename, raw, mime).strip()
     except RuntimeError as exc:
         raise ExtractionError(str(exc)) from exc
 
-    # Unwrap the same envelope keys bills._normalise handles.
-    data: dict[str, Any] = result if isinstance(result, dict) else {}
-    for key in ("result", "data", "extraction", "output"):
-        if isinstance(data.get(key), dict):
-            data = data[key]
-            break
-
-    full_text = str(data.get("full_text") or "").strip()
-    if full_text:
-        return full_text
-
-    # Fallback: no verbatim transcription — serialize whatever structured
-    # content came back so the agent still has something to work with.
-    salient = {k: v for k, v in data.items() if v not in (None, "", [], {})}
-    if salient:
-        log.info("NuExtract returned no full_text for %s; using structured fields", filename)
-        return json.dumps(salient, ensure_ascii=False, indent=2)
+    if text:
+        return text
     raise ExtractionError(f"NuExtract returned no readable text for '{filename}'.")
 
 

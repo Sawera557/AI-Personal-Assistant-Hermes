@@ -24,7 +24,8 @@ from .db import memories as mem_repo
 from .db.connection import cursor
 from .vector_store import embed
 
-_MAX_BLOCK_CHARS = 2000
+import os  # B4: env-driven memory-block cap (default raised 2000 -> 8000)
+_MAX_BLOCK_CHARS = int(os.getenv("MEMORY_BLOCK_MAX_CHARS", "8000"))
 
 
 def _resolve_entity_id(active_business: str | None) -> str | None:
@@ -116,5 +117,7 @@ def build_memory_block(*, active_business: str | None, latest_user_text: str) ->
             lines.extend(f"  - {t}" for t in items)
     block = "\n".join(lines).strip()
     if len(block) > _MAX_BLOCK_CHARS:
-        block = block[:_MAX_BLOCK_CHARS].rstrip() + "\n  ...(truncated)"
+        cut = block[:_MAX_BLOCK_CHARS]
+        nl = cut.rfind("\n")
+        block = (cut[:nl] if nl > 0 else cut).rstrip() + "\n  ...(truncated)"
     return block

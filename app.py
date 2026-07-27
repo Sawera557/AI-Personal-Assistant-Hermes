@@ -57,7 +57,7 @@ from starlette.concurrency import iterate_in_threadpool
 from starlette.datastructures import UploadFile as FormUploadFile
 
 from hermes.agent import run_turn, stream_turn
-from hermes.attachments import store as attachment_store
+from hermes.attachments import ATTACHMENT_TEXT_PREFIX, store as attachment_store
 from hermes.bills import check_paid_bills, extract_bill, fetch_gmail_body, guess_business, scan_drive, scan_gmail
 from hermes.businesses import to_business_slug, to_entity_slug
 from hermes import calendar as hermes_calendar
@@ -231,7 +231,7 @@ def _block_for(name: str, mime: str, raw: bytes) -> tuple[dict, str]:
         text = raw.decode("utf-8", errors="replace")[:_TEXT_MAX_CHARS]
     except Exception:  # noqa: BLE001
         text = "(could not decode file as text)"
-    return {"type": "text", "text": f"Attached file '{name}':\n\n{text}"}, "text"
+    return {"type": "text", "text": f"{ATTACHMENT_TEXT_PREFIX}{name}':\n\n{text}"}, "text"
 
 
 def _build_attachments(files: list[tuple[str, str, bytes]]) -> list[dict]:
