@@ -16,6 +16,12 @@ from typing import Any
 # Public metadata fields (everything except the heavy Claude content block).
 _META_FIELDS = ("attachment_id", "filename", "type", "bytes", "entity_id")
 
+# Prefix used when a non-PDF/non-image upload is inlined as a plain text block
+# (see app._block_for). Because such attachments look like ordinary text blocks,
+# this marker is the only way to distinguish a file the user attached from text
+# they typed — used by the agent's auto-effort heuristic. Keep the two in sync.
+ATTACHMENT_TEXT_PREFIX = "Attached file '"
+
 
 def _norm(entity_id: str | None) -> str:
     return (entity_id or "").strip()
