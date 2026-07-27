@@ -133,7 +133,8 @@ def upsert_chunks(namespace: str, chunks: Iterable[dict[str, Any]]) -> int:
 def query(
     *,
     namespace: str,
-    query_text: str,
+    query_text: str | None = None,
+    query_vector: list[float] | None = None,
     max_sensitivity: str = "internal",
     region: str | None = None,
     top_k: int = 8,
@@ -149,12 +150,21 @@ def query(
     A business namespace ALSO matches global (all-businesses) documents —
     those have no entity_id to check a region against, so the region filter
     only applies to that business's own chunks, never to global ones.
+
+    Pass a precomputed `query_vector` to skip the embedding call — used by the
+    federated reader (hermes/rag.py) so one embedding of the user's message
+    serves both this pgvector query and the Pinecone query. Otherwise pass
+    `query_text` and it is embedded here.
     """
+    if query_vector is None:
+        if not (query_text or "").strip():
+            return []
+        query_vector = embed([query_text])[0]
     allowed = _allowed_sensitivities(max_sensitivity)
     params: dict[str, Any] = {
         "allowed": allowed,
         "top_k": top_k,
-        "qvec": Vector(embed([query_text])[0]),
+        "qvec": Vector(query_vector),
     }
 
     if namespace == _GLOBAL_NAMESPACE:

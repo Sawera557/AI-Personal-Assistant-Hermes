@@ -20,6 +20,7 @@ import anthropic
 import openai
 
 from . import models
+from .attachments import ATTACHMENT_TEXT_PREFIX
 from .config import Config
 from .memory import store
 from .memory_retrieve import build_memory_block
@@ -80,6 +81,7 @@ def _system_prompt(
     memory_block: str = "",
     attachments: list[dict[str, Any]] | None = None,
     context_pack: str = "",
+    retrieved_context: str = "",
 ) -> str:
     today = datetime.date.today().isoformat()
     base = (
@@ -150,6 +152,8 @@ def _system_prompt(
         )
     if memory_block:
         base += f"\n\nMEMORY (what you already know — preferences, business rules, standing decisions):\n{memory_block}"
+    if retrieved_context:
+        base += f"\n\n{retrieved_context}"
     base += _attachments_block(attachments)
     return base + _VOICE_STYLE if voice else base
 
@@ -338,11 +342,28 @@ _HIGH_EFFORT_HINTS = (
     "comprehensive", "in depth", "in-depth", "why ", "explain how", "optimi",
     "recommend", "draft a", "write a", "summarize", "reason", "calculate", "research",
 )
-#: Words that signal a quick, shallow turn — pulls auto-effort down to "low".
+#: Phrases that signal a quick, shallow turn — pulls auto-effort down to "low".
+#: Matched at word boundaries (whole message or hint followed by a space), so
+#: "hi" won't fire on "history" nor "yes" on "yesterday".
 _LOW_EFFORT_HINTS = (
     "hi", "hello", "hey", "thanks", "thank you", "yes", "no", "ok", "okay",
-    "what time", "when is", "list ", "show me", "status", "is ", "are ", "how many",
+    "what time", "when is", "list", "show me", "status", "is", "are", "how many",
 )
+
+
+def _is_attachment_block(block: dict[str, Any]) -> bool:
+    """True if a content block is a file the user attached — an image/document
+    block, or a text block that inlines a file upload (ATTACHMENT_TEXT_PREFIX)."""
+    if block.get("type") != "text":
+        return True
+    text = block.get("text")
+    return isinstance(text, str) and text.startswith(ATTACHMENT_TEXT_PREFIX)
+
+
+def _starts_with_hint(text: str, hint: str) -> bool:
+    """Word-boundary prefix match: the whole text equals the hint, or the hint is
+    followed by a space. Avoids 'hi' matching 'history', 'is' matching 'island'."""
+    return text == hint or text.startswith(hint + " ")
 
 
 def _auto_effort(user_content: list[dict[str, Any]] | None, has_attachments: bool) -> str:
@@ -362,7 +383,7 @@ def _auto_effort(user_content: list[dict[str, Any]] | None, has_attachments: boo
     if any(hint in text for hint in _HIGH_EFFORT_HINTS) or words > 80:
         return "high"
     # Short and hint-free (a greeting, a one-line lookup) — keep it fast/cheap.
-    if words <= 12 and (words == 0 or any(text.startswith(h) for h in _LOW_EFFORT_HINTS)):
+    if words <= 12 and (words == 0 or any(_starts_with_hint(text, h) for h in _LOW_EFFORT_HINTS)):
         return "low"
     return Config.EFFORT
 
@@ -435,10 +456,15 @@ def _openai_turn(
     system: str,
     messages: list[dict[str, Any]],
     max_tokens: int | None = None,
+    continuation: bool = False,
 ):
     """Stream one OpenAI chat-completions call. Same event shape as
     `_anthropic_turn`, with the assistant content normalized into Anthropic's
-    content-block shape and the finish_reason normalized via _OPENAI_STOP_MAP."""
+    content-block shape and the finish_reason normalized via _OPENAI_STOP_MAP.
+
+    `continuation` means this call resumes a reply the token cap cut off; its text
+    is kept raw (not stripped) so the leading boundary whitespace survives the
+    merge into the partial and words aren't glued together."""
     openai_tools = _to_openai_tools(tools)
     stream = _openai().chat.completions.create(
         model=model_id,
@@ -473,7 +499,9 @@ def _openai_turn(
             finish_reason = choice.finish_reason
 
     content: list[dict[str, Any]] = []
-    text = "".join(text_parts).strip()
+    text = "".join(text_parts)
+    if not continuation:
+        text = text.strip()
     if text:
         content.append({"type": "text", "text": text})
     for idx in sorted(calls):
@@ -532,7 +560,10 @@ def stream_turn(
 
     # Resolve reasoning effort once for the whole turn: an explicit low/medium/high
     # from the frontend wins; "auto" (or nothing) is chosen from the turn's signals.
-    has_attachments = any(b.get("type") != "text" for b in user_content)
+    # Attachments count whether they're image/document blocks OR text-file uploads
+    # inlined as text blocks (marked by ATTACHMENT_TEXT_PREFIX) — the latter would
+    # otherwise be indistinguishable from the user's own typed text.
+    has_attachments = any(_is_attachment_block(b) for b in user_content)
     effort = resolve_effort(effort, user_content, has_attachments)
 
     messages = store.get(session_id)
@@ -552,6 +583,17 @@ def stream_turn(
         context_pack = packs_for(active_business)
     except Exception:  # noqa: BLE001 — a pack failure must never break the turn
         context_pack = ""
+    # Always-on RAG: relevant snippets from this business's knowledge base
+    # (Context-tab files via pgvector + the autopilot corpus via Pinecone),
+    # federated in one embedding. Empty on small-talk / "All Businesses" / when
+    # the feature flag is off — see hermes/rag.py. Fail-open to "".
+    try:
+        from .rag import build_context_block
+        retrieved_context = build_context_block(
+            active_business=active_business, latest_user_text=_text_of(user_content),
+        )
+    except Exception:  # noqa: BLE001 — a retrieval failure must never break the turn
+        retrieved_context = ""
     # Files shared earlier in this chat, so the model can read them on any turn
     # (see _attachments_block). Tolerate stores without the method / a failure.
     try:
@@ -563,53 +605,62 @@ def stream_turn(
     reply = ""
     thinking_summary = ""
     stop_reason = None
-    # Per-turn output budget that auto-grows when a reply is cut off by the token
-    # cap; `continuing` marks that this iteration is resuming a truncated reply.
+    # Per-turn output budget that auto-grows (monotonically, across the whole turn)
+    # when a reply is cut off by the token cap.
     turn_max_tokens = Config.MAX_TOKENS
-    continuing = False
 
     for _ in range(Config.MAX_TOOL_ITERATIONS):
-        system_prompt = _system_prompt(voice, active_business, memory_block, attachments, context_pack)
-        turn = (
-            _anthropic_turn(
-                model_id, tools, system_prompt, messages, effort, turn_max_tokens, continuing
-            )
-            if provider == "anthropic"
-            else _openai_turn(model_id, tools, system_prompt, messages, turn_max_tokens)
+        system_prompt = _system_prompt(
+            voice, active_business, memory_block, attachments, context_pack, retrieved_context
         )
 
-        assistant_content: list[dict[str, Any]] = []
-        for event in turn:
-            if event["type"] == "_final":
-                assistant_content = event["content"]
-                stop_reason = event["stop_reason"]
-            else:
-                yield event
-
-        if continuing:
-            # Resuming a cut-off reply: fold the continuation into the truncated
-            # assistant message rather than appending a second assistant turn.
-            _merge_continuation(messages[-1]["content"], assistant_content)
-        else:
-            messages.append({"role": "assistant", "content": assistant_content})
+        # Produce ONE complete assistant turn, resuming in place if the token cap
+        # cuts the reply off. These continuation calls stay inside this inner loop
+        # and never consume the outer tool-iteration budget — otherwise a reply
+        # truncated on the final allowed pass would be dropped with no output.
         continuing = False
+        while True:
+            turn = (
+                _anthropic_turn(
+                    model_id, tools, system_prompt, messages, effort, turn_max_tokens, continuing
+                )
+                if provider == "anthropic"
+                else _openai_turn(model_id, tools, system_prompt, messages, turn_max_tokens, continuing)
+            )
 
-        if t := _thinking_of(assistant_content):
-            thinking_summary = t
+            assistant_content: list[dict[str, Any]] = []
+            for event in turn:
+                if event["type"] == "_final":
+                    assistant_content = event["content"]
+                    stop_reason = event["stop_reason"]
+                else:
+                    yield event
 
-        # Reply cut off purely by the token cap (no tool call to make): grow the
-        # budget and continue the same assistant message instead of returning a
-        # truncated answer. Strip the partial's thinking blocks first so the
-        # prefilled continuation call is valid under extended thinking.
-        if (
-            stop_reason == "max_tokens"
-            and turn_max_tokens < Config.MAX_TOKENS_CEILING
-            and not any(b.get("type") == "tool_use" for b in assistant_content)
-        ):
-            messages[-1]["content"] = _strip_thinking(messages[-1]["content"])
-            turn_max_tokens = min(Config.MAX_TOKENS_CEILING, turn_max_tokens * 2)
-            continuing = True
-            continue
+            if continuing:
+                # Resuming a cut-off reply: fold the continuation into the truncated
+                # assistant message rather than appending a second assistant turn.
+                _merge_continuation(messages[-1]["content"], assistant_content)
+            else:
+                messages.append({"role": "assistant", "content": assistant_content})
+
+            if t := _thinking_of(assistant_content):
+                thinking_summary = t
+
+            # Reply cut off purely by the token cap (no tool call to make): grow the
+            # budget and resume the same assistant message instead of returning a
+            # truncated answer. Strip the partial's thinking blocks first so the
+            # prefilled continuation call is valid under extended thinking. Bounded
+            # because turn_max_tokens strictly doubles toward the ceiling.
+            if (
+                stop_reason == "max_tokens"
+                and turn_max_tokens < Config.MAX_TOKENS_CEILING
+                and not any(b.get("type") == "tool_use" for b in assistant_content)
+            ):
+                messages[-1]["content"] = _strip_thinking(messages[-1]["content"])
+                turn_max_tokens = min(Config.MAX_TOKENS_CEILING, turn_max_tokens * 2)
+                continuing = True
+                continue
+            break
 
         if stop_reason == "tool_use":
             tool_results = []
@@ -682,6 +733,15 @@ def stream_turn(
         # one that stayed truncated at the ceiling — returns its full text.
         reply = _text_of(messages[-1]["content"])
         break
+
+    # Loop exhausted its tool-iteration budget without producing a final reply
+    # (e.g. every pass made a tool call): fall back to the last assistant text
+    # already streamed rather than emitting "(no response)".
+    if not reply:
+        for message in reversed(messages):
+            if message.get("role") == "assistant":
+                reply = _text_of(message["content"])
+                break
 
     store.set(session_id, messages)
 
