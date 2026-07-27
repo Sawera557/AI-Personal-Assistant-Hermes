@@ -9,10 +9,13 @@ in-memory fallback hermes.memory already uses when there's no DB).
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 
 from .config import Config
+
+log = logging.getLogger("hermes.models")
 
 _SETTING_KEY = "active_model"
 
@@ -41,6 +44,67 @@ MODEL_OPTIONS: list[dict[str, str]] = [
     },
 ]
 _KNOWN_IDS = {m["id"] for m in MODEL_OPTIONS}
+
+# Per-model price in USD per 1,000,000 tokens. `input` is the uncached prompt
+# remainder, `output` the generated tokens, `cache_read` the (cheaper) tokens
+# served from Anthropic's prompt cache. Edit these when provider rates change.
+MODEL_PRICING: dict[str, dict[str, float]] = {
+    "claude-opus-4-8": {"input": 5.0, "output": 25.0, "cache_read": 0.50},
+    "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0, "cache_read": 0.10},
+    # Env default (HERMES_MODEL) — priced so a turn on the default never reads as free.
+    "claude-sonnet-5": {"input": 3.0, "output": 15.0, "cache_read": 0.30},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60, "cache_read": 0.075},
+    # TODO: confirm real rate — gpt-5.4-mini has no published price yet; placeholder.
+    "gpt-5.4-mini": {"input": 0.25, "output": 2.0, "cache_read": 0.0},
+}
+_warned_unpriced: set[str] = set()
+
+
+def _rates_for(model_id: str) -> dict[str, float] | None:
+    """Price for `model_id`: exact match first, then a family fallback so a
+    dated/variant id (e.g. 'claude-sonnet-4-5-20250929') still prices sensibly
+    instead of silently costing $0."""
+    rates = MODEL_PRICING.get(model_id)
+    if rates is not None:
+        return rates
+    m = (model_id or "").lower()
+    if "opus" in m:
+        return MODEL_PRICING["claude-opus-4-8"]
+    if "haiku" in m:
+        return MODEL_PRICING["claude-haiku-4-5-20251001"]
+    if "sonnet" in m:
+        return MODEL_PRICING["claude-sonnet-5"]
+    if "4o-mini" in m or "4.1-mini" in m or "o4-mini" in m:
+        return MODEL_PRICING["gpt-4o-mini"]
+    if m.startswith("gpt-5") and "mini" in m:
+        return MODEL_PRICING["gpt-5.4-mini"]
+    return None
+
+
+def price_of(
+    model_id: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read: int = 0,
+) -> float:
+    """Cost in USD for one turn's token usage on `model_id`.
+
+    Unknown models cost 0 (warned once) rather than raising — a missing price
+    must never break a chat turn.
+    """
+    rates = _rates_for(model_id)
+    if rates is None:
+        if model_id not in _warned_unpriced:
+            _warned_unpriced.add(model_id)
+            log.warning("No price map entry for model %r — cost will show as $0.", model_id)
+        return 0.0
+    cost = (
+        (input_tokens or 0) * rates["input"]
+        + (output_tokens or 0) * rates["output"]
+        + (cache_read or 0) * rates.get("cache_read", 0.0)
+    ) / 1_000_000
+    return round(cost, 6)
+
 
 _lock = threading.Lock()
 _override: str | None = None  # process-global fallback when there's no DB

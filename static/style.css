@@ -531,6 +531,7 @@ body {
 .tasks-view   { display: none; }
 .files-view   { display: none; }
 .jobs-view    { display: none; }
+.pricing-view { display: none; }
 .app[data-view="agent"]   .chat         { display: flex; }
 .app[data-view="bills"]   .bills-view   { display: flex; }
 .app[data-view="meeting"] .meeting-view { display: flex; }
@@ -538,6 +539,7 @@ body {
 .app[data-view="tasks"]   .tasks-view   { display: flex; }
 .app[data-view="files"]   .files-view   { display: flex; }
 .app[data-view="jobs"]    .jobs-view    { display: flex; }
+.app[data-view="pricing"] .pricing-view { display: flex; }
 
 /* ═══════════════════════════════════════════════════════════
    Chat column
@@ -1506,7 +1508,81 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
    ═══════════════════════════════════════════════════════════ */
 :root { --tk: #8b5cf6; --tk-2: #a78bfa; }
 
-.tasks-view, .jobs-view { flex: 1; flex-direction: column; min-width: 0; position: relative; overflow: hidden; }
+.tasks-view, .jobs-view, .pricing-view { flex: 1; flex-direction: column; min-width: 0; position: relative; overflow: hidden; }
+
+/* ── Per-response token/cost footer under each assistant reply ── */
+.usage-line {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--muted, #8a8f98);
+  opacity: .8;
+  letter-spacing: .01em;
+}
+
+/* ── Usage tab ── */
+.usage-filter-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.usage-chip {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  border-radius: 999px;
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  background: var(--panel, rgba(255,255,255,.03));
+  color: inherit;
+  cursor: pointer;
+}
+.usage-chip:hover { border-color: var(--accent, #6ea8fe); }
+.usage-chip.active {
+  background: var(--accent, #6ea8fe);
+  border-color: var(--accent, #6ea8fe);
+  color: #fff;
+}
+.usage-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+}
+/* `.usage-custom-row { display:flex }` above would otherwise override the
+   `hidden` attribute — so only show the custom date inputs when not hidden. */
+.usage-custom-row[hidden] { display: none; }
+.usage-custom-row input[type="date"] {
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  background: var(--panel, rgba(255,255,255,.03));
+  color: inherit;
+}
+.usage-range-note { margin-bottom: 12px; font-size: 12px; }
+.usage-totals {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.usage-stat {
+  flex: 1 1 160px;
+  background: var(--panel, rgba(255,255,255,.03));
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.usage-stat .usage-stat-label { font-size: 12px; color: var(--muted, #8a8f98); }
+.usage-stat .usage-stat-value { font-size: 24px; font-weight: 650; margin-top: 4px; }
+.usage-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.usage-table th, .usage-table td {
+  text-align: left; padding: 9px 12px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.07));
+}
+.usage-table th { font-weight: 600; color: var(--muted, #8a8f98); font-size: 12px; }
+.usage-table td.num, .usage-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.usage-table .usage-model { color: var(--muted, #8a8f98); font-size: 11.5px; }
 .tasks-page { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 22px 24px 0; }
 
 .tasks-pg-header {
