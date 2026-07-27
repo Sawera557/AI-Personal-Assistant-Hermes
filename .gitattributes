@@ -1,0 +1,6 @@
+# Shell hooks and CI YAML must stay LF so they execute on Linux/CI and in git bash
+# (a CRLF shebang like `#!/bin/sh\r` fails to run).
+.githooks/** text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

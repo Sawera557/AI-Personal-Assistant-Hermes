@@ -1,0 +1,43 @@
+name: CI
+
+# Backstop for the "works locally, ImportError on deploy" class of bug: runs the
+# import smoke test and the offline suite against the COMMITTED tree on every
+# push and PR. A red run here is your signal NOT to let Vercel serve the commit.
+# For full protection, enable "Wait for CI" / required status checks so a failing
+# run blocks the deployment (Vercel + GitHub branch protection).
+
+on:
+  push:
+    branches: [main, truncation-removal, RAG-on-pinecone]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      HERMES_DISABLE_DB: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Import smoke (the exact Vercel entrypoint surface)
+        run: python tests/test_import_smoke.py
+
+      - name: Offline test suite
+        run: |
+          set -e
+          for t in tests/test_*.py; do
+            case "$t" in
+              *_visual.py|*worldbank*) echo "skip  $t (visual / real-API)"; continue ;;
+            esac
+            echo "== $t =="
+            python "$t"
+          done
