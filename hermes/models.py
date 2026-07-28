@@ -25,9 +25,14 @@ MODEL_OPTIONS: list[dict[str, str]] = [
         "label": "Claude · Haiku 4.5 (fast, low-cost)",
     },
     {
+        "id": "claude-opus-5",
+        "provider": "anthropic",
+        "label": "Claude · Opus 5 (most capable)",
+    },
+    {
         "id": "claude-opus-4-8",
         "provider": "anthropic",
-        "label": "Claude · Opus 4.8 (most capable)",
+        "label": "Claude · Opus 4.8 (high capability)",
     },
     {
         "id": "gpt-4o-mini",

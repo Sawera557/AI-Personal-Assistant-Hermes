@@ -1,0 +1,56 @@
+#!/bin/sh
+# Pre-push guard against the "works locally, ImportError on deploy" class of bug.
+#
+# The trap: your dirty working tree can make the app import fine while the
+# COMMITTED tree — the only thing Vercel ships — is missing a file or symbol.
+# So this checks each pushed commit in an isolated worktree (committed files
+# ONLY, no .env), exactly like the Vercel build, and blocks the push if it
+# won't import.
+#
+# Bypass in a genuine emergency with:  git push --no-verify
+#
+# Activated via:  git config core.hooksPath .githooks
+
+remote="$1"
+smoke="tests/test_import_smoke.py"
+fail=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Skip branch deletions (all-zero sha).
+    case "$local_sha" in
+        *[!0]*) : ;;
+        *) continue ;;
+    esac
+
+    wt="$(mktemp -d 2>/dev/null || echo "${TMPDIR:-/tmp}/hermes-prepush.$$")"
+    if ! git worktree add --detach "$wt" "$local_sha" >/dev/null 2>&1; then
+        echo "pre-push: could not create verify worktree for $local_sha — skipping check."
+        continue
+    fi
+
+    if [ ! -f "$wt/$smoke" ]; then
+        # Commit predates the smoke test; nothing to verify against.
+        git worktree remove --force "$wt" >/dev/null 2>&1
+        continue
+    fi
+
+    out="$(cd "$wt" && HERMES_DISABLE_DB=1 python "$smoke" 2>&1)"
+    rc=$?
+    git worktree remove --force "$wt" >/dev/null 2>&1
+
+    if [ "$rc" != "0" ]; then
+        echo ""
+        echo "================================================================"
+        echo " PUSH BLOCKED — commit $local_sha does not import cleanly."
+        echo " The committed tree is missing something (Vercel would 500 on it)."
+        echo "----------------------------------------------------------------"
+        echo "$out" | tail -15
+        echo "----------------------------------------------------------------"
+        echo " Fix: commit the missing file/symbol, then push again."
+        echo " Override (not recommended): git push --no-verify"
+        echo "================================================================"
+        fail=1
+    fi
+done
+
+exit "$fail"

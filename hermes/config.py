@@ -74,8 +74,10 @@ class Config:
     # Upper bound the agent may auto-grow a single turn's output budget to when a
     # reply is cut off by the token cap (stop_reason == "max_tokens"). The turn
     # keeps continuing with a doubled budget until it finishes or hits this cap.
+    # Default is 4x the base budget, so lowering HERMES_MAX_TOKENS lowers the
+    # ceiling proportionally rather than leaving a surprising fixed floor.
     MAX_TOKENS_CEILING: int = int(
-        os.getenv("HERMES_MAX_TOKENS_CEILING", str(max(int(os.getenv("HERMES_MAX_TOKENS", "8000")) * 4, 32000)))
+        os.getenv("HERMES_MAX_TOKENS_CEILING", str(int(os.getenv("HERMES_MAX_TOKENS", "8000")) * 4))
     )
     MAX_TOOL_ITERATIONS: int = int(os.getenv("HERMES_MAX_TOOL_ITERATIONS", "12"))
 
@@ -243,15 +245,97 @@ class Config:
     MEMORY_SEMANTIC_TOP_K: int = int(os.getenv("MEMORY_SEMANTIC_TOP_K", "5"))
     MEMORY_MAX_SENSITIVITY: str = os.getenv("MEMORY_MAX_SENSITIVITY", "confidential")
 
+    # ---- Retrieval-augmented context (RAG over business knowledge) ---------
+    # The autopilot ingestion-service (a separate deployable) embeds each
+    # business's emails/Drive files/meeting notes into Pinecone — index
+    # `hermes`, one namespace per business (`entity__<slug>`), 1536-dim
+    # text-embedding-3-small, with the same sensitivity metadata the pgvector
+    # reader enforces. Those vectors are NOT mirrored into Postgres
+    # document_chunks.embedding, so hermes/vector_store.py can't see them. These
+    # settings let the main app read that Pinecone index directly (read-only —
+    # the ingestion-service stays the sole writer) so `search_business_knowledge`
+    # and the always-on context block reach the full corpus, not just the
+    # hand-added Context-tab notes.
+    PINECONE_API_KEY: str = os.getenv("PINECONE_API_KEY", "").strip()
+    PINECONE_INDEX: str = os.getenv("PINECONE_INDEX", "hermes").strip()
+    PINECONE_CLOUD: str = os.getenv("PINECONE_CLOUD", "aws").strip()
+    PINECONE_REGION: str = os.getenv("PINECONE_REGION", "us-east-1").strip()
+
+    # Federated retrieval knobs (hermes/rag.py). max_sensitivity is hard-capped
+    # at 'confidential' in the reader so 'restricted' content never surfaces,
+    # regardless of this value.
+    RAG_TOP_K: int = int(os.getenv("HERMES_RAG_TOP_K", "6"))
+    RAG_MAX_SENSITIVITY: str = os.getenv("HERMES_RAG_MAX_SENSITIVITY", "confidential")
+    # Minimum cosine similarity (1 - distance, same scale for pgvector and
+    # Pinecone) for a chunk to enter the always-on context block. Below this the
+    # block stays empty rather than injecting weak/irrelevant matches — the guard
+    # that keeps "considered on every query" from bloating the prompt on
+    # small-talk turns.
+    RAG_SCORE_THRESHOLD: float = float(os.getenv("HERMES_RAG_SCORE_THRESHOLD", "0.30"))
+    # Char cap on the injected RETRIEVED CONTEXT block.
+    RAG_CONTEXT_MAX_CHARS: int = int(os.getenv("HERMES_RAG_CONTEXT_MAX_CHARS", "6000"))
+
+    @classmethod
+    def rag_pinecone_enabled(cls) -> bool:
+        """Whether federated retrieval also queries Pinecone (the autopilot
+        corpus). Off unless HERMES_RAG_PINECONE is truthy AND a key is set — so a
+        missing key fails safe to pgvector-only rather than erroring every turn."""
+        return _bool(os.getenv("HERMES_RAG_PINECONE"), False) and bool(cls.PINECONE_API_KEY)
+
+    @classmethod
+    def rag_context_injection(cls) -> bool:
+        """Whether the always-on RETRIEVED CONTEXT block is built and injected
+        into the system prompt every turn. Independent of rag_pinecone_enabled:
+        with Pinecone off it still injects pgvector (Context-tab) matches."""
+        return _bool(os.getenv("HERMES_RAG_CONTEXT_INJECTION"), False)
+
+    # ---- Conversation-history memory (Phase 2 — pgvector, provenance-first) --
+    # Recall of PAST conversations (not just distilled facts): verbatim turns +
+    # extractive session summaries in the conversation_memory table (migration
+    # 0018). Deliberately separate from the business RAG above so the two never
+    # share a failure. Two independent switches (both default OFF — dark merge):
+    #   HERMES_CONVO_MEMORY_WRITE  — record each turn (+ summary) after it ends.
+    #   HERMES_CONVO_MEMORY        — inject the EARLIER CONVERSATIONS recall block.
+    # Write can run ahead of read to backfill history before switching recall on.
+    CONVO_MEMORY_TOP_K: int = int(os.getenv("HERMES_CONVO_MEMORY_TOP_K", "6"))
+    # Higher than the RAG threshold: conversation recall favours precision — a
+    # weak match here reads as "you said X" and is worse than silence.
+    CONVO_MEMORY_SCORE_THRESHOLD: float = float(os.getenv("HERMES_CONVO_MEMORY_SCORE_THRESHOLD", "0.35"))
+    CONVO_MEMORY_MAX_CHARS: int = int(os.getenv("HERMES_CONVO_MEMORY_MAX_CHARS", "4000"))
+    # Verbatim 'turn' rows older than this are pruned (summaries are kept).
+    CONVO_MEMORY_TURN_TTL_DAYS: int = int(os.getenv("HERMES_CONVO_MEMORY_TTL_DAYS", "45"))
+
+    @classmethod
+    def convo_memory_enabled(cls) -> bool:
+        """Whether the EARLIER CONVERSATIONS recall block is injected each turn."""
+        return _bool(os.getenv("HERMES_CONVO_MEMORY"), False)
+
+    @classmethod
+    def convo_memory_write_enabled(cls) -> bool:
+        """Whether finished turns are recorded into conversation_memory."""
+        return _bool(os.getenv("HERMES_CONVO_MEMORY_WRITE"), False)
+
     # ---- NuExtract (bill / invoice OCR, document text extraction) ----------
-    # Base URL isn't configurable — the official `numind` SDK (hermes/bills.py)
-    # manages its own endpoint; there used to be a NUEXTRACT_BASE_URL override
-    # here pointing at a non-resolving host (api.nuextract.ai), a leftover from
-    # a hand-rolled client that never actually reached the real API.
+    # Calls go through the official `numind` SDK (hermes/bills.py), which targets
+    # https://nuextract.ai by default. NUEXTRACT_BASE_URL is an OPTIONAL host
+    # override for self-hosted/proxy setups only — leave it blank to use the SDK
+    # default. (The old default pointed at api.nuextract.ai, a non-resolving host
+    # from a since-removed hand-rolled client that never reached the real API.)
     NUEXTRACT_API_KEY: str = os.getenv("NUEXTRACT_API_KEY", "").strip()
-    NUEXTRACT_BASE_URL: str = os.getenv(
-        "NUEXTRACT_BASE_URL", "https://api.nuextract.ai"
-    ).rstrip("/")
+    NUEXTRACT_BASE_URL: str = os.getenv("NUEXTRACT_BASE_URL", "").strip().rstrip("/")
+    # Optional structured-extraction project id (sprj_…). When set, structured
+    # (bill) extraction runs against this project — whose template/schema lives in
+    # the NuExtract dashboard — instead of sending Hermes' per-call schema as a
+    # throwaway template. The project's fields must match what bills._normalise
+    # reads (vendor_name, total_amount, currency, due_date, issue_date,
+    # invoice_number, category, line_items); otherwise leave it blank.
+    NUEXTRACT_PROJECT_ID: str = os.getenv("NUEXTRACT_PROJECT_ID", "").strip()
+    # Client-side wall-clock bound (seconds) on a NuExtract call. The SDK submits a
+    # job and blocks on an SSE stream with no client timeout of its own, so without
+    # this a slow document could outlast the serverless request limit and kill the
+    # function BEFORE the Claude-vision fallback gets to run. Keep it comfortably
+    # under the platform's function timeout (see vercel.json maxDuration).
+    NUEXTRACT_TIMEOUT: int = int(os.getenv("NUEXTRACT_TIMEOUT", "45"))
     # Anthropic vision model used to read documents when NuExtract is unavailable
     # (billing exhausted, outage, DNS). Must be an Anthropic model — the fallback
     # calls Claude directly, independent of the switchable agent model.

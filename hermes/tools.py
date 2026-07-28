@@ -437,6 +437,13 @@ def build_tools(
                 "add a comment (body uses Atlassian's doc format: {'body': {'type': 'doc', "
                 "'version': 1, 'content': [{'type': 'paragraph', 'content': [{'type': 'text', "
                 "'text': '...'}]}]}}). "
+                "RESPONSE SIZE: very large responses are reduced to fit the context "
+                "window. If the result carries a top-level `_truncation` key, or you see "
+                "a <<TRUNCATED ...>> marker anywhere in it, you are NOT looking at the whole "
+                "payload — do not describe, quote, count, or answer questions about "
+                "content past a marker or beyond a listed cut. Re-request the missing part "
+                "with a narrower query, a filter (e.g. Gmail `q=`), or the API's paging "
+                "parameter (`pageToken`/`maxResults`/`startAt`). "
                 "Always do read-only (GET) calls to discover IDs before any write. "
                 "Do NOT call this for POST/PUT/PATCH/DELETE until the user has explicitly "
                 "confirmed the change."
@@ -1220,10 +1227,12 @@ def _calendar_list_upcoming(tool_input: dict[str, Any], active_business: str | N
 
 
 def _search_business_knowledge(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
-    """Meaning-search one business's ingested knowledge base (uploaded context
-    files + any other documents). No Maton client needed — pure Postgres/pgvector
-    via hermes.search, so this doesn't go through `_resolve_client`."""
-    from .search import semantic_search  # local import: avoid a module-load cycle
+    """Meaning-search one business's knowledge base. Federates across BOTH the
+    hand-added Context-tab files (pgvector) and the autopilot-ingested corpus of
+    emails/Drive files/meeting notes (Pinecone) via hermes.rag — no Maton client
+    needed, so this doesn't go through `_resolve_client`. document_id/chunk_id are
+    surfaced so the model can cite a specific source."""
+    from .rag import federated_search  # local import: avoid a module-load cycle
 
     slug = tool_input.get("business") or None
     if not slug:
@@ -1245,7 +1254,7 @@ def _search_business_knowledge(tool_input: dict[str, Any], active_business: str 
         raise MatonError("`query` is required.")
 
     try:
-        hits = semantic_search(entity_slug, query, max_sensitivity="confidential", top_k=6)
+        hits = federated_search(entity_slug, query, max_sensitivity="confidential")
     except ValueError as exc:
         raise MatonError(str(exc)) from exc
 
@@ -1259,6 +1268,8 @@ def _search_business_knowledge(tool_input: dict[str, Any], active_business: str 
                 "source_system": h.get("source_system"),
                 "snippet": (h.get("snippet") or "").strip()[:500],
                 "score": h.get("score"),
+                "document_id": h.get("document_id"),
+                "chunk_id": h.get("chunk_id"),
             }
             for h in hits
         ],

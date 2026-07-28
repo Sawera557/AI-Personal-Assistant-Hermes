@@ -276,6 +276,9 @@
     body.append("entity_id", entityIdForSend());
     body.append("message", message);
     body.append("voice", "1"); // ask the agent for a short, spoken-style reply
+    // Honor the reasoning-effort picker for voice turns too (app.js defines it;
+    // it loads before this script). Falls back to "auto" if unavailable.
+    if (typeof currentEffort === "function") body.append("effort", currentEffort());
     const res = await fetch("/api/chat", { method: "POST", body });
     const data = await res.json();
     if (data.error) throw new Error(data.error);

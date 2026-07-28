@@ -18,8 +18,30 @@ import requests
 from .config import Config
 
 # Cap how much of a response body we feed back into the model's context.
-_MAX_RESULT_CHARS = 20_000
+#
+# The old code serialised the whole payload and sliced it at a byte offset. That
+# destroyed the JSON structure (a truncated list came back as a dict), produced
+# invalid mid-object JSON, and — worst — handed the model a body that simply
+# trailed off with no in-band signal at the cut, so it would confidently
+# describe content that lay past the slice it never read. The replacement below
+# is STRUCTURE-PRESERVING and LOUD: it keeps container types, truncates
+# individual leaf strings / over-long lists *in place*, splices an unmissable
+# marker exactly where content was dropped, and hoists a `_truncation` report to
+# the top of the envelope so the model reads the boundary before the data.
+#
+# The ceiling is also far higher than the old 20k: the common case (e.g. a long
+# multi-question email) now returns COMPLETE, and only genuinely huge payloads
+# are reduced — honestly.
+_MAX_RESULT_CHARS = 120_000   # whole-payload ceiling (serialised chars)
+_MAX_LEAF_CHARS = 40_000      # a single string field's ceiling
+_MAX_LIST_ITEMS = 500         # elements kept per list before the tail is dropped
 _TIMEOUT = 45
+
+# In-band, unmissable, greppable, and ASCII-only — the dispatch layer serialises
+# with json.dumps(ensure_ascii=True), so non-ASCII brackets would arrive at the
+# model as \uXXXX escapes. If the model sees this it has NOT seen the omitted
+# content and must not describe it.
+_MARK = "<<TRUNCATED: {shown} of {total} chars shown, {omitted} unread - the rest was NOT retrieved>>"
 
 
 class MatonError(RuntimeError):
@@ -72,11 +94,7 @@ class MatonClient:
         except requests.RequestException as exc:
             raise MatonError(f"Network error calling Maton: {exc}") from exc
 
-        return {
-            "status": resp.status_code,
-            "ok": resp.ok,
-            "data": _parse_body(resp),
-        }
+        return _envelope(resp)
 
     def request_multipart(
         self,
@@ -107,11 +125,7 @@ class MatonClient:
         except requests.RequestException as exc:
             raise MatonError(f"Network error calling Maton: {exc}") from exc
 
-        return {
-            "status": resp.status_code,
-            "ok": resp.ok,
-            "data": _parse_body(resp),
-        }
+        return _envelope(resp)
 
     def download_binary(
         self,
@@ -169,7 +183,7 @@ class MatonClient:
             )
         except requests.RequestException as exc:
             raise MatonError(f"Network error calling Maton: {exc}") from exc
-        return {"status": resp.status_code, "ok": resp.ok, "data": _parse_body(resp)}
+        return _envelope(resp)
 
     # ---- Connection management --------------------------------------------
 
@@ -190,7 +204,7 @@ class MatonClient:
             )
         except requests.RequestException as exc:
             raise MatonError(f"Network error listing connections: {exc}") from exc
-        return {"status": resp.status_code, "ok": resp.ok, "data": _parse_body(resp)}
+        return _envelope(resp)
 
     def create_connection(self, app: str) -> dict[str, Any]:
         """Start an OAuth connection. Response contains a `url` to open in a browser."""
@@ -203,24 +217,96 @@ class MatonClient:
             )
         except requests.RequestException as exc:
             raise MatonError(f"Network error creating connection: {exc}") from exc
-        return {"status": resp.status_code, "ok": resp.ok, "data": _parse_body(resp)}
+        return _envelope(resp)
 
 
-def _parse_body(resp: requests.Response) -> Any:
+def _envelope(resp: requests.Response) -> dict[str, Any]:
+    """Build the standard `{status, ok, data}` result.
+
+    Truncates the body structure-preservingly and, when anything was cut, hoists
+    a `_truncation` report to the TOP of the dict so the model reads the boundary
+    before wading into the data.
+    """
     try:
-        data = resp.json()
+        parsed = resp.json()
     except ValueError:
-        data = resp.text
-    return _truncate(data)
+        parsed = resp.text
+    data, report = _truncate(parsed)
+    env: dict[str, Any] = {}
+    if report is not None:
+        env["_truncation"] = report          # inserted first → serialised first
+    env["status"] = resp.status_code
+    env["ok"] = resp.ok
+    env["data"] = data
+    return env
 
 
-def _truncate(data: Any) -> Any:
-    """Keep tool results from blowing up the context window."""
-    text = data if isinstance(data, str) else json.dumps(data, default=str)
-    if len(text) <= _MAX_RESULT_CHARS:
-        return data
-    return {
-        "_truncated": True,
-        "_note": f"Response truncated to {_MAX_RESULT_CHARS} characters.",
-        "preview": text[:_MAX_RESULT_CHARS],
+def _dumps(data: Any) -> str:
+    return json.dumps(data, default=str, ensure_ascii=False)
+
+
+def _cut_string(s: str, path: str, cap: int, cuts: list[dict]) -> str:
+    total = len(s)
+    omitted = total - cap
+    cuts.append({"path": path, "kind": "string", "shown": cap,
+                 "total": total, "omitted": omitted})
+    return s[:cap] + " " + _MARK.format(shown=cap, total=total, omitted=omitted)
+
+
+def _reduce(data: Any, path: str, cuts: list[dict], leaf_cap: int, list_cap: int) -> Any:
+    """Recursively shrink `data` while KEEPING its type at every level: a list
+    stays an indexable list, a dict stays a dict. Over-long leaf strings get an
+    in-band marker; over-long lists drop their tail. Every cut is recorded."""
+    if isinstance(data, str):
+        return _cut_string(data, path, leaf_cap, cuts) if len(data) > leaf_cap else data
+    if isinstance(data, dict):
+        return {k: _reduce(v, f"{path}.{k}", cuts, leaf_cap, list_cap) for k, v in data.items()}
+    if isinstance(data, list):
+        if len(data) > list_cap:
+            cuts.append({"path": path, "kind": "list", "shown": list_cap,
+                         "total": len(data), "omitted": len(data) - list_cap})
+            data = data[:list_cap]
+        return [_reduce(v, f"{path}[{i}]", cuts, leaf_cap, list_cap) for i, v in enumerate(data)]
+    return data
+
+
+def _truncate(data: Any) -> tuple[Any, dict | None]:
+    """Structure-preserving, loud truncation.
+
+    Returns `(payload, report)`. `payload` keeps the type and shape of the
+    original — a list stays an indexable list, a dict stays a dict — with any
+    over-long leaf string or over-long list cut in place and marked in-band.
+    `report` is None when nothing was cut, else a dict naming every cut, which
+    the caller hoists to the top of the response envelope.
+    """
+    if len(_dumps(data)) <= _MAX_RESULT_CHARS:
+        return data, None
+
+    leaf_cap, list_cap = _MAX_LEAF_CHARS, _MAX_LIST_ITEMS
+    cuts: list[dict] = []
+    reduced = _reduce(data, "$", cuts, leaf_cap, list_cap)
+    # Guarantee the ceiling holds even for pathological fan-out — a huge leaf
+    # string, OR thousands of medium items that each individually clear the leaf
+    # cap. Tighten BOTH the per-leaf and per-list caps and re-reduce until under
+    # budget. Always terminates: both halve toward their floors.
+    while len(_dumps(reduced)) > _MAX_RESULT_CHARS and (leaf_cap > 500 or list_cap > 10):
+        leaf_cap = max(500, leaf_cap // 2)
+        list_cap = max(10, list_cap // 2)
+        cuts = []
+        reduced = _reduce(data, "$", cuts, leaf_cap, list_cap)
+
+    report = {
+        "truncated": True,
+        "chars_omitted_total": sum(c["omitted"] for c in cuts),
+        "cuts": cuts,
+        "warning": (
+            "This tool result was REDUCED to fit the context window. Every place "
+            "content was dropped is marked in-band with a <<TRUNCATED ...>> "
+            "sentinel, and the cuts are listed above. You have NOT seen the "
+            "omitted content: do not describe, summarise, quote, count, or answer "
+            "questions about anything past a <<TRUNCATED>> marker or beyond a "
+            "listed cut. Say the data was truncated and re-request it with a "
+            "narrower query, a filter, or the API's paging parameter."
+        ),
     }
+    return reduced, report

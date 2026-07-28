@@ -57,7 +57,7 @@ from starlette.concurrency import iterate_in_threadpool
 from starlette.datastructures import UploadFile as FormUploadFile
 
 from hermes.agent import run_turn, stream_turn
-from hermes.attachments import store as attachment_store
+from hermes.attachments import ATTACHMENT_TEXT_PREFIX, store as attachment_store
 from hermes.bills import check_paid_bills, extract_bill, fetch_gmail_body, guess_business, scan_drive, scan_gmail
 from hermes.businesses import to_business_slug, to_entity_slug
 from hermes import calendar as hermes_calendar
@@ -85,6 +85,7 @@ from hermes.maton import MatonClient, MatonError
 from hermes.meeting_copilot import generate_ai_notes, get_guidance, get_guidance_comprehensive, prepare_brief, summarize_meeting
 from hermes.memory import store
 from hermes.memory_extract import extract_async
+from hermes.conversation_write import record_turn_async
 from hermes import models as hermes_models
 from hermes import scheduler as hermes_scheduler
 from hermes.db import scheduled_tasks as tasks_db
@@ -231,7 +232,7 @@ def _block_for(name: str, mime: str, raw: bytes) -> tuple[dict, str]:
         text = raw.decode("utf-8", errors="replace")[:_TEXT_MAX_CHARS]
     except Exception:  # noqa: BLE001
         text = "(could not decode file as text)"
-    return {"type": "text", "text": f"Attached file '{name}':\n\n{text}"}, "text"
+    return {"type": "text", "text": f"{ATTACHMENT_TEXT_PREFIX}{name}':\n\n{text}"}, "text"
 
 
 def _build_attachments(files: list[tuple[str, str, bytes]]) -> list[dict]:
@@ -431,6 +432,10 @@ async def chat(request: Request):
         session_id=session_id, entity_slug=store_entity,
         user_text=user_text, reply=result.get("reply") or "",
     )
+    record_turn_async(
+        session_id=session_id, active_business=active_business,
+        user_text=user_text, reply=result.get("reply") or "",
+    )
 
     result["session_id"] = session_id
     result["entity_id"] = active_business  # authoritative, locked value — not just an echo
@@ -553,6 +558,10 @@ async def chat_stream(request: Request):
         store.record_turn(key, store_entity, session_id, user_text, result)
         extract_async(
             session_id=session_id, entity_slug=store_entity,
+            user_text=user_text, reply=result.get("reply") or "",
+        )
+        record_turn_async(
+            session_id=session_id, active_business=active_business,
             user_text=user_text, reply=result.get("reply") or "",
         )
 
