@@ -54,6 +54,9 @@ class Config:
         "gakc": os.getenv("GAK_COMMODITIES_MATON_API_KEY", "").strip(),
         "nh": os.getenv("NOUR_HAMMAM_MATON_API_KEY", "").strip(),
         "per": os.getenv("MATON_API_KEY", "").strip(),
+        # Comfort PCA uses the shared Maton key (its comfortpca@gmail.com account
+        # lives under that key alongside gandikediye/gandimohamed/afrofarm001).
+        "comfort_pca": os.getenv("MATON_SHARED_API_KEY", "").strip(),
     }
 
     @classmethod

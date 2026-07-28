@@ -19,6 +19,11 @@ BUSINESS_TO_ENTITY_SLUG: dict[str, str] = {
     "gakc": "gak_commodities",
     "nh": "nour_hammam",
     "per": "personal",
+    # Comfort PCA (home personal-care / PHI) — reuses the existing
+    # comfort_services entity; ingested to Pinecone per explicit owner
+    # authorization (the ingestion PHI cloud-exemption). Its Pinecone namespace
+    # is entity__comfort_services.
+    "comfort_pca": "comfort_services",
 }
 
 ENTITY_TO_BUSINESS_SLUG: dict[str, str] = {
