@@ -246,10 +246,15 @@ class PostgresConversationStore:
             log.warning("record_turn skipped: session_id %r is not a uuid", session_id)
             return
         reply = result.get("reply") or ""
+        usage = result.get("usage") or {}
+        cost_usd = result.get("cost_usd")
         meta = {
             "thinking": result.get("thinking"),
             "tool_calls": result.get("tool_calls") or [],
             "stop_reason": result.get("stop_reason"),
+            # Persist per-response usage so the token/cost line replays from history.
+            "usage": usage or None,
+            "cost_usd": cost_usd,
         }
         meta = {k: v for k, v in meta.items() if v not in (None, [], "")}
         model = result.get("model_used") or os.getenv("HERMES_MODEL", "claude-opus-4-8")
@@ -295,6 +300,54 @@ class PostgresConversationStore:
                 )
         except Exception as exc:  # noqa: BLE001 — never break the reply on a write miss
             log.warning("record_turn(%s) failed: %s", session_id, exc)
+            return
+
+        # Usage/cost lands in its OWN transaction, after the messages are safely
+        # committed above. A failure here (e.g. the 0016 migration hasn't been
+        # applied yet, so ai_runs lacks the cost columns) must never roll back
+        # the conversation itself — it's analytics, not the reply.
+        if usage:
+            self._record_usage(session_id, ent, owner, model, usage, cost_usd)
+
+    def _record_usage(
+        self,
+        session_id: str,
+        ent: str | None,
+        owner: str,
+        model: str,
+        usage: dict[str, Any],
+        cost_usd: float | None,
+    ) -> None:
+        """Write one ai_runs row for the Usage tab, isolated so its failure
+        can't affect message persistence.
+
+        Uses only columns present in the base schema (0001) — cost and cache
+        tokens go into the existing `metadata` jsonb — so this works with NO
+        extra migration. The 0016 columns, if applied, are simply left unused.
+        """
+        run_meta = {
+            "cost_usd": cost_usd,
+            "cache_read_tokens": int(usage.get("cache_read_input_tokens") or 0),
+            "cache_creation_tokens": int(usage.get("cache_creation_input_tokens") or 0),
+        }
+        try:
+            with cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ai_runs
+                        (entity_id, session_id, user_id, model_used,
+                         input_tokens, output_tokens, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s);
+                    """,
+                    (
+                        ent, session_id, owner, model,
+                        int(usage.get("input_tokens") or 0),
+                        int(usage.get("output_tokens") or 0),
+                        json.dumps(run_meta),
+                    ),
+                )
+        except Exception as exc:  # noqa: BLE001 — analytics write, never fatal
+            log.warning("ai_runs write skipped for %s: %s", session_id, exc)
 
     def conversations(
         self, entity_id: str | None, query: str | None = None
@@ -400,7 +453,7 @@ class PostgresConversationStore:
         try:
             with cursor(commit=False) as cur:
                 cur.execute(
-                    "SELECT role, content, metadata FROM hermes_messages "
+                    "SELECT role, content, metadata, model_used FROM hermes_messages "
                     "WHERE session_id = %s ORDER BY seq;",
                     (session_id,),
                 )
@@ -409,7 +462,7 @@ class PostgresConversationStore:
             log.warning("transcript(%s) failed: %s", session_id, exc)
             return []
         out: list[dict[str, Any]] = []
-        for role, content, meta in rows:
+        for role, content, meta, model_used in rows:
             meta = meta or {}
             if role == "assistant":
                 out.append({
@@ -417,6 +470,9 @@ class PostgresConversationStore:
                     "text": content or "",
                     "thinking": meta.get("thinking"),
                     "tool_calls": meta.get("tool_calls") or [],
+                    "usage": meta.get("usage"),
+                    "cost_usd": meta.get("cost_usd"),
+                    "model_used": model_used,
                 })
             else:
                 out.append({"role": role, "text": content or ""})

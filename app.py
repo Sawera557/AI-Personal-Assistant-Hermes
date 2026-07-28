@@ -80,6 +80,7 @@ from hermes.db.bills import (
 from hermes.db import documents as docs_repo
 from hermes.db import memories as mem_repo
 from hermes.db import meetings as meetings_db
+from hermes.db import usage as usage_repo
 from hermes.ingest import ingest_document, update_document
 from hermes.maton import MatonClient, MatonError
 from hermes.meeting_copilot import generate_ai_notes, get_guidance, get_guidance_comprehensive, prepare_brief, summarize_meeting
@@ -586,6 +587,21 @@ def list_conversations(entity_id: str | None = None, q: str | None = None):
         "entity_id": entity_id,
         "q": q,
     }
+
+
+@app.get("/api/usage")
+def usage_report(
+    entity_id: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+):
+    """Token-usage / cost rollup for the Usage tab: grand totals plus a
+    per-chat-session breakdown. `entity_id` is a business slug (or "all"/omitted
+    for every session). `start`/`end` are optional ISO-8601 timestamps that
+    bound the report to a date range (half-open: start <= created_at < end)."""
+    norm = None if not entity_id or entity_id == "all" else to_entity_slug(entity_id)
+    report = usage_repo.session_usage(norm, start or None, end or None)
+    return {"entity_id": entity_id, "start": start, "end": end, **report}
 
 
 @app.get("/api/conversations/{session_id}")

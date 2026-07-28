@@ -486,7 +486,19 @@ def _anthropic_turn(
             elif event.type == "thinking":
                 yield {"type": "thinking", "text": event.thinking}
         resp = stream.get_final_message()
-    yield {"type": "_final", "content": _dump(resp.content), "stop_reason": resp.stop_reason}
+    u = getattr(resp, "usage", None)
+    usage = {
+        "input_tokens": getattr(u, "input_tokens", 0) or 0,
+        "output_tokens": getattr(u, "output_tokens", 0) or 0,
+        "cache_read_input_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
+        "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
+    }
+    yield {
+        "type": "_final",
+        "content": _dump(resp.content),
+        "stop_reason": resp.stop_reason,
+        "usage": usage,
+    }
 
 
 def _openai_turn(
@@ -511,13 +523,24 @@ def _openai_turn(
         messages=_to_openai_messages(system, messages),
         tools=openai_tools or openai.NOT_GIVEN,
         stream=True,
+        stream_options={"include_usage": True},
     )
 
     text_parts: list[str] = []
     calls: dict[int, dict[str, str | None]] = {}
     finish_reason: str | None = None
+    usage = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
 
     for chunk in stream:
+        # The usage chunk (emitted last when include_usage is set) has no choices.
+        if getattr(chunk, "usage", None):
+            usage["input_tokens"] = getattr(chunk.usage, "prompt_tokens", 0) or 0
+            usage["output_tokens"] = getattr(chunk.usage, "completion_tokens", 0) or 0
         if not chunk.choices:
             continue
         choice = chunk.choices[0]
@@ -562,6 +585,7 @@ def _openai_turn(
         "type": "_final",
         "content": content,
         "stop_reason": _OPENAI_STOP_MAP.get(finish_reason, "end_turn"),
+        "usage": usage,
     }
 
 
@@ -656,6 +680,14 @@ def stream_turn(
     reply = ""
     thinking_summary = ""
     stop_reason = None
+    # Token usage summed across every provider call this turn (one per tool
+    # round-trip, plus any continuation calls). Cost is computed once at the end.
+    usage_totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
     # Per-turn output budget that auto-grows (monotonically, across the whole turn)
     # when a reply is cut off by the token cap.
     turn_max_tokens = Config.MAX_TOKENS
@@ -685,6 +717,11 @@ def stream_turn(
                 if event["type"] == "_final":
                     assistant_content = event["content"]
                     stop_reason = event["stop_reason"]
+                    # Accumulate here, inside the continuation loop, so a reply
+                    # resumed after a token-cap cutoff bills every provider call
+                    # it took — not just the last one.
+                    for k, v in (event.get("usage") or {}).items():
+                        usage_totals[k] = usage_totals.get(k, 0) + (v or 0)
                 else:
                     yield event
 
@@ -797,6 +834,13 @@ def stream_turn(
 
     store.set(session_id, messages)
 
+    cost_usd = models.price_of(
+        model_id,
+        usage_totals["input_tokens"],
+        usage_totals["output_tokens"],
+        usage_totals["cache_read_input_tokens"],
+    )
+
     yield {
         "type": "done",
         "result": {
@@ -804,6 +848,9 @@ def stream_turn(
             "thinking": thinking_summary or None,
             "tool_calls": tool_trace,
             "stop_reason": stop_reason,
+            "usage": usage_totals,
+            "cost_usd": cost_usd,
+            "model_used": model_id,
         },
     }
 

@@ -87,6 +87,13 @@
             </svg>
             <span>Jobs</span>
           </button>
+          <button class="strip-tab" type="button" data-view="pricing" title="Usage &amp; Cost">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/>
+              <path d="M13 6v12"/>
+            </svg>
+            <span>Usage</span>
+          </button>
         </div>
 
         <button class="strip-toggle" id="strip-toggle" type="button" title="Toggle sidebar">
@@ -319,6 +326,25 @@
 
           <div class="panel push-bottom">
             <p class="hint" id="jobs-cron-hint">Jobs fire when your scheduler pings <code>/api/jobs/run-due</code>. Use <strong>Start</strong> to run any job instantly.</p>
+          </div>
+        </div>
+
+        <!-- Usage panel: sidebar metadata for the Usage &amp; Cost section -->
+        <div class="panel-section" id="panel-pricing">
+          <div class="panel">
+            <h2>Usage &amp; Cost</h2>
+            <p class="hint">Tokens used and what each chat cost, priced per model. Totals cover every recorded turn.</p>
+          </div>
+
+          <button id="pricing-refresh-btn" class="ghost new-convo">↻ Refresh</button>
+
+          <div class="panel">
+            <h2>How it's counted</h2>
+            <ul class="feature-list">
+              <li>Every reply shows its own token/cost line</li>
+              <li>Cost = tokens × per-model price</li>
+              <li>Rates live in <code>hermes/models.py</code></li>
+            </ul>
           </div>
         </div>
 
@@ -923,6 +949,47 @@
       </div>
     </main>
 
+    <!-- ── Main area: Usage & Cost ────────────────────────────────── -->
+    <main class="pricing-view" id="pricing-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-pricing" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(52,199,89,.18);font-size:15px;">🎫</span> Usage</div>
+      </header>
+
+      <div class="tasks-page" id="pricing-page">
+        <div class="tasks-pg-header">
+          <div>
+            <h2 class="tasks-pg-title">Usage &amp; Cost</h2>
+            <p class="tasks-pg-sub">Total credits (tokens) and USD cost, broken down per chat session.</p>
+          </div>
+          <button class="tasks-new-btn" id="pricing-refresh-main" type="button">↻ Refresh</button>
+        </div>
+
+        <div class="usage-filter-row" id="pricing-filter-row">
+          <button class="usage-chip active" data-preset="all" type="button">All time</button>
+          <button class="usage-chip" data-preset="today" type="button">Today</button>
+          <button class="usage-chip" data-preset="yesterday" type="button">Yesterday</button>
+          <button class="usage-chip" data-preset="week" type="button">Last 7 days</button>
+          <button class="usage-chip" data-preset="month" type="button">Last 30 days</button>
+          <button class="usage-chip" data-preset="sixmonths" type="button">Last 6 months</button>
+          <button class="usage-chip" data-preset="custom" type="button">Custom…</button>
+        </div>
+        <div class="usage-custom-row" id="pricing-custom-row" hidden>
+          <label>From <input type="date" id="pricing-from"></label>
+          <label>To <input type="date" id="pricing-to"></label>
+          <button class="tasks-new-btn" id="pricing-apply" type="button">Apply</button>
+          <span class="hint" id="pricing-custom-err"></span>
+        </div>
+
+        <div class="usage-range-note hint" id="pricing-range-note"></div>
+        <div class="usage-totals" id="pricing-totals"></div>
+        <div id="pricing-body"></div>
+      </div>
+    </main>
+
   </div><!-- /app -->
 
   {% if voice_enabled %}
@@ -957,6 +1024,7 @@
   <script src="/static/tasks.js?v={{ v }}"></script>
   <script src="/static/files.js?v={{ v }}"></script>
   <script src="/static/jobs.js?v={{ v }}"></script>
+  <script src="/static/pricing.js?v={{ v }}"></script>
   {% if voice_enabled %}<script src="/static/voice.js?v={{ v }}"></script>{% endif %}
 </body>
 </html>

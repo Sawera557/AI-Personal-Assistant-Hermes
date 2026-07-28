@@ -214,6 +214,19 @@ function renderThinking(thinking) {
     `<pre>${escapeHtml(thinking)}</pre></details></div>`;
 }
 
+// Per-response token/cost footer, shown under each assistant reply.
+// `usage` = {input_tokens, output_tokens, ...}; `cost` = USD number.
+function renderUsage(usage, cost, model) {
+  if (!usage) return "";
+  const tokens = (usage.input_tokens || 0) + (usage.output_tokens || 0);
+  if (!tokens && !cost) return "";
+  const money = typeof cost === "number" ? ` · $${cost.toFixed(4)}` : "";
+  const modelTag = model ? ` · ${escapeHtml(model)}` : "";
+  return `<div class="usage-line" title="${(usage.input_tokens || 0).toLocaleString()} in / ` +
+    `${(usage.output_tokens || 0).toLocaleString()} out">` +
+    `🎫 ${tokens.toLocaleString()} tokens${money}${modelTag}</div>`;
+}
+
 // Live, uncollapsed "Reasoning" view shown WHILE a turn is still fetching its
 // response. `entries` is an ordered mix of two kinds, in the order they
 // actually happened:
@@ -267,7 +280,8 @@ function renderAssistantTurn(turn) {
   const wrap = addMessage("assistant", "");
   const bubble = wrap.querySelector(".bubble");
   bubble.innerHTML =
-    renderMarkdown(turn.text) + renderThinking(turn.thinking) + renderToolTrace(turn.tool_calls);
+    renderMarkdown(turn.text) + renderThinking(turn.thinking) +
+    renderToolTrace(turn.tool_calls) + renderUsage(turn.usage, turn.cost_usd, turn.model_used);
   highlightCode(bubble);
   hydrateMedia(bubble);
 }
@@ -511,7 +525,8 @@ async function sendStreaming(body, bubble) {
 
   if (final) {
     bubble.innerHTML =
-      renderMarkdown(final.reply) + renderThinking(final.thinking) + renderToolTrace(final.tool_calls);
+      renderMarkdown(final.reply) + renderThinking(final.thinking) +
+      renderToolTrace(final.tool_calls) + renderUsage(final.usage, final.cost_usd, final.model_used);
     highlightCode(bubble);
     hydrateMedia(bubble);
     // Lock (or reaffirm) this session's business from the server's
@@ -681,6 +696,10 @@ function setView(view) {
   // Lazy-init jobs on first open
   if (view === "jobs" && typeof window._jobsInit === "function") {
     window._jobsInit();
+  }
+  // (Re)load the usage report every time the Usage tab is opened
+  if (view === "pricing" && typeof window._pricingInit === "function") {
+    window._pricingInit();
   }
 }
 
