@@ -30,7 +30,8 @@ _TASK_COLS = (
     "t.task_id, t.name, t.prompt, t.allowed_apps, t.autonomy, t.schedule, "
     "t.timezone, t.enabled, e.slug, "
     "t.next_run_at, t.last_run_at, t.last_status, t.created_at, t.updated_at, "
-    "t.window_start, t.window_end, t.window_cursor, t.window_step, t.window_pace"
+    "t.window_start, t.window_end, t.window_cursor, t.window_step, t.window_pace, "
+    "t.notify_to"
 )
 
 
@@ -86,7 +87,7 @@ def _task_row_to_dict(row: tuple) -> dict[str, Any]:
 
     (task_id, name, prompt, allowed_apps, autonomy, schedule, tz, enabled,
      entity_slug, next_run_at, last_run_at, last_status, created, updated,
-     win_start, win_end, win_cursor, win_step, win_pace) = row
+     win_start, win_end, win_cursor, win_step, win_pace, notify_to) = row
     return {
         "task_id": str(task_id),
         "name": name,
@@ -109,6 +110,9 @@ def _task_row_to_dict(row: tuple) -> dict[str, Any]:
         "window_cursor": _iso_date(win_cursor),
         "window_step": win_step,
         "window_pace": win_pace,
+        # Comma-separated address(es) to email the result to when the task runs;
+        # None == deliver nothing (see hermes/notify.py).
+        "notify_to": notify_to,
     }
 
 
@@ -127,6 +131,7 @@ def create_task(
     window_end: str | None = None,
     window_step: int = 1,
     window_pace: str | None = None,
+    notify_to: str | None = None,
 ) -> str | None:
     """Insert a task and return its task_id (or None on failure).
 
@@ -144,9 +149,10 @@ def create_task(
                 """INSERT INTO scheduled_tasks
                        (user_id, entity_id, name, prompt, allowed_apps, autonomy,
                         schedule, timezone, enabled, next_run_at,
-                        window_start, window_end, window_cursor, window_step, window_pace)
+                        window_start, window_end, window_cursor, window_step, window_pace,
+                        notify_to)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                           %s, %s, %s, %s, %s)
+                           %s, %s, %s, %s, %s, %s)
                    RETURNING task_id;""",
                 (
                     owner, ent, name, prompt,
@@ -156,6 +162,7 @@ def create_task(
                     window_start, window_end,
                     window_start if window_pace else None,  # cursor starts at start
                     max(1, int(window_step or 1)), window_pace,
+                    notify_to or None,
                 ),
             )
             return str(cur.fetchone()[0])
@@ -228,6 +235,8 @@ def update_task(
     window_step: int | None = None,
     window_pace: str | None = None,
     window_set: bool = False,
+    notify_to: str | None = None,
+    notify_to_set: bool = False,
 ) -> bool:
     """Patch a task. Only the fields passed (non-None) are written. `entity_slug`
     and `next_run_at` are nullable columns, so they use explicit *_set flags to
@@ -255,6 +264,9 @@ def update_task(
         sets.append("autonomy = %s"); params.append(autonomy)
     if enabled is not None:
         sets.append("enabled = %s"); params.append(enabled)
+    if notify_to_set:
+        # Nullable + clearable: an empty string clears delivery back to NULL.
+        sets.append("notify_to = %s"); params.append((notify_to or "").strip() or None)
     if next_run_set:
         sets.append("next_run_at = %s"); params.append(next_run_at)
     if window_set:

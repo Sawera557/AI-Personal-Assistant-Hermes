@@ -705,6 +705,19 @@ function setView(view) {
 
 stripTabs.forEach((t) => t.addEventListener("click", () => setView(t.dataset.view)));
 
+// ---- Deep links: "#task/<id>" opens the Schedule tab + that task's detail ----
+// Used by the links in Hermes notification emails ("Full output & run history").
+function handleHashRoute() {
+  const m = (location.hash || "").match(/^#task\/([^/?#]+)/);
+  if (!m) return;
+  setView("tasks");
+  if (typeof window._tasksOpenDetail === "function") {
+    window._tasksOpenDetail(decodeURIComponent(m[1]));
+  }
+}
+window.addEventListener("hashchange", handleHashRoute);
+handleHashRoute();  // honor a deep link present on initial load
+
 // ---- Content panel collapse (desktop only) ----
 document.getElementById("strip-toggle")?.addEventListener("click", () => {
   appEl.classList.toggle("panel-collapsed");

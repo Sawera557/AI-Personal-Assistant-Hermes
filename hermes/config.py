@@ -68,6 +68,34 @@ class Config:
         """Business slugs that currently have a configured Maton key."""
         return [slug for slug, key in cls.MATON_BUSINESS_KEYS.items() if key]
 
+    # ── Owner-notification channel (hermes/notify.py) ────────────────────────
+    # Hermes emails the owner (and any per-task "notify to" address) through one
+    # business's connected Gmail — there's no dedicated Hermes sender address yet.
+    # NOTIFY_BUSINESS picks which business's Maton key sends that mail; it falls
+    # back to the first connected slug so notifications still work out of the box.
+    NOTIFY_BUSINESS: str = os.getenv("HERMES_NOTIFY_BUSINESS", "").strip()
+    # Public origin used to build deep links into the app inside notification
+    # emails (e.g. ".../#task/<id>"). On Vercel, VERCEL_URL is the deployment host.
+    PUBLIC_BASE_URL: str = (
+        os.getenv("PUBLIC_BASE_URL", "").strip()
+        or (f"https://{os.getenv('VERCEL_URL', '').strip()}" if os.getenv("VERCEL_URL") else "")
+    ).rstrip("/")
+
+    @classmethod
+    def notify_business(cls) -> str | None:
+        """The business slug whose Gmail sends owner/notify mail. Explicit config
+        wins; otherwise the first business with a connected Maton key."""
+        if cls.NOTIFY_BUSINESS and cls.maton_key_for_slug(cls.NOTIFY_BUSINESS):
+            return cls.NOTIFY_BUSINESS
+        slugs = cls.connected_business_slugs()
+        return slugs[0] if slugs else None
+
+    @classmethod
+    def owner_email(cls) -> str:
+        """The single owner's email — the fixed recipient of the daily attention
+        report. Same source as db.scheduled_tasks._owner()."""
+        return (os.getenv("OWNER_EMAIL") or "owner@hermes.local").strip()
+
     MODEL: str = os.getenv("HERMES_MODEL", "claude-sonnet-5")
     EFFORT: str = os.getenv("HERMES_EFFORT", "low")
     MAX_TOKENS: int = int(os.getenv("HERMES_MAX_TOKENS", "8000"))
