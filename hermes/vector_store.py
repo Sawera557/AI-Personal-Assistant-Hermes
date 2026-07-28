@@ -66,11 +66,23 @@ def _entity_slug_of(namespace: str) -> str | None:
     return None
 
 
+# 'restricted' material is local-only by rule and must NEVER be served through
+# this read path — mirrors hermes/pinecone_store's hard cap so the two federated
+# readers (see hermes/rag.py) are symmetric. Defense in depth: restricted content
+# is never embedded to the cloud in the first place (ingestion sensitivity gate),
+# so this cap removes no real functionality — it just closes the asymmetry where
+# a caller passing max_sensitivity="restricted" here (but not to Pinecone) could
+# have surfaced restricted pgvector chunks.
+_MAX_SERVED_SENSITIVITY = "confidential"
+
+
 def _allowed_sensitivities(max_level: str) -> list[str]:
-    """Levels at or below the viewer's clearance."""
+    """Levels at or below the viewer's clearance, hard-capped at 'confidential'
+    so 'restricted' is never served."""
     if max_level not in SENSITIVITY_ORDER:
-        return ["public"]
-    cutoff = SENSITIVITY_ORDER.index(max_level)
+        max_level = "public"
+    cap = SENSITIVITY_ORDER.index(_MAX_SERVED_SENSITIVITY)
+    cutoff = min(SENSITIVITY_ORDER.index(max_level), cap)
     return SENSITIVITY_ORDER[: cutoff + 1]
 
 

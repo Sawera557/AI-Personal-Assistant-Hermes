@@ -82,6 +82,7 @@ def _system_prompt(
     attachments: list[dict[str, Any]] | None = None,
     context_pack: str = "",
     retrieved_context: str = "",
+    conversation_block: str = "",
 ) -> str:
     today = datetime.date.today().isoformat()
     base = (
@@ -133,6 +134,27 @@ def _system_prompt(
         "marker), you have not seen the omitted part. Never describe, quote, count, or "
         "answer questions about content past the marker or beyond a listed cut — say the "
         "result was truncated and fetch the rest before answering.\n"
+        "- GROUNDING & ATTRIBUTION (non-negotiable — the user demands zero fabrication and "
+        "zero assumptions). You may be given several context blocks below; attribute each "
+        "correctly and never blur them:\n"
+        "    - BUSINESS CONTEXT PACK = standing configured facts about the business. Refer to "
+        "these as standing context, NEVER as something the user just told you.\n"
+        "    - MEMORY = durable saved facts; may be stale — confirm with a tool before stating "
+        "as a current fact.\n"
+        "    - EARLIER CONVERSATIONS = what was actually said in past chats. ONLY this block "
+        "(or the user's current message) lets you say 'you told me', 'you said', 'we "
+        "discussed', or 'as you mentioned' — and cite its date when you do.\n"
+        "    - RETRIEVED CONTEXT / `search_business_knowledge` = documents retrieved this turn; "
+        "refer to them as retrieved/from the document, never as memory or as something the "
+        "user said.\n"
+        "    - Live tool results = current truth.\n"
+        "  Never present a context-pack or retrieved-document fact as something the user said "
+        "or as a memory of your conversation. Do NOT state any specific — a name, address, "
+        "amount, date, ID, or count — unless it appears in one of these blocks or a tool result "
+        "THIS turn. If you have only part of a detail, give exactly that part and stop; never "
+        "complete or fill in the rest from assumption, even if you are fairly confident. When "
+        "you use a recalled or retrieved fact, say briefly where it came from so the user can "
+        "tell recall from inference.\n"
         "- Lead with the answer; be concise and practical.\n"
         f"Today's date is {today}."
     )
@@ -146,7 +168,11 @@ def _system_prompt(
     elif active_business:
         base += (
             f"\n\nBusiness scope: this conversation is locked to business '{active_business}'. "
-            "All Maton tool calls automatically use that business's connected account."
+            "All Maton tool calls automatically use that business's connected account. "
+            "Stay within this business: do not pull in, enumerate, or report another business's "
+            "data, tenants, or accounts unless the user explicitly asks for a cross-business "
+            "view. If a memory or retrieved snippet from a DIFFERENT business surfaces, say it "
+            f"belongs to that other business — never fold it into '{active_business}'."
         )
     if context_pack:
         base += (
@@ -163,6 +189,8 @@ def _system_prompt(
             "treat it as background, NOT as a live retrieval, and confirm it with a tool "
             "call before stating it as a current fact.\n" + memory_block
         )
+    if conversation_block:
+        base += f"\n\n{conversation_block}"
     if retrieved_context:
         base += f"\n\n{retrieved_context}"
     base += _attachments_block(attachments)
@@ -605,6 +633,18 @@ def stream_turn(
         )
     except Exception:  # noqa: BLE001 — a retrieval failure must never break the turn
         retrieved_context = ""
+    # Phase 2: recall of PAST conversations (verbatim turns + summaries), owner-
+    # scoped, provenance-first. Empty on small-talk / when the flag is off — see
+    # hermes/conversation_retrieve.py. Fail-open to "".
+    try:
+        from .conversation_retrieve import build_history_block
+        from .db.conversation_memory import owner_user_id
+        conversation_block = build_history_block(
+            user_id=owner_user_id(), latest_user_text=_text_of(user_content),
+            active_business=active_business,
+        )
+    except Exception:  # noqa: BLE001 — a recall failure must never break the turn
+        conversation_block = ""
     # Files shared earlier in this chat, so the model can read them on any turn
     # (see _attachments_block). Tolerate stores without the method / a failure.
     try:
@@ -622,7 +662,8 @@ def stream_turn(
 
     for _ in range(Config.MAX_TOOL_ITERATIONS):
         system_prompt = _system_prompt(
-            voice, active_business, memory_block, attachments, context_pack, retrieved_context
+            voice, active_business, memory_block, attachments, context_pack,
+            retrieved_context, conversation_block,
         )
 
         # Produce ONE complete assistant turn, resuming in place if the token cap

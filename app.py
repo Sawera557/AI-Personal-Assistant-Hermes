@@ -85,6 +85,7 @@ from hermes.maton import MatonClient, MatonError
 from hermes.meeting_copilot import generate_ai_notes, get_guidance, get_guidance_comprehensive, prepare_brief, summarize_meeting
 from hermes.memory import store
 from hermes.memory_extract import extract_async
+from hermes.conversation_write import record_turn_async
 from hermes import models as hermes_models
 from hermes import scheduler as hermes_scheduler
 from hermes.db import scheduled_tasks as tasks_db
@@ -431,6 +432,10 @@ async def chat(request: Request):
         session_id=session_id, entity_slug=store_entity,
         user_text=user_text, reply=result.get("reply") or "",
     )
+    record_turn_async(
+        session_id=session_id, active_business=active_business,
+        user_text=user_text, reply=result.get("reply") or "",
+    )
 
     result["session_id"] = session_id
     result["entity_id"] = active_business  # authoritative, locked value — not just an echo
@@ -553,6 +558,10 @@ async def chat_stream(request: Request):
         store.record_turn(key, store_entity, session_id, user_text, result)
         extract_async(
             session_id=session_id, entity_slug=store_entity,
+            user_text=user_text, reply=result.get("reply") or "",
+        )
+        record_turn_async(
+            session_id=session_id, active_business=active_business,
             user_text=user_text, reply=result.get("reply") or "",
         )
 

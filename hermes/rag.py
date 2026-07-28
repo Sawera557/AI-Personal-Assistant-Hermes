@@ -170,8 +170,10 @@ def _format_block(business: str | None, hits: list[dict[str, Any]]) -> str:
     who = f"'{business}'" if business else "this business"
     header = (
         f"RETRIEVED CONTEXT (relevant snippets pulled this turn from {who}'s "
-        "knowledge base — treat these as retrieved evidence you may cite; do NOT "
-        "assert anything as retrieved that is not listed here). Each line is "
+        "knowledge base — treat these as retrieved evidence, and attribute them to "
+        "the document/source, NEVER as something the user told you or as a memory "
+        "of a past conversation. Do NOT assert any detail not listed here, and do "
+        "not fill in specifics beyond these snippets). Each line is "
         "[title | source | relevance]:"
     )
     lines = [header]

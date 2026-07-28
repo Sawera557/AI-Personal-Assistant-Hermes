@@ -289,6 +289,32 @@ class Config:
         with Pinecone off it still injects pgvector (Context-tab) matches."""
         return _bool(os.getenv("HERMES_RAG_CONTEXT_INJECTION"), False)
 
+    # ---- Conversation-history memory (Phase 2 — pgvector, provenance-first) --
+    # Recall of PAST conversations (not just distilled facts): verbatim turns +
+    # extractive session summaries in the conversation_memory table (migration
+    # 0018). Deliberately separate from the business RAG above so the two never
+    # share a failure. Two independent switches (both default OFF — dark merge):
+    #   HERMES_CONVO_MEMORY_WRITE  — record each turn (+ summary) after it ends.
+    #   HERMES_CONVO_MEMORY        — inject the EARLIER CONVERSATIONS recall block.
+    # Write can run ahead of read to backfill history before switching recall on.
+    CONVO_MEMORY_TOP_K: int = int(os.getenv("HERMES_CONVO_MEMORY_TOP_K", "6"))
+    # Higher than the RAG threshold: conversation recall favours precision — a
+    # weak match here reads as "you said X" and is worse than silence.
+    CONVO_MEMORY_SCORE_THRESHOLD: float = float(os.getenv("HERMES_CONVO_MEMORY_SCORE_THRESHOLD", "0.35"))
+    CONVO_MEMORY_MAX_CHARS: int = int(os.getenv("HERMES_CONVO_MEMORY_MAX_CHARS", "4000"))
+    # Verbatim 'turn' rows older than this are pruned (summaries are kept).
+    CONVO_MEMORY_TURN_TTL_DAYS: int = int(os.getenv("HERMES_CONVO_MEMORY_TTL_DAYS", "45"))
+
+    @classmethod
+    def convo_memory_enabled(cls) -> bool:
+        """Whether the EARLIER CONVERSATIONS recall block is injected each turn."""
+        return _bool(os.getenv("HERMES_CONVO_MEMORY"), False)
+
+    @classmethod
+    def convo_memory_write_enabled(cls) -> bool:
+        """Whether finished turns are recorded into conversation_memory."""
+        return _bool(os.getenv("HERMES_CONVO_MEMORY_WRITE"), False)
+
     # ---- NuExtract (bill / invoice OCR, document text extraction) ----------
     # Calls go through the official `numind` SDK (hermes/bills.py), which targets
     # https://nuextract.ai by default. NUEXTRACT_BASE_URL is an OPTIONAL host
