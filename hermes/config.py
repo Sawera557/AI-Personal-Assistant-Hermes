@@ -81,6 +81,13 @@ class Config:
     )
     MAX_TOOL_ITERATIONS: int = int(os.getenv("HERMES_MAX_TOOL_ITERATIONS", "12"))
 
+    # Anthropic prompt caching. When on, the stable request prefix (the ~30-tool
+    # schema + the static system guidelines) is marked with cache_control so it's
+    # billed at ~0.1x on reuse instead of full input price on every turn and every
+    # in-turn tool round-trip. Off is a plain uncached request — used by the cost
+    # measurement script (scripts/measure_cache_cost.py) to A/B the savings.
+    PROMPT_CACHE: bool = _bool(os.getenv("HERMES_PROMPT_CACHE"), True)
+
     # Dedicated fast model for the live meeting copilot's per-utterance guidance
     # calls (hermes.meeting_copilot.get_guidance / get_guidance_comprehensive).
     # Kept separate from MODEL above: that call is 0-4 short bullets, no tool

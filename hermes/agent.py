@@ -75,16 +75,14 @@ def _attachments_block(attachments: list[dict[str, Any]] | None) -> str:
     return "\n".join(lines)
 
 
-def _system_prompt(
-    voice: bool = False,
-    active_business: str | None = None,
-    memory_block: str = "",
-    attachments: list[dict[str, Any]] | None = None,
-    context_pack: str = "",
-    retrieved_context: str = "",
-    conversation_block: str = "",
-) -> str:
-    today = datetime.date.today().isoformat()
+def _system_base(active_business: str | None = None) -> str:
+    """The STABLE part of the system prompt — static operating guidelines, the
+    connected-app catalog, and the (per-conversation-constant) business scope.
+
+    Deliberately excludes anything that changes turn-to-turn (today's date, the
+    MEMORY block, EARLIER CONVERSATIONS / RETRIEVED CONTEXT, the attachments
+    ledger) so this text can be a byte-stable prompt caching prefix. See
+    `_system_blocks`."""
     base = (
         "You are Hermes, a capable AI executive assistant. You help the user get "
         "real work done across their connected business apps, the web, and their "
@@ -155,8 +153,7 @@ def _system_prompt(
         "complete or fill in the rest from assumption, even if you are fairly confident. When "
         "you use a recalled or retrieved fact, say briefly where it came from so the user can "
         "tell recall from inference.\n"
-        "- Lead with the answer; be concise and practical.\n"
-        f"Today's date is {today}."
+        "- Lead with the answer; be concise and practical."
     )
     if active_business == "all":
         base += (
@@ -174,15 +171,33 @@ def _system_prompt(
             "view. If a memory or retrieved snippet from a DIFFERENT business surfaces, say it "
             f"belongs to that other business — never fold it into '{active_business}'."
         )
+    return base
+
+
+def _system_volatile(
+    memory_block: str = "",
+    attachments: list[dict[str, Any]] | None = None,
+    context_pack: str = "",
+    voice: bool = False,
+    retrieved_context: str = "",
+    conversation_block: str = "",
+) -> str:
+    """The VOLATILE part of the system prompt — everything that changes turn to
+    turn (today's date, the BUSINESS CONTEXT PACK, the per-turn MEMORY block,
+    EARLIER CONVERSATIONS, RETRIEVED CONTEXT, the growing attachments ledger) or
+    per-request (voice style). Kept AFTER the cached prefix so it never
+    invalidates the cache."""
+    today = datetime.date.today().isoformat()
+    parts = [f"Today's date is {today}."]
     if context_pack:
-        base += (
-            "\n\nBUSINESS CONTEXT PACK (authoritative standing facts and rules — "
+        parts.append(
+            "BUSINESS CONTEXT PACK (authoritative standing facts and rules — "
             "trust these over memory or retrieval; if a tool result contradicts "
             "them, say so explicitly):\n" + context_pack
         )
     if memory_block:
-        base += (
-            "\n\nMEMORY — saved facts from PAST conversations (preferences, business "
+        parts.append(
+            "MEMORY — saved facts from PAST conversations (preferences, business "
             "rules, standing decisions). Preferences and standing decisions are "
             "reliable. But anything here that can change over time — contact numbers, "
             "balances, message contents, current status, who said what — may be STALE: "
@@ -190,11 +205,66 @@ def _system_prompt(
             "call before stating it as a current fact.\n" + memory_block
         )
     if conversation_block:
-        base += f"\n\n{conversation_block}"
+        parts.append(conversation_block)
     if retrieved_context:
-        base += f"\n\n{retrieved_context}"
-    base += _attachments_block(attachments)
-    return base + _VOICE_STYLE if voice else base
+        parts.append(retrieved_context)
+    text = "\n\n".join(parts)
+    attach = _attachments_block(attachments)
+    if attach:
+        text += attach
+    if voice:
+        text += _VOICE_STYLE
+    return text
+
+
+def _system_prompt(
+    voice: bool = False,
+    active_business: str | None = None,
+    memory_block: str = "",
+    attachments: list[dict[str, Any]] | None = None,
+    context_pack: str = "",
+    retrieved_context: str = "",
+    conversation_block: str = "",
+) -> str:
+    """Plain string form of the full system prompt (stable base + volatile tail).
+
+    Kept for the OpenAI path and callers/tests that want one string. The Anthropic
+    path uses `_system_blocks` instead so it can place a cache breakpoint between
+    the two parts."""
+    volatile = _system_volatile(
+        memory_block, attachments, context_pack, voice, retrieved_context, conversation_block
+    )
+    return _system_base(active_business) + "\n\n" + volatile
+
+
+def _system_blocks(
+    voice: bool = False,
+    active_business: str | None = None,
+    memory_block: str = "",
+    attachments: list[dict[str, Any]] | None = None,
+    context_pack: str = "",
+    retrieved_context: str = "",
+    conversation_block: str = "",
+    cache: bool | None = None,
+) -> list[dict[str, Any]]:
+    """Structured system prompt for the Anthropic Messages API: a stable text
+    block (optionally marked with `cache_control`) followed by a volatile text
+    block. The breakpoint sits at the end of the stable block, so the tool schema
+    + static guidelines are reused from cache while today's date / MEMORY / EARLIER
+    CONVERSATIONS / RETRIEVED CONTEXT / attachments (which change every turn) stay
+    after it and never invalidate it."""
+    if cache is None:
+        cache = Config.PROMPT_CACHE
+    stable: dict[str, Any] = {"type": "text", "text": _system_base(active_business)}
+    if cache:
+        stable["cache_control"] = {"type": "ephemeral"}
+    blocks: list[dict[str, Any]] = [stable]
+    volatile = _system_volatile(
+        memory_block, attachments, context_pack, voice, retrieved_context, conversation_block
+    )
+    if volatile:
+        blocks.append({"type": "text", "text": volatile})
+    return blocks
 
 
 def _dump(content: Any) -> list[dict[str, Any]]:
@@ -439,10 +509,26 @@ def resolve_effort(
     return _auto_effort(user_content, has_attachments)
 
 
+def _cache_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a copy of the tools array with a `cache_control` breakpoint on the
+    last tool, so the whole (byte-stable) tool schema is cached. Shallow-copies
+    the last entry rather than mutating `build_tools()`'s output in place — the
+    same list is reused across the turn's tool round-trips and by the OpenAI path.
+    Server-side tool blocks (web_search/web_fetch) are left untagged; the last
+    entry is whatever `build_tools` put there and is a normal tool definition."""
+    if not tools or not Config.PROMPT_CACHE:
+        return tools
+    tagged = list(tools)
+    last = dict(tagged[-1])
+    last["cache_control"] = {"type": "ephemeral"}
+    tagged[-1] = last
+    return tagged
+
+
 def _anthropic_turn(
     model_id: str,
     tools: list[dict[str, Any]],
-    system: str,
+    system: str | list[dict[str, Any]],
     messages: list[dict[str, Any]],
     effort: str | None = None,
     max_tokens: int | None = None,
@@ -476,7 +562,7 @@ def _anthropic_turn(
         model=model_id,
         max_tokens=max_tokens or Config.MAX_TOKENS,
         system=system,
-        tools=tools,
+        tools=_cache_tools(tools),
         messages=messages,
         **extra,
     ) as stream:
@@ -691,9 +777,16 @@ def stream_turn(
     # Per-turn output budget that auto-grows (monotonically, across the whole turn)
     # when a reply is cut off by the token cap.
     turn_max_tokens = Config.MAX_TOKENS
-
     for _ in range(Config.MAX_TOOL_ITERATIONS):
+        # OpenAI needs one system string; Anthropic gets structured blocks so the
+        # stable prefix (tools + static guidelines) can carry a cache breakpoint.
+        # Build both once per outer iteration and reuse across any in-place
+        # continuation calls below.
         system_prompt = _system_prompt(
+            voice, active_business, memory_block, attachments, context_pack,
+            retrieved_context, conversation_block,
+        )
+        system_blocks = _system_blocks(
             voice, active_business, memory_block, attachments, context_pack,
             retrieved_context, conversation_block,
         )
@@ -706,7 +799,7 @@ def stream_turn(
         while True:
             turn = (
                 _anthropic_turn(
-                    model_id, tools, system_prompt, messages, effort, turn_max_tokens, continuing
+                    model_id, tools, system_blocks, messages, effort, turn_max_tokens, continuing
                 )
                 if provider == "anthropic"
                 else _openai_turn(model_id, tools, system_prompt, messages, turn_max_tokens, continuing)
