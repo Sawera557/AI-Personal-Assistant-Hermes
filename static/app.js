@@ -647,7 +647,7 @@ const openMobileNav  = () => appEl.classList.add("mobile-open");
 const closeMobileNav = () => appEl.classList.remove("mobile-open");
 
 // Wire up every hamburger button (chat topbar + bills topbar)
-["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context", "menu-btn-tasks", "menu-btn-files", "menu-btn-jobs"].forEach((id) => {
+["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context", "menu-btn-tasks", "menu-btn-files", "menu-btn-jobs", "menu-btn-pricing", "menu-btn-settings"].forEach((id) => {
   document.getElementById(id)?.addEventListener("click", openMobileNav);
 });
 
@@ -700,6 +700,10 @@ function setView(view) {
   // (Re)load the usage report every time the Usage tab is opened
   if (view === "pricing" && typeof window._pricingInit === "function") {
     window._pricingInit();
+  }
+  // Lazy-init settings (guardrail toggles) on open
+  if (view === "settings" && typeof window._settingsInit === "function") {
+    window._settingsInit();
   }
 }
 

@@ -19,7 +19,7 @@ from typing import Any
 import anthropic
 import openai
 
-from . import models
+from . import guardrails, models
 from .attachments import ATTACHMENT_TEXT_PREFIX
 from .config import Config
 from .memory import store
@@ -118,7 +118,14 @@ def _system_prompt(
         "message or file, assigning a WATI operator, creating/editing calendar events, "
         "modifying QuickBooks data, deleting Drive files, etc.), first clearly summarize "
         "exactly what you will do, then STOP and ask the user to confirm. Only perform "
-        "the write after they explicitly approve.\n"
+        "the write after they explicitly approve. A safety guardrail enforces this: the "
+        "first time you call such a tool it returns `status:\"awaiting_confirmation\"` with "
+        "a `summary` and an `approval_token` INSTEAD of running. When that happens, show the "
+        "user the summary and ask them to confirm; once they approve, call the SAME tool "
+        "again with the SAME arguments plus `approval_token` set to the returned value. Never "
+        "invent an approval_token, and never change the arguments between the two calls — any "
+        "change needs a fresh confirmation. (If the guardrail is off, tools run directly; you "
+        "should still confirm first as above unless the user has told you not to.)\n"
         "- Never substitute one business's data or connected account for another's. If a "
         "business isn't connected yet, tell the user plainly instead of guessing or using "
         "a different business's account.\n"
@@ -596,6 +603,7 @@ def stream_turn(
     active_business: str | None = None,
     allowed_apps: list[str] | None = None,
     effort: str | None = None,
+    interactive: bool = True,
 ):
     """Generator version of the agent loop — yields incremental events instead
     of blocking until the whole turn (every tool round-trip included) is done.
@@ -761,6 +769,43 @@ def stream_turn(
                 tool_input = block.get("input", {}) or {}
                 label = tool_status(name, tool_input)
                 yield {"type": "tool_call", "tool": name, "input": tool_input, "label": label}
+
+                # Guardrail #1: structurally hold any external send/write until
+                # the user has approved this exact action. On the first call the
+                # gate returns a summary + approval_token instead of executing;
+                # the model relays it, the user approves, and the model re-calls
+                # with the token (see hermes.guardrails). Unattended runs
+                # (interactive=False) defer to the scheduler's autonomy tiers.
+                decision = guardrails.check(
+                    session_id, name, tool_input, active_business, interactive=interactive
+                )
+                if not decision.allow:
+                    guard_payload = json.dumps({
+                        "status": "awaiting_confirmation",
+                        "summary": decision.summary,
+                        "approval_token": decision.approval_token,
+                        "next_step": (
+                            "Show the user this summary and ask them to confirm. To proceed, "
+                            f"call {name} again with the SAME arguments plus "
+                            f"approval_token=\"{decision.approval_token}\". Do NOT change the "
+                            "arguments — any change requires a new confirmation."
+                        ),
+                    })
+                    tool_trace.append({
+                        "tool": name,
+                        "input": tool_input,
+                        "ok": True,
+                        "label": label,
+                        "awaiting_confirmation": True,
+                    })
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block["id"],
+                        "content": guard_payload,
+                        "is_error": False,
+                    })
+                    continue
+
                 content_str, is_error, media, blocks = dispatch(name, tool_input, active_business)
                 trace_entry = {
                     "tool": name,
@@ -862,6 +907,7 @@ def run_turn(
     active_business: str | None = None,
     allowed_apps: list[str] | None = None,
     effort: str | None = None,
+    interactive: bool = True,
 ) -> dict[str, Any]:
     """Run one user turn through the agent loop and return a structured result.
 
@@ -877,7 +923,9 @@ def run_turn(
     final event. Use stream_turn() directly for incremental output.
     """
     result: dict[str, Any] = {}
-    for event in stream_turn(session_id, user_content, voice, active_business, allowed_apps, effort):
+    for event in stream_turn(
+        session_id, user_content, voice, active_business, allowed_apps, effort, interactive
+    ):
         if event["type"] == "done":
             result = event["result"]
     return result

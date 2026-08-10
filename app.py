@@ -89,6 +89,7 @@ from hermes.memory import store
 from hermes.memory_extract import extract_async
 from hermes.conversation_write import record_turn_async
 from hermes import models as hermes_models
+from hermes import guardrails as hermes_guardrails
 from hermes import scheduler as hermes_scheduler
 from hermes.db import scheduled_tasks as tasks_db
 from hermes import job_runner as hermes_jobs
@@ -306,6 +307,36 @@ def set_model_setting(body: ModelUpdate):
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     return {"active": hermes_models.active_model()}
+
+
+@app.get("/api/settings/guardrails")
+def get_guardrail_settings():
+    """Every user-facing guardrail with its current global on/off state, for the
+    Settings tab. Data-driven from hermes.guardrails.GUARDRAILS_META."""
+    return {"guardrails": hermes_guardrails.list_guardrails()}
+
+
+class GuardrailUpdate(BaseModel):
+    guardrail: str = "confirm_writes"
+    enabled: bool
+    business: str | None = None
+
+
+@app.post("/api/settings/guardrails")
+def set_guardrail_settings(body: GuardrailUpdate):
+    """Turn a guardrail on/off, globally (business=None) or for one business.
+    Takes effect on the next turn of every conversation."""
+    try:
+        hermes_guardrails.set_guardrail_enabled(body.guardrail, body.enabled, body.business)
+    except KeyError:
+        return JSONResponse(
+            {"error": f"Unknown guardrail: {body.guardrail!r}"}, status_code=400
+        )
+    return {
+        "guardrail": body.guardrail,
+        "enabled": body.enabled,
+        "scope": body.business or "global",
+    }
 
 
 @app.post("/api/admin/migrate")

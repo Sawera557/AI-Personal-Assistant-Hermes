@@ -119,6 +119,14 @@ class Config:
 
     WEB_SEARCH: bool = _bool(os.getenv("HERMES_WEB_SEARCH"), True)
 
+    # ---- Guardrails -------------------------------------------------------
+    # Guardrail #1: require the user to confirm before any external send/write
+    # (email, WhatsApp, Zoom invite, Jira, mutating maton_request). Enforced
+    # structurally in hermes.guardrails at the tool-dispatch chokepoint. This is
+    # only the DEFAULT — it can be toggled at runtime, globally or per-business,
+    # via hermes_settings (see hermes.guardrails.set_confirm_writes). Default on.
+    GUARDRAIL_CONFIRM_WRITES: bool = _bool(os.getenv("HERMES_GUARDRAIL_CONFIRM_WRITES"), True)
+
     # ---- Voice layer (speech-to-text + text-to-speech) --------------------
     # The agent "brain" stays Claude (`run_turn`), so the voice agent keeps the
     # EXACT same app functionality as the typed chat. The voice provider only
