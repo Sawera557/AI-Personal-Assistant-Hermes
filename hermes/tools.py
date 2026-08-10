@@ -1072,20 +1072,25 @@ def build_tools(
             "description": (
                 "Turn a safety guardrail on or off — ONLY when the user explicitly asks (e.g. "
                 "'stop asking me to confirm before sending', 'don't ask for approval on emails "
-                "anymore', or 're-enable confirmations'). Currently supports the 'confirm_writes' "
-                "guardrail: when on, Hermes pauses for the user's confirmation before any external "
-                "send/write (email, WhatsApp, Zoom invite, Jira, mutating maton_request); when off, "
-                "those run without asking. `enabled`=false stops the confirmations, true restores "
-                "them. `business` optionally scopes the change to one entity (afk | gak | gif | "
-                "gakc | nh | per); omit it to change the global default. Never call this on your "
-                "own initiative — only on the user's clear instruction — and afterwards tell them "
-                "exactly what you changed."
+                "anymore', 're-enable confirmations', or 'turn off business data isolation'). "
+                "Guardrails:\n"
+                "- 'confirm_writes': when on, Hermes pauses for the user's confirmation before any "
+                "external send/write (email, WhatsApp, Zoom invite, Jira, mutating maton_request); "
+                "when off, those run without asking.\n"
+                "- 'business_isolation': when on, knowledge retrieved from the vector store is "
+                "verified to belong to the business in scope and cross-business results are dropped; "
+                "when off, results are trusted by namespace only. (This protects against data leaks "
+                "— only disable it if the user clearly asks.)\n"
+                "`enabled`=false turns the guardrail off, true turns it on. `business` optionally "
+                "scopes the change to one entity (afk | gak | gif | gakc | nh | per); omit it to "
+                "change the global default. Never call this on your own initiative — only on the "
+                "user's clear instruction — and afterwards tell them exactly what you changed."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "guardrail": {"type": "string", "enum": ["confirm_writes"]},
-                    "enabled": {"type": "boolean", "description": "false = stop asking; true = ask before writes/sends."},
+                    "guardrail": {"type": "string", "enum": sorted(guardrails._GUARDRAIL_KEYS)},
+                    "enabled": {"type": "boolean", "description": "false = turn the guardrail off; true = turn it on."},
                     "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per — omit for the global default."},
                 },
                 "required": ["guardrail", "enabled"],
@@ -2061,23 +2066,34 @@ def _delete_scheduled_task(tool_input: dict[str, Any], active_business: str | No
             "message": f"Deleted '{existing.get('name')}' and its run history."}
 
 
+_GUARDRAIL_STATE_LABELS = {
+    "confirm_writes": ("ON — Hermes will ask before writes/sends",
+                       "OFF — writes/sends run without asking"),
+    "business_isolation": ("ON — cross-business knowledge results are dropped",
+                           "OFF — knowledge results trusted by namespace only"),
+}
+
+
 def _set_guardrail(tool_input: dict[str, Any]) -> dict[str, Any]:
     """Turn a guardrail on/off (durably, global or per-business) on the user's
-    explicit instruction. Only 'confirm_writes' is supported today."""
+    explicit instruction. Validated against the guardrails registry."""
     guardrail = (tool_input.get("guardrail") or "").strip()
-    if guardrail != "confirm_writes":
-        return {"ok": False, "status": 400,
-                "error": f"Unknown guardrail: {guardrail!r}. Only 'confirm_writes' is supported."}
     if "enabled" not in tool_input:
         return {"ok": False, "status": 400, "error": "Missing required argument: enabled"}
     enabled = bool(tool_input.get("enabled"))
     business = (tool_input.get("business") or "").strip() or None
-    guardrails.set_confirm_writes(enabled, business)
+    try:
+        guardrails.set_guardrail_enabled(guardrail, enabled, business)
+    except KeyError:
+        known = ", ".join(sorted(guardrails._GUARDRAIL_KEYS))
+        return {"ok": False, "status": 400,
+                "error": f"Unknown guardrail: {guardrail!r}. Known guardrails: {known}."}
     scope = business or "all businesses"
-    state = "ON — Hermes will ask before writes/sends" if enabled else "OFF — writes/sends run without asking"
+    on_label, off_label = _GUARDRAIL_STATE_LABELS.get(guardrail, ("ON", "OFF"))
+    state = on_label if enabled else off_label
     return {"ok": True, "status": 200, "data": {
         "guardrail": guardrail, "enabled": enabled, "scope": scope,
-        "message": f"confirm-before-write is now {state} for {scope}.",
+        "message": f"'{guardrail}' is now {state} for {scope}.",
     }}
 
 

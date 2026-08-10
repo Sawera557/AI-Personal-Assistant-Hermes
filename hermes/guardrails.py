@@ -119,12 +119,15 @@ def _is_guarded(tool_name: str, tool_input: dict[str, Any] | None) -> bool:
     return classify(tool_name, tool_input) in GUARDED_CLASSES
 
 
-# ---- Config: DB-backed runtime toggle, global + per-business ---------------
-_SETTING_KEY = "guardrail.confirm_writes"  # global; per-business is "<key>.<slug>"
+# ---- Config: DB-backed runtime toggles, global + per-business --------------
+# One setting key per guardrail; per-business override is "<key>.<slug>".
+_CONFIRM_WRITES_KEY = "guardrail.confirm_writes"
+_ISOLATION_KEY = "guardrail.business_isolation"
 
 _lock = threading.Lock()
-# Process-global fallback when there's no DB. Keyed by "__global__" or a
-# business slug; value is a bool.
+# Process-global fallback when there's no DB. Keyed by "<setting_key>::<scope>"
+# where scope is a business slug or "__global__" — namespaced by setting_key so
+# two guardrails' fallbacks never collide.
 _overrides: dict[str, bool] = {}
 
 
@@ -155,11 +158,12 @@ def _scope_key(business: str | None) -> str | None:
     return slug
 
 
-def confirm_writes_enabled(business: str | None = None) -> bool:
-    """Is the confirm-before-write guardrail active for this scope?
+def _resolve_enabled(setting_key: str, default: bool, business: str | None) -> bool:
+    """Generic guardrail on/off resolution shared by every guardrail.
 
-    Precedence: per-business setting -> global setting -> Config default.
-    Fail-safe: on any lookup error, return the safe default (guarded).
+    Precedence: per-business setting -> global setting -> `default`. Reads
+    `hermes_settings` when DB-backed, else the in-process fallback. Fail-safe: on
+    any lookup error return True (a guardrail is safe ON), never weaken the gate.
     """
     slug = _scope_key(business)
     try:
@@ -167,30 +171,30 @@ def confirm_writes_enabled(business: str | None = None) -> bool:
             from .db import settings as db_settings
 
             if slug:
-                per = _as_bool(db_settings.get(f"{_SETTING_KEY}.{slug}"))
+                per = _as_bool(db_settings.get(f"{setting_key}.{slug}"))
                 if per is not None:
                     return per
-            glob = _as_bool(db_settings.get(_SETTING_KEY))
+            glob = _as_bool(db_settings.get(setting_key))
             if glob is not None:
                 return glob
         else:
             with _lock:
-                if slug and slug in _overrides:
-                    return _overrides[slug]
-                if "__global__" in _overrides:
-                    return _overrides["__global__"]
+                if slug and f"{setting_key}::{slug}" in _overrides:
+                    return _overrides[f"{setting_key}::{slug}"]
+                if f"{setting_key}::__global__" in _overrides:
+                    return _overrides[f"{setting_key}::__global__"]
     except Exception:  # noqa: BLE001 — never let a config read weaken the gate
-        log.warning("guardrail config read failed; defaulting to guarded", exc_info=True)
+        log.warning("guardrail config read failed for %s; defaulting to on", setting_key, exc_info=True)
         return True
-    return bool(Config.GUARDRAIL_CONFIRM_WRITES)
+    return bool(default)
 
 
-def set_confirm_writes(enabled: bool, business: str | None = None) -> None:
-    """Turn the guardrail on/off, durably. `business=None` sets the global default;
-    a slug sets a per-business override. Persists to `hermes_settings` when a DB
-    is configured, and always updates the in-process fallback."""
+def _apply_setting(setting_key: str, enabled: bool, business: str | None) -> None:
+    """Generic durable on/off write shared by every guardrail. `business=None`
+    sets the global default; a slug sets a per-business override. Persists to
+    `hermes_settings` when DB-backed, and always updates the in-process fallback."""
     slug = _scope_key(business)
-    key = f"{_SETTING_KEY}.{slug}" if slug else _SETTING_KEY
+    key = f"{setting_key}.{slug}" if slug else setting_key
     value = "on" if enabled else "off"
     if _db_backed():
         try:
@@ -200,7 +204,28 @@ def set_confirm_writes(enabled: bool, business: str | None = None) -> None:
         except Exception:  # noqa: BLE001 — still honor it in-process this run
             log.warning("guardrail config write failed for %s", key, exc_info=True)
     with _lock:
-        _overrides[slug or "__global__"] = enabled
+        _overrides[f"{setting_key}::{slug or '__global__'}"] = enabled
+
+
+def confirm_writes_enabled(business: str | None = None) -> bool:
+    """Is the confirm-before-write guardrail active for this scope?"""
+    return _resolve_enabled(_CONFIRM_WRITES_KEY, bool(Config.GUARDRAIL_CONFIRM_WRITES), business)
+
+
+def set_confirm_writes(enabled: bool, business: str | None = None) -> None:
+    """Turn the confirm-before-write guardrail on/off, durably (global or per-business)."""
+    _apply_setting(_CONFIRM_WRITES_KEY, enabled, business)
+
+
+def business_isolation_enabled(business: str | None = None) -> bool:
+    """Is the business-data-isolation guardrail active for this scope? When on, the
+    Pinecone reader verifies each match's business and drops cross-business leaks."""
+    return _resolve_enabled(_ISOLATION_KEY, bool(Config.GUARDRAIL_BUSINESS_ISOLATION), business)
+
+
+def set_business_isolation(enabled: bool, business: str | None = None) -> None:
+    """Turn the business-data-isolation guardrail on/off, durably (global or per-business)."""
+    _apply_setting(_ISOLATION_KEY, enabled, business)
 
 
 # ---- User-facing registry (drives the Settings UI) -------------------------
@@ -218,6 +243,15 @@ GUARDRAILS_META: list[dict[str, str]] = [
             "to a connected app. When off, those actions run without asking."
         ),
     },
+    {
+        "key": "business_isolation",
+        "label": "Business data isolation",
+        "description": (
+            "Verify that knowledge-base results retrieved from Pinecone belong to the business "
+            "in scope, and drop anything that doesn't — so one business's documents can never "
+            "leak into another business's context. When off, results are trusted by namespace only."
+        ),
+    },
 ]
 
 _GUARDRAIL_KEYS = {m["key"] for m in GUARDRAILS_META}
@@ -227,6 +261,8 @@ def _guardrail_enabled(key: str) -> bool:
     """Global on/off state for a registered guardrail."""
     if key == "confirm_writes":
         return confirm_writes_enabled(None)
+    if key == "business_isolation":
+        return business_isolation_enabled(None)
     raise KeyError(key)
 
 
@@ -243,6 +279,9 @@ def set_guardrail_enabled(key: str, enabled: bool, business: str | None = None) 
         raise KeyError(key)
     if key == "confirm_writes":
         set_confirm_writes(enabled, business)
+        return
+    if key == "business_isolation":
+        set_business_isolation(enabled, business)
         return
     raise KeyError(key)  # registered but no setter wired — a bug, fail loudly
 

@@ -127,6 +127,13 @@ class Config:
     # via hermes_settings (see hermes.guardrails.set_confirm_writes). Default on.
     GUARDRAIL_CONFIRM_WRITES: bool = _bool(os.getenv("HERMES_GUARDRAIL_CONFIRM_WRITES"), True)
 
+    # Guardrail #2: business data isolation. When on, knowledge retrieved from
+    # Pinecone is verified to belong to the business in scope and cross-business
+    # matches are dropped (defense-in-depth over namespace scoping). Enforced in
+    # hermes.pinecone_store via hermes.rag.federated_search; runtime-toggleable
+    # per-business via hermes_settings. Default on.
+    GUARDRAIL_BUSINESS_ISOLATION: bool = _bool(os.getenv("HERMES_GUARDRAIL_BUSINESS_ISOLATION"), True)
+
     # ---- Voice layer (speech-to-text + text-to-speech) --------------------
     # The agent "brain" stays Claude (`run_turn`), so the voice agent keeps the
     # EXACT same app functionality as the typed chat. The voice provider only
