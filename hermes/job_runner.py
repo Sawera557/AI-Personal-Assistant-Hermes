@@ -22,6 +22,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from . import drive_sync
 from . import reviews_scraper
 from . import scheduler as _scheduler  # reuse compute_next_run / describe_schedule
 from .db import jobs as repo
@@ -32,6 +33,7 @@ log = logging.getLogger("hermes.job_runner")
 # exist; the seed migration inserts a row whose job_type is a key here.
 REGISTRY: dict[str, Callable[..., dict[str, Any]]] = {
     "google_reviews_scraper": reviews_scraper.run,
+    "drive_s3_sync": drive_sync.run,
 }
 
 

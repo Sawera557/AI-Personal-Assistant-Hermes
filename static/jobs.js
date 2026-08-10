@@ -217,8 +217,50 @@
       `</div>`;
   }
 
+  function driveSummary(res) {
+    const t = res.totals || {};
+    const added = res.added_total != null
+      ? res.added_total
+      : (t.synced || 0) + (t.updated || 0) + (t.restored || 0);
+    const bits = [`<b>${esc(added)} file${added === 1 ? "" : "s"} added</b>`];
+    if (t.scanned != null) bits.push(`scanned ${esc(t.scanned)}`);
+    if (t.unchanged) bits.push(`unchanged ${esc(t.unchanged)}`);
+    if (t.restored) bits.push(`restored ${esc(t.restored)}`);
+    if (t.skipped) bits.push(`skipped ${esc(t.skipped)}`);
+    if (t.errors) bits.push(`errors ${esc(t.errors)}`);
+    let html = `<div>${bits.join(" · ")}</div>`;
+
+    // Per-business "files added" chips (+ a ⚠️ for any business that errored).
+    const abb = res.added_by_business || {};
+    const chips = Object.keys(abb).sort().map(
+      (s) => `<span class="jb-count-chip">${esc(s)}: ${esc(abb[s])}</span>`);
+    const bb = res.by_business || {};
+    Object.keys(bb).forEach((s) => {
+      if (bb[s] && bb[s].error) chips.push(`<span class="jb-count-chip">${esc(s)}: ⚠️</span>`);
+    });
+    if (chips.length) html += `<div class="jb-counts">${chips.join("")}</div>`;
+
+    if (res.categories && res.categories.length)
+      html += `<div>Categories: ${esc(res.categories.join(", "))}</div>`;
+
+    const files = res.added_files || [];
+    if (files.length) {
+      const items = files.map((f) => {
+        const extra = f.outcome && f.outcome !== "synced" ? ` · ${esc(f.outcome)}` : "";
+        return `<li>${esc(f.name || "(unnamed)")}` +
+          `<span class="jb-file-meta"> — ${esc(f.business || "")}/${esc(f.category || "")}${extra}</span></li>`;
+      }).join("");
+      html += `<ul class="jb-file-list">${items}</ul>`;
+      if (res.added_files_truncated) html += `<div>…and more (list capped at 300)</div>`;
+    } else if (added === 0) {
+      html += `<div>Nothing new to sync — everything is already in S3.</div>`;
+    }
+    return `<div class="jb-run-summary">${html}</div>`;
+  }
+
   function runSummary(res) {
     if (!res || typeof res !== "object") return "";
+    if (res.added_by_business || res.by_business) return driveSummary(res);
     const bits = [];
     if (res.date) bits.push(`<b>${esc(res.date)}</b>`);
     if (res.rows_written != null) bits.push(`${esc(res.rows_written)} rows`);
