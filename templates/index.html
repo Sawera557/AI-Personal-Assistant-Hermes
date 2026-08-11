@@ -87,6 +87,14 @@
             </svg>
             <span>Jobs</span>
           </button>
+          <button class="strip-tab" type="button" data-view="artefacts" title="Library">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 5h5l2 2h9v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>
+              <path d="M8 11h8"/>
+              <path d="M8 15h5"/>
+            </svg>
+            <span>Library</span>
+          </button>
           <button class="strip-tab" type="button" data-view="pricing" title="Usage &amp; Cost">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/>
@@ -336,6 +344,31 @@
           </div>
         </div>
 
+        <!-- Artefacts panel: business selector + metadata for the Artefacts section -->
+        <div class="panel-section" id="panel-artefacts">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-artefacts" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-artefacts" hidden></p>
+          </div>
+
+          <button id="artefacts-refresh-btn" class="ghost new-convo">↻ Refresh</button>
+
+          <div class="panel">
+            <h2>What's here</h2>
+            <ul class="feature-list">
+              <li><strong>Artefacts</strong> — live views that re-sync on open</li>
+              <li><strong>Files</strong> — generated reports/sheets/PDFs</li>
+              <li>Files stay re-downloadable after links expire</li>
+              <li>All created by the AI from chat</li>
+            </ul>
+          </div>
+
+          <div class="panel push-bottom">
+            <p class="hint">Open an artefact to see current data (or <strong>Sync now</strong>). Files re-download with a fresh link every time.</p>
+          </div>
+        </div>
+
         <!-- Usage panel: sidebar metadata for the Usage &amp; Cost section -->
         <div class="panel-section" id="panel-pricing">
           <div class="panel">
@@ -360,6 +393,7 @@
 
     <!-- ── Main area: AI Agent (chat) ─────────────────────────────── -->
     <main class="chat">
+     <div class="chat-col" id="chat-col">
       <header class="topbar">
         <button class="icon-btn" id="menu-btn" aria-label="Open menu">
           <span></span><span></span><span></span>
@@ -392,6 +426,20 @@
           </button>
         </div>
       </form>
+     </div><!-- /chat-col -->
+
+      <!-- Right-side artefact viewer — opens in-place when an artefact link in
+           chat is clicked; the header offers "open in new tab". -->
+      <aside class="artefact-side" id="artefact-side" hidden aria-label="Artefact viewer">
+        <header class="artefact-side-head">
+          <div class="artefact-side-title" id="artefact-side-title">Artefact</div>
+          <div class="artefact-side-actions">
+            <button class="artefact-side-btn" id="artefact-side-newtab" type="button" title="Open in new tab">↗ New tab</button>
+            <button class="artefact-side-btn" id="artefact-side-close" type="button" title="Close" aria-label="Close">✕</button>
+          </div>
+        </header>
+        <iframe id="artefact-side-frame" class="artefact-side-frame" title="Artefact canvas" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
+      </aside>
     </main>
 
     <!-- ── Main area: Billing & Invoices ──────────────────────────── -->
@@ -960,6 +1008,76 @@
       </div>
     </main>
 
+    <!-- ── Main area: Artefacts ───────────────────────────────────── -->
+    <main class="artefacts-view" id="artefacts-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-artefacts" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(47,107,255,.18);font-size:15px;">🗂️</span> Library</div>
+      </header>
+
+      <div class="tasks-page" id="artefacts-page">
+        <div class="tasks-pg-header">
+          <div>
+            <h2 class="tasks-pg-title">Library</h2>
+            <p class="tasks-pg-sub">Everything the AI has produced — live artefacts and generated files, in one place.</p>
+          </div>
+          <button class="tasks-new-btn" id="artefacts-refresh-main" type="button">↻ Refresh</button>
+        </div>
+
+        <!-- Sub-tabs: Artefacts (live) vs Files (generated downloads) -->
+        <div class="lib-subtabs" role="tablist">
+          <button class="lib-subtab active" type="button" data-libview="artefacts" role="tab">🎨 Artefacts</button>
+          <button class="lib-subtab" type="button" data-libview="files" role="tab">📄 Files</button>
+        </div>
+
+        <!-- Artefacts sub-list -->
+        <div id="lib-artefacts">
+          <div class="tasks-list" id="artefacts-list"></div>
+          <div class="tasks-empty" id="artefacts-empty" hidden>
+            <div class="tasks-empty-icon">🎨</div>
+            <h3>No artefacts yet</h3>
+            <p class="hint">Ask the AI in chat to build one — e.g. “make a live dashboard from this budget sheet”. It’ll appear here.</p>
+          </div>
+        </div>
+
+        <!-- Files sub-list -->
+        <div id="lib-files" hidden>
+          <div class="tasks-list" id="files-list"></div>
+          <div class="tasks-empty" id="files-empty" hidden>
+            <div class="tasks-empty-icon">📄</div>
+            <h3>No generated files yet</h3>
+            <p class="hint">Files the AI creates for you (reports, spreadsheets, PDFs) land here — always re-downloadable, even after the original link expires.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Artefact canvas modal (live iframe view) ──────────────── -->
+      <div class="tk-overlay" id="af-detail-overlay" hidden>
+        <div class="tk-modal af-modal">
+          <div class="tk-header">
+            <div class="tk-detail-head">
+              <div class="tk-title" id="af-detail-name">Artefact</div>
+              <div class="tk-detail-sched" id="af-detail-sub"></div>
+            </div>
+            <button class="tk-close-btn" id="af-detail-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="af-canvas-wrap">
+            <iframe id="af-canvas" class="af-canvas" title="Artefact canvas" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
+          </div>
+          <div class="tk-footer">
+            <span class="hint" id="af-detail-msg"></span>
+            <div class="tk-footer-actions">
+              <button class="tk-btn" id="af-open-tab" type="button">↗ Open in new tab</button>
+              <button class="tk-btn tk-save" id="af-sync-now" type="button">↻ Sync now</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
     <!-- ── Main area: Usage & Cost ────────────────────────────────── -->
     <main class="pricing-view" id="pricing-view">
       <!-- Mobile topbar -->
@@ -1065,6 +1183,8 @@
   <script src="/static/tasks.js?v={{ v }}"></script>
   <script src="/static/files.js?v={{ v }}"></script>
   <script src="/static/jobs.js?v={{ v }}"></script>
+  <script src="/static/artefacts.js?v={{ v }}"></script>
+  <script src="/static/library.js?v={{ v }}"></script>
   <script src="/static/pricing.js?v={{ v }}"></script>
   {% if voice_enabled %}<script src="/static/voice.js?v={{ v }}"></script>{% endif %}
 </body>

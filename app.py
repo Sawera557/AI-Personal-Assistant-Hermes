@@ -157,6 +157,12 @@ app.include_router(jobs_router)
 # Review intelligence reports — /api/reviews/* routes live in hermes/reviews_api.py.
 from hermes.reviews_api import router as reviews_router
 app.include_router(reviews_router)
+# Artefacts (the Library tab) — /api/artefacts/* routes live in hermes/artefacts_api.py.
+from hermes.artefacts_api import router as artefacts_router
+app.include_router(artefacts_router)
+# Generated files (the Library tab's Files list) — hermes/generated_files_api.py.
+from hermes.generated_files_api import router as generated_files_router
+app.include_router(generated_files_router)
 
 # ---- Web UI (single-page chat with conversation history) ------------------
 _BASE_DIR = Path(__file__).resolve().parent
@@ -255,7 +261,7 @@ def _asset_version() -> int:
     """A version stamp that changes whenever a static asset changes, so browsers
     fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
     latest = 0.0
-    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js", "tasks.js", "context.js", "model.js", "files.js", "jobs.js"):
+    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js", "tasks.js", "context.js", "model.js", "files.js", "jobs.js", "artefacts.js", "library.js"):
         try:
             latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
         except OSError:

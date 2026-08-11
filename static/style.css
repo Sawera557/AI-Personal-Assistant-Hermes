@@ -535,6 +535,7 @@ body {
 .tasks-view   { display: none; }
 .files-view   { display: none; }
 .jobs-view    { display: none; }
+.artefacts-view { display: none; }
 .pricing-view { display: none; }
 .settings-view { display: none; }
 .app[data-view="agent"]   .chat         { display: flex; }
@@ -544,6 +545,7 @@ body {
 .app[data-view="tasks"]   .tasks-view   { display: flex; }
 .app[data-view="files"]   .files-view   { display: flex; }
 .app[data-view="jobs"]    .jobs-view    { display: flex; }
+.app[data-view="artefacts"] .artefacts-view { display: flex; }
 .app[data-view="pricing"] .pricing-view { display: flex; }
 .app[data-view="settings"] .settings-view { display: flex; }
 
@@ -551,7 +553,57 @@ body {
    Chat column
    ═══════════════════════════════════════════════════════════ */
 .chat {
-  flex: 1; flex-direction: column; min-width: 0; position: relative;
+  flex: 1; flex-direction: row; min-width: 0; position: relative;
+}
+/* The chat column (topbar + messages + composer) shrinks when the artefact
+   viewer docks to its right. */
+.chat-col {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;
+  position: relative;
+}
+
+/* ── Right-side artefact viewer ─────────────────────────────── */
+.artefact-side {
+  flex: 0 0 46%; max-width: 760px; min-width: 360px;
+  display: flex; flex-direction: column; min-height: 0;
+  border-left: 1px solid var(--border); background: var(--surface);
+  animation: rise 0.22s ease both;
+}
+.artefact-side[hidden] { display: none; }
+.artefact-side-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border-bottom: 1px solid var(--border);
+  background: var(--surface-2, var(--surface)); flex-shrink: 0;
+}
+.artefact-side-title {
+  font-weight: 650; font-size: 14px; letter-spacing: -.2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+}
+.artefact-side-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.artefact-side-btn {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 9px; padding: 6px 10px; font-size: 12.5px; cursor: pointer;
+}
+.artefact-side-btn:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.artefact-side-frame { flex: 1; width: 100%; border: 0; background: #fff; min-height: 0; }
+
+/* An artefact link rendered inside a chat bubble. */
+.artefact-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px; text-decoration: none;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent); font-weight: 600; font-size: 13px; cursor: pointer;
+  white-space: nowrap;
+}
+.artefact-chip:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+
+/* On narrow screens the viewer overlays the chat full-width instead of splitting. */
+@media (max-width: 860px) {
+  .artefact-side {
+    position: absolute; inset: 0; z-index: 40; max-width: none; min-width: 0;
+    flex-basis: auto;
+  }
 }
 
 /* Top bar — shown only on mobile */
@@ -1514,7 +1566,28 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
    ═══════════════════════════════════════════════════════════ */
 :root { --tk: #8b5cf6; --tk-2: #a78bfa; }
 
-.tasks-view, .jobs-view, .pricing-view { flex: 1; flex-direction: column; min-width: 0; position: relative; overflow: hidden; }
+.tasks-view, .jobs-view, .artefacts-view, .pricing-view { flex: 1; flex-direction: column; min-width: 0; position: relative; overflow: hidden; }
+
+/* ═══════════════════════════════════════════════════════════
+   Artefacts — card chips + live canvas modal
+   ═══════════════════════════════════════════════════════════ */
+.af-chip { display: inline-flex; align-items: center; gap: 5px; }
+.af-err-chip { color: #b6432b; }
+.tk-card-actions { display: flex; gap: 8px; justify-content: flex-end;
+  padding: 10px 16px; border-top: 1px solid var(--border); }
+
+/* Library sub-tabs (Artefacts | Files) */
+.lib-subtabs { display: flex; gap: 8px; margin: 0 0 16px; }
+.lib-subtab {
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.lib-subtab:hover { color: var(--text); border-color: var(--border-strong); }
+.lib-subtab.active { background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent); }
+.af-modal { width: min(1180px, 96vw); height: min(88vh, 900px); display: flex; flex-direction: column; }
+.af-canvas-wrap { flex: 1; min-height: 0; background: var(--surface-2, #f1f3f6); }
+.af-canvas { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
 
 /* ── Per-response token/cost footer under each assistant reply ── */
 .usage-line {
