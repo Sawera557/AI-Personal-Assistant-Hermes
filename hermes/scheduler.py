@@ -442,6 +442,14 @@ def execute_and_record(task: dict[str, Any], trigger: str = "schedule") -> dict[
             tool_calls=result.get("tool_calls") or [],
             set_next=False,
         )
+        # Deliver the result to any "notify to" address(es) on the task (and the
+        # owner, for the daily attention report). Done AFTER the run is persisted
+        # and guarded, so a send failure never loses the recorded outcome.
+        try:
+            from . import notify
+            notify.deliver_run_result(task, run_id, result)
+        except Exception as exc:  # noqa: BLE001 — delivery is best-effort
+            log.warning("deliver_run_result(%s) failed: %s", task_id, exc)
         return {"task_id": task_id, "run_id": run_id, "status": status, "reply": result.get("reply")}
     except Exception as exc:  # noqa: BLE001 — record, don't crash the whole batch
         log.warning("execute_and_record(%s) failed: %s", task_id, exc)

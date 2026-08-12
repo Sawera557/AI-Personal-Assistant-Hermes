@@ -803,6 +803,10 @@
               <label class="tk-auto-opt"><input type="radio" name="tk-autonomy" value="draft"><div><span class="tk-auto-name">Draft</span><span class="tk-auto-desc">Read-only, plus can prepare Gmail drafts for you to review &amp; send.</span></div></label>
               <label class="tk-auto-opt"><input type="radio" name="tk-autonomy" value="full"><div><span class="tk-auto-name">Full — act on my behalf</span><span class="tk-auto-desc">May send &amp; modify unattended. Only for tasks you fully trust.</span></div></label>
             </div>
+
+            <!-- Notify to (email the result + any files here on each run) -->
+            <label class="tk-label" for="tk-notify">Email the results to <span class="tk-hint-inline">(optional — the result + any files it produces are sent here after each run)</span></label>
+            <input type="text" id="tk-notify" class="tk-input" placeholder="you@example.com, someone@else.com" autocomplete="off" />
           </div>
 
           <div class="tk-footer">

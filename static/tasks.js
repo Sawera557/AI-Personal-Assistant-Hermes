@@ -356,6 +356,7 @@
       $("tk-prompt").value = task.prompt || "";
       $("tk-business").value = task.business || "all";
       $("tk-timezone").value = task.timezone || "America/Chicago";
+      $("tk-notify").value = task.notify_to || "";
       $("tk-enabled").checked = !!task.enabled;
       const s = task.schedule || {};
       sb = {
@@ -379,6 +380,7 @@
       $("tk-prompt").value = "";
       $("tk-business").value = HermesBiz.current || "all";
       $("tk-timezone").value = "America/Chicago";
+      $("tk-notify").value = "";
       $("tk-enabled").checked = true;
       sb = { frequency: "daily", times: ["07:00"], days: [] };
       setSelectedApps([]);
@@ -447,6 +449,7 @@
         allowed_apps: getSelectedApps(),
         autonomy: (document.querySelector('input[name="tk-autonomy"]:checked') || {}).value || "readonly",
         timezone: $("tk-timezone").value,
+        notify_to: $("tk-notify").value.trim(),
         enabled: $("tk-enabled").checked,
         schedule: {
           frequency: sb.frequency,
@@ -516,6 +519,7 @@
       `<div class="tk-detail-row">${bizChip(t.business)}${AUTONOMY_CHIP[t.autonomy] || ""}` +
       `<span class="tk-chip ${t.enabled ? "tk-chip-on" : "tk-chip-off"}">${t.enabled ? "● Enabled" : "❚❚ Paused"}</span></div>` +
       `<div class="tk-detail-line"><b>Apps:</b> ${esc(appsStr)}</div>` +
+      (t.notify_to ? `<div class="tk-detail-line"><b>📧 Emails results to:</b> ${esc(t.notify_to)}</div>` : "") +
       `<div class="tk-detail-line"><b>Next run:</b> ${t.enabled ? esc(fmtWhen(t.next_run_at)) : "—"}` +
       `  ·  <b>Timezone:</b> ${esc(t.timezone || "")}</div>`;
     $("tk-detail-prompt").innerHTML = `<b>Prompt</b><div class="tk-detail-prompt-body">${esc(t.prompt)}</div>`;
@@ -696,5 +700,15 @@
   window._tasksInit = function () {
     if (!inited) { bindOnce(); inited = true; }
     loadTasks();
+  };
+
+  // Deep-link entry: open one task's detail modal directly (used by the
+  // "#task/<id>" links in Hermes notification emails). Ensures the tab is
+  // initialized, then opens the detail (which fetches the task on its own).
+  window._tasksOpenDetail = function (taskId) {
+    if (!taskId) return;
+    if (!inited) { bindOnce(); inited = true; }
+    loadTasks();
+    openDetail(taskId);
   };
 })();

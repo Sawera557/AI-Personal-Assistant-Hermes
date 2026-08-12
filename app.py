@@ -37,6 +37,7 @@ import base64
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -118,6 +119,14 @@ async def _lifespan(_app: "FastAPI"):
             worldbank.prewarm()
         except Exception:  # noqa: BLE001
             pass
+        try:
+            # Ensure the once-a-day "attention report" scheduled task exists. Done
+            # here (not gated on the in-process poller) so it's present on Vercel
+            # too, where the external cron fires it. Idempotent — a no-op if set up.
+            from hermes import notify
+            notify.ensure_digest_task()
+        except Exception:  # noqa: BLE001 — never block startup on the digest setup
+            log.warning("Could not ensure the daily attention-report task", exc_info=True)
 
     threading.Thread(target=_go, daemon=True).start()
 
@@ -1663,6 +1672,23 @@ def _validate_window(window: dict | None) -> str | None:
     return None
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _normalize_notify_to(raw: str | None) -> tuple[str | None, str | None]:
+    """Validate the comma-separated 'notify to' recipient list.
+
+    Returns (normalized_or_None, error). An empty/blank value normalizes to None
+    (deliver nothing). Each token must look like an email address."""
+    tokens = [t.strip() for t in (raw or "").split(",") if t.strip()]
+    if not tokens:
+        return None, None
+    bad = [t for t in tokens if not _EMAIL_RE.match(t)]
+    if bad:
+        return None, f"Invalid notify-to email address(es): {', '.join(bad)}."
+    return ", ".join(tokens), None
+
+
 def _enrich_task(task: dict) -> dict:
     """Add the human schedule + window summaries the UI shows on each card."""
     if task:
@@ -1726,6 +1752,7 @@ class TaskCreateBody(BaseModel):
     timezone: str | None = None
     enabled: bool = True
     window: WindowBody | None = None   # optional backfill window
+    notify_to: str | None = None       # comma-separated email(s) to deliver results to
 
 
 @app.get("/api/scheduled-tasks")
@@ -1766,6 +1793,10 @@ async def create_scheduled_task(body: TaskCreateBody):
     if err := _validate_window(window):
         return JSONResponse({"error": err}, status_code=400)
 
+    notify_to, err = _normalize_notify_to(body.notify_to)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+
     business = (body.business or "").strip()
     entity_slug = None
     if business and business != "all":
@@ -1792,6 +1823,7 @@ async def create_scheduled_task(body: TaskCreateBody):
         window_end=(window["end"] if window else None),
         window_step=(window["step_days"] if window else 1),
         window_pace=win_pace,
+        notify_to=notify_to,
     )
     if not task_id:
         return JSONResponse({"error": "Could not create the task."}, status_code=500)
@@ -1847,6 +1879,8 @@ class TaskPatchBody(BaseModel):
     # Send `window: {...}` to set/replace the backfill window (restarts its
     # cursor); send `window: null` to clear it back to an ordinary task.
     window: WindowBody | None = None
+    # Send `notify_to: "a@x.com, b@y.com"` to set recipients; "" clears delivery.
+    notify_to: str | None = None
 
 
 @app.patch("/api/scheduled-tasks/{task_id}")
@@ -1883,6 +1917,12 @@ async def update_scheduled_task(task_id: str, body: TaskPatchBody):
         kwargs["timezone_name"] = body.timezone.strip()
     if "enabled" in sent:
         kwargs["enabled"] = body.enabled
+    if "notify_to" in sent:
+        notify_to, err = _normalize_notify_to(body.notify_to)
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        kwargs["notify_to"] = notify_to or ""   # "" clears delivery to NULL
+        kwargs["notify_to_set"] = True
     if "window" in sent:
         # window: {...} sets/replaces (restarts cursor); window: null clears it.
         window = body.window.model_dump() if body.window else None
