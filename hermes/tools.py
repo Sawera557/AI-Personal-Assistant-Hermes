@@ -14,6 +14,7 @@ from . import calendar as hermes_calendar
 from . import documents
 from . import email_attachments
 from . import extract
+from . import guardrails
 from . import storage
 from . import worldbank
 from .attachments import store as attachment_store
@@ -1066,6 +1067,51 @@ def build_tools(
             },
         })
 
+        tools.append({
+            "name": "set_guardrail",
+            "description": (
+                "Turn a safety guardrail on or off — ONLY when the user explicitly asks (e.g. "
+                "'stop asking me to confirm before sending', 'don't ask for approval on emails "
+                "anymore', 're-enable confirmations', or 'turn off business data isolation'). "
+                "Guardrails:\n"
+                "- 'confirm_writes': when on, Hermes pauses for the user's confirmation before any "
+                "external send/write (email, WhatsApp, Zoom invite, Jira, mutating maton_request); "
+                "when off, those run without asking.\n"
+                "- 'business_isolation': when on, knowledge retrieved from the vector store is "
+                "verified to belong to the business in scope and cross-business results are dropped; "
+                "when off, results are trusted by namespace only. (This protects against data leaks "
+                "— only disable it if the user clearly asks.)\n"
+                "`enabled`=false turns the guardrail off, true turns it on. `business` optionally "
+                "scopes the change to one entity (afk | gak | gif | gakc | nh | per); omit it to "
+                "change the global default. Never call this on your own initiative — only on the "
+                "user's clear instruction — and afterwards tell them exactly what you changed."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "guardrail": {"type": "string", "enum": sorted(guardrails._GUARDRAIL_KEYS)},
+                    "enabled": {"type": "boolean", "description": "false = turn the guardrail off; true = turn it on."},
+                    "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per — omit for the global default."},
+                },
+                "required": ["guardrail", "enabled"],
+            },
+        })
+
+    # Guardrail #1 plumbing: give tools the generic gate can hold a place to echo
+    # the approval_token back on the confirming re-call. Optional and ignored on
+    # the first call. email_with_attachment is excluded — it self-gates via its
+    # own confirm/draft_id flow. See hermes.guardrails.
+    for _t in tools:
+        if _t.get("name") in guardrails.APPROVAL_TOKEN_TOOLS:
+            _t["input_schema"]["properties"]["approval_token"] = {
+                "type": "string",
+                "description": (
+                    "Leave unset on the first call. If a prior call returned "
+                    "status='awaiting_confirmation', re-call with the SAME arguments plus the "
+                    "exact approval_token it gave you to proceed. Never invent one."
+                ),
+            }
+
     if restricted:
         tools = _restrict_tools(tools, allowed_set)
 
@@ -1137,6 +1183,7 @@ LOCAL_TOOLS = {
     "jira_search_issues", "jira_get_issue", "jira_create_issue", "jira_assign_issue",
     "create_scheduled_task", "list_scheduled_tasks",
     "update_scheduled_task", "delete_scheduled_task",
+    "set_guardrail",
     *WATI_TOOLS,
 }
 
@@ -2019,6 +2066,37 @@ def _delete_scheduled_task(tool_input: dict[str, Any], active_business: str | No
             "message": f"Deleted '{existing.get('name')}' and its run history."}
 
 
+_GUARDRAIL_STATE_LABELS = {
+    "confirm_writes": ("ON — Hermes will ask before writes/sends",
+                       "OFF — writes/sends run without asking"),
+    "business_isolation": ("ON — cross-business knowledge results are dropped",
+                           "OFF — knowledge results trusted by namespace only"),
+}
+
+
+def _set_guardrail(tool_input: dict[str, Any]) -> dict[str, Any]:
+    """Turn a guardrail on/off (durably, global or per-business) on the user's
+    explicit instruction. Validated against the guardrails registry."""
+    guardrail = (tool_input.get("guardrail") or "").strip()
+    if "enabled" not in tool_input:
+        return {"ok": False, "status": 400, "error": "Missing required argument: enabled"}
+    enabled = bool(tool_input.get("enabled"))
+    business = (tool_input.get("business") or "").strip() or None
+    try:
+        guardrails.set_guardrail_enabled(guardrail, enabled, business)
+    except KeyError:
+        known = ", ".join(sorted(guardrails._GUARDRAIL_KEYS))
+        return {"ok": False, "status": 400,
+                "error": f"Unknown guardrail: {guardrail!r}. Known guardrails: {known}."}
+    scope = business or "all businesses"
+    on_label, off_label = _GUARDRAIL_STATE_LABELS.get(guardrail, ("ON", "OFF"))
+    state = on_label if enabled else off_label
+    return {"ok": True, "status": 200, "data": {
+        "guardrail": guardrail, "enabled": enabled, "scope": scope,
+        "message": f"'{guardrail}' is now {state} for {scope}.",
+    }}
+
+
 def dispatch(
     name: str,
     tool_input: dict[str, Any],
@@ -2063,6 +2141,9 @@ def dispatch(
             result = _update_scheduled_task(tool_input, active_business)
         elif name == "delete_scheduled_task":
             result = _delete_scheduled_task(tool_input, active_business)
+        elif name == "set_guardrail":
+            # No Maton client — flips a safety setting in hermes_settings.
+            result = _set_guardrail(tool_input)
         elif name == "calendar_list_upcoming":
             # hermes.calendar resolves its own per-business Maton key internally.
             result = _calendar_list_upcoming(tool_input, active_business)

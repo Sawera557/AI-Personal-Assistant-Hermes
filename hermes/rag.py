@@ -27,8 +27,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from . import pinecone_store, vector_store
-from .businesses import to_entity_slug
+from . import guardrails, pinecone_store, vector_store
+from .businesses import to_business_slug, to_entity_slug
 from .config import Config
 from .db import documents as docs_repo
 from .db.connection import cursor
@@ -82,6 +82,10 @@ def federated_search(
         raise ValueError(f"Unknown entity: {entity_slug!r}")
     _entity_uuid, slug, region = resolved
 
+    # Guardrail #2 (business data isolation): pass the intended business's identity
+    # down so the Pinecone reader can drop any match belonging to another business.
+    _enforce_isolation = guardrails.business_isolation_enabled(to_business_slug(slug))
+
     if query_vector is None:
         try:
             query_vector = embed([text])[0]
@@ -114,6 +118,8 @@ def federated_search(
             region=region,
             top_k=top_k,
             max_sensitivity=max_sensitivity,
+            verify_entity_id=(_entity_uuid if _enforce_isolation else None),
+            verify_entity_slug=(slug if _enforce_isolation else None),
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:

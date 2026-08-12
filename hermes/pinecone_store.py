@@ -52,6 +52,32 @@ def _allowed_sensitivities(max_level: str) -> list[str]:
     return SENSITIVITY_ORDER[: cutoff + 1]
 
 
+# Guardrail #2 (business data isolation): metadata keys the ingestion-service may
+# use to stamp which business a vector belongs to. We check all of them so the
+# verification is robust to the exact key/format the writer chose (docs say
+# `entity_id` = the entity UUID).
+_BUSINESS_META_KEYS = ("entity_id", "entity_slug", "business", "entity", "tenant")
+
+
+def _business_ok(
+    md: dict[str, Any], expected_id: str | None, expected_slug: str | None
+) -> bool:
+    """Whether a match's metadata is consistent with the requested business.
+
+    Returns True if the match carries no readable business tag (the namespace
+    already isolated it) OR any readable tag matches the expected UUID/slug.
+    Returns False only when a business tag is present AND none of them match —
+    i.e. a genuine cross-business result that must be dropped.
+    """
+    expected = {str(v).lower() for v in (expected_id, expected_slug) if v}
+    if not expected:
+        return True
+    found = [str(md[k]).lower() for k in _BUSINESS_META_KEYS if md.get(k) not in (None, "")]
+    if not found:
+        return True  # untagged vector — namespace is the guard, keep it
+    return any(f in expected for f in found)
+
+
 # ---- Client (lazy, cached) -------------------------------------------------
 _pc = None
 
@@ -78,6 +104,8 @@ def query(
     region: str | None = None,
     top_k: int = 6,
     max_sensitivity: str = "confidential",
+    verify_entity_id: str | None = None,
+    verify_entity_slug: str | None = None,
 ) -> list[dict[str, Any]]:
     """Meaning search within ONE business's Pinecone namespace, with the same
     guards the pgvector reader applies. Returns [] on any failure (disabled,
@@ -87,8 +115,19 @@ def query(
     Pass a precomputed `query_vector` (1536-dim, text-embedding-3-small) to skip
     the embedding call — the federated reader shares one embedding across this
     and the pgvector query.
+
+    Guardrail #2: when `verify_entity_id`/`verify_entity_slug` are given (the
+    business we intend to serve), each returned match is checked against its
+    metadata and any match belonging to a DIFFERENT business is dropped and logged
+    — defense-in-depth over the namespace so a wrong namespace can't leak.
     """
     if not Config.rag_pinecone_enabled():
+        return []
+
+    # Never query without a real namespace — an empty slug would build the
+    # `entity__` catch-all and could scan across businesses.
+    if not (entity_slug or "").strip():
+        log.warning("Pinecone query skipped: empty entity_slug (no namespace)")
         return []
 
     try:
@@ -119,9 +158,20 @@ def query(
         log.warning("Pinecone query failed for %s", entity_slug, exc_info=True)
         return []
 
+    verify = bool(verify_entity_id or verify_entity_slug)
     out: list[dict[str, Any]] = []
+    dropped = 0
+    sample_bad: str | None = None
     for m in res.get("matches", []) or []:
         md = m.get("metadata") or {}
+        if verify and not _business_ok(md, verify_entity_id, verify_entity_slug):
+            dropped += 1
+            if sample_bad is None:
+                sample_bad = next(
+                    (str(md[k]) for k in _BUSINESS_META_KEYS if md.get(k) not in (None, "")),
+                    "?",
+                )
+            continue
         out.append(
             {
                 "vector_id": m.get("id"),
@@ -133,5 +183,12 @@ def query(
                 "text": md.get("text"),
                 "origin": "pinecone",
             }
+        )
+    if dropped:
+        # A caught cross-business leak — loud on purpose so it's auditable.
+        log.error(
+            "business_isolation: dropped %d Pinecone match(es) not belonging to "
+            "namespace %s (expected entity_id=%s / slug=%s, sample foreign id=%s)",
+            dropped, entity_namespace(entity_slug), verify_entity_id, verify_entity_slug, sample_bad,
         )
     return out

@@ -381,6 +381,10 @@ def run_task(task: dict[str, Any]) -> dict[str, Any]:
             voice=False,
             active_business=business,
             allowed_apps=allowed_apps,
+            # Unattended run: no human to confirm with. The confirm-before-write
+            # guardrail no-ops here; the task's autonomy tier (readonly/draft/full)
+            # is the safety gate instead — see build_run_prompt / _AUTONOMY_GUARDRAIL.
+            interactive=False,
         )
     finally:
         # Never let a scheduled run accumulate working memory across fires.

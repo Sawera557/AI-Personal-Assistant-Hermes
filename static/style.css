@@ -177,6 +177,10 @@ body {
 
 .app.panel-collapsed .content-panel { width: 0; }
 
+/* Settings has no per-view sidebar — collapse the content panel entirely so the
+   main pane goes full-width (no blank sidebar area). */
+.app[data-view="settings"] .content-panel { width: 0; border-right: 0; }
+
 /* Each panel-section stays at the full panel width so it clips cleanly
    during the collapse animation rather than reflowing. */
 .panel-section {
@@ -532,6 +536,7 @@ body {
 .files-view   { display: none; }
 .jobs-view    { display: none; }
 .pricing-view { display: none; }
+.settings-view { display: none; }
 .app[data-view="agent"]   .chat         { display: flex; }
 .app[data-view="bills"]   .bills-view   { display: flex; }
 .app[data-view="meeting"] .meeting-view { display: flex; }
@@ -540,6 +545,7 @@ body {
 .app[data-view="files"]   .files-view   { display: flex; }
 .app[data-view="jobs"]    .jobs-view    { display: flex; }
 .app[data-view="pricing"] .pricing-view { display: flex; }
+.app[data-view="settings"] .settings-view { display: flex; }
 
 /* ═══════════════════════════════════════════════════════════
    Chat column
@@ -1655,6 +1661,48 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
   border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
 .tk-toggle input:checked + .tk-toggle-track { background: rgba(139,92,246,.55); border-color: var(--tk); }
 .tk-toggle input:checked + .tk-toggle-track::before { transform: translateX(16px); background: #fff; }
+
+/* ═══════════════════════════════════════════════════════════
+   Settings view — options sub-nav + guardrail toggles
+   ═══════════════════════════════════════════════════════════ */
+.settings-view { flex: 1; flex-direction: column; min-width: 0; }
+.settings-layout { display: flex; flex: 1; min-height: 0; }
+.settings-nav {
+  flex: 0 0 200px; border-right: 1px solid var(--border);
+  padding: 20px 12px; display: flex; flex-direction: column; gap: 4px;
+}
+.settings-nav-item {
+  text-align: left; padding: 9px 12px; border-radius: 10px;
+  background: transparent; border: 0; color: var(--muted);
+  font: inherit; font-size: 14px; cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.settings-nav-item:hover { background: var(--surface); color: var(--text); }
+.settings-nav-item.active { background: var(--surface-2); color: var(--text); font-weight: 600; }
+.settings-content { flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px; }
+.settings-section { display: none; max-width: 720px; }
+.settings-section.visible { display: block; }
+
+.guardrails-list { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+.guardrail-row {
+  display: flex; align-items: flex-start; gap: 18px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 18px;
+}
+.guardrail-info { flex: 1; min-width: 0; }
+.guardrail-label { font-size: 15px; font-weight: 600; color: var(--text); }
+.guardrail-desc { margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.guardrail-row .tk-toggle { margin-top: 3px; }
+#guardrails-status.error, .hint.error { color: #ff6b6b; }
+
+@media (max-width: 760px) {
+  .settings-layout { flex-direction: column; }
+  .settings-nav {
+    flex: none; flex-direction: row; overflow-x: auto;
+    border-right: 0; border-bottom: 1px solid var(--border); padding: 12px;
+  }
+  .settings-content { padding: 20px 18px; }
+}
 
 /* Empty state */
 .tasks-empty { text-align: center; margin: 40px auto; max-width: 440px; padding: 24px; }

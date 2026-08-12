@@ -94,6 +94,13 @@
             </svg>
             <span>Usage</span>
           </button>
+          <button class="strip-tab" type="button" data-view="settings" title="Settings">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            <span>Settings</span>
+          </button>
         </div>
 
         <button class="strip-toggle" id="strip-toggle" type="button" title="Toggle sidebar">
@@ -994,6 +1001,35 @@
       </div>
     </main>
 
+    <!-- ── Main area: Settings ────────────────────────────────────── -->
+    <main class="settings-view" id="settings-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-settings" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(139,92,246,.18);font-size:15px;">⚙️</span> Settings</div>
+      </header>
+
+      <div class="settings-layout">
+        <aside class="settings-nav">
+          <button class="settings-nav-item active" type="button" data-settings="guardrails">Guardrails</button>
+        </aside>
+        <section class="settings-content">
+          <div class="settings-section visible" id="settings-guardrails">
+            <div class="tasks-pg-header">
+              <div>
+                <h2 class="tasks-pg-title">Guardrails</h2>
+                <p class="tasks-pg-sub">Safety gates that limit what Hermes does automatically. Toggle each on or off — changes apply to every conversation on its next turn.</p>
+              </div>
+            </div>
+            <div id="guardrails-list" class="guardrails-list"></div>
+            <p class="hint" id="guardrails-status" hidden></p>
+          </div>
+        </section>
+      </div>
+    </main>
+
   </div><!-- /app -->
 
   {% if voice_enabled %}
@@ -1023,6 +1059,7 @@
   <script src="/static/context.js?v={{ v }}"></script>
   <script src="/static/model.js?v={{ v }}"></script>
   <script src="/static/app.js?v={{ v }}"></script>
+  <script src="/static/settings.js?v={{ v }}"></script>
   <script src="/static/bills.js?v={{ v }}"></script>
   <script src="/static/meeting.js?v={{ v }}"></script>
   <script src="/static/tasks.js?v={{ v }}"></script>
