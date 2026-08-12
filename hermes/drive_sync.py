@@ -363,7 +363,12 @@ def _sync_business(
         return _process_one(slug, client, c, cats.get(c["id"], "Other"), max_file_bytes)
 
     def _tally(res: dict[str, Any]) -> None:
-        counts[res["outcome"]] += 1
+        # _process_one reports the SINGULAR "error"; the counter key is "errors".
+        # Any unrecognised label is counted there too rather than raising: a
+        # KeyError here escapes into run()'s per-business handler, which drops
+        # the whole sweep — so one unreadable file would strand every file
+        # behind it, and report the business as 0 synced.
+        counts[res["outcome"] if res["outcome"] in counts else "errors"] += 1
         if res.get("exported"):
             counts["exported"] += 1
         if res["outcome"] in _ADDED_OUTCOMES:
