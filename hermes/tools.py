@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import uuid
 from email.message import EmailMessage
 from typing import Any
@@ -26,6 +27,8 @@ from .businesses import (
 from .config import Config
 from .maton import MatonClient, MatonError
 from .wati import WatiClient
+
+log = logging.getLogger("hermes.tools")
 
 # Sentinel meaning "no single business scoped — fan out across all connected
 # businesses" (as opposed to None, which means "no business context at all",
@@ -1066,6 +1069,87 @@ def build_tools(
                 "required": ["task_id"],
             },
         })
+        tools.append({
+            "name": "create_artefact",
+            "description": (
+                "Create a live ARTEFACT — a saved, re-openable HTML view (a 'canvas') bound to a "
+                "data source, that shows up in the Artefacts tab. Unlike create_file (a one-off "
+                "download), an artefact RE-FETCHES its source and re-renders every time it's opened, "
+                "so it always reflects the CURRENT data. Use this when the user wants a living "
+                "dashboard/table/report from one of their documents — e.g. 'make a live view of this "
+                "budget sheet', 'pin this doc as an artefact', 'keep this Drive report handy'. "
+                "Pick `source_type`: 'sheets' (a Google Sheet — give `spreadsheet_id` and an A1 "
+                "`range` like 'Sheet1!A1:F200'), 'drive' (a Drive file — give `file_id`), 'docs' (a "
+                "Google Doc — give `document_id`), or 'reviews' (wrap the review-intelligence report "
+                "for a `date`). Get the id from a prior maton_request/drive_read_file listing. "
+                "`render`: 'dashboard' (RICH — KPI cards + live charts drawn from the sheet; prefer "
+                "this for anything numeric/financial so the user gets graphs, not just a grid), "
+                "'table' (default for sheets — first row treated as a header), 'kv' (key/value from a "
+                "2-column sheet), or 'raw' (a doc's text or a Drive file embed). "
+                "For render='dashboard' you may add `kpis` (headline stat cards) and `charts` (bar / "
+                "doughnut / line), plus `table:true` to append the full table and `description` for an "
+                "intro line. Charts aggregate LIVE sheet columns — reference columns by their header "
+                "name. A chart = {type:'bar'|'doughnut'|'line', title, group_by:<column to group by>, "
+                "value:<numeric column to sum>, agg:'sum'|'count'|'avg'|'max'|'min', bucket:'month' "
+                "(only for a date group_by → monthly trend), limit:<top N>}. A kpi = {label, "
+                "column:<numeric column>, agg:'sum'|'avg'|'max'|'min'|'count'}. Charts only reflect "
+                "columns that EXIST in the sheet, so if you want e.g. spend-by-category, make sure the "
+                "sheet has a Category column. "
+                "`business` scopes it (afk/gak/gif/gakc/nh/per) and defaults to the conversation's "
+                "current business — the source is read with that business's connection every time it "
+                "opens, so it must be the business that owns the document. After creating, share the "
+                "returned `url` so the user can open the artefact; if `warning` is set, the source "
+                "couldn't be read yet — tell the user."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short display name for the artefact."},
+                    "source_type": {"type": "string", "enum": ["sheets", "drive", "docs", "reviews"]},
+                    "spreadsheet_id": {"type": "string", "description": "For source_type=sheets: the Google Sheet id."},
+                    "range": {"type": "string", "description": "For source_type=sheets: an A1 range, e.g. 'Sheet1!A1:F200'. Defaults to A1:Z1000."},
+                    "file_id": {"type": "string", "description": "For source_type=drive: the Drive file id."},
+                    "document_id": {"type": "string", "description": "For source_type=docs: the Google Doc id."},
+                    "date": {"type": "string", "description": "For source_type=reviews: the report date 'YYYY-MM-DD'."},
+                    "render": {"type": "string", "enum": ["dashboard", "table", "kv", "raw"], "description": "How to render the data. 'dashboard' gives KPI cards + charts. Defaults to table for sheets."},
+                    "columns": {"type": "array", "items": {"type": "string"}, "description": "Optional: for a table, only show these columns (by header name)."},
+                    "description": {"type": "string", "description": "For render=dashboard: an intro line shown under the heading."},
+                    "kpis": {
+                        "type": "array",
+                        "description": "For render=dashboard: headline stat cards.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "column": {"type": "string", "description": "Numeric column to aggregate (omit for agg=count)."},
+                                "agg": {"type": "string", "enum": ["sum", "avg", "max", "min", "count"]},
+                            },
+                            "required": ["label"],
+                        },
+                    },
+                    "charts": {
+                        "type": "array",
+                        "description": "For render=dashboard: charts drawn from live sheet columns.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "enum": ["bar", "doughnut", "line"]},
+                                "title": {"type": "string"},
+                                "group_by": {"type": "string", "description": "Column to group rows by (a date column with bucket='month' for a trend)."},
+                                "value": {"type": "string", "description": "Numeric column to aggregate (omit for agg=count)."},
+                                "agg": {"type": "string", "enum": ["sum", "count", "avg", "max", "min"]},
+                                "bucket": {"type": "string", "enum": ["month"], "description": "Only for a date group_by → monthly buckets."},
+                                "limit": {"type": "integer", "description": "Keep only the top N groups (by value)."},
+                            },
+                            "required": ["type", "group_by"],
+                        },
+                    },
+                    "table": {"type": "boolean", "description": "For render=dashboard: also append the full data table."},
+                    "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per (the business whose connection owns the source)."},
+                },
+                "required": ["title", "source_type"],
+            },
+        })
 
         tools.append({
             "name": "set_guardrail",
@@ -1184,6 +1268,7 @@ LOCAL_TOOLS = {
     "create_scheduled_task", "list_scheduled_tasks",
     "update_scheduled_task", "delete_scheduled_task",
     "set_guardrail",
+    "create_artefact",
     *WATI_TOOLS,
 }
 
@@ -1363,12 +1448,25 @@ def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dic
     if not download_url:
         raise MatonError("File was written but a download link could not be generated.")
 
+    # Index it so it's browsable in the Library tab and re-downloadable after the
+    # presigned link above expires. Best-effort — never fail file creation on it.
+    business_slug = scope if scope != "general" else None
+    try:
+        from .db import generated_files as gen_files_db
+        gen_files_db.record_file(
+            entity_slug=to_entity_slug(business_slug) if business_slug else None,
+            business_slug=business_slug, filename=filename, content_type=content_type,
+            s3_uri=s3_uri, size_bytes=len(raw),
+        )
+    except Exception as exc:  # noqa: BLE001 — indexing is non-critical
+        log.warning("Could not index generated file %s: %s", filename, exc)
+
     return {
         "ok": True,
         "filename": filename,
         "content_type": content_type,
         "size_bytes": len(raw),
-        "business": scope if scope != "general" else None,
+        "business": business_slug,
         "download_url": download_url,
         "expires_in_hours": _CREATED_FILE_LINK_EXPIRES // 3600,
         # s3_uri lets you read this file back later with `read_document` (e.g. to
@@ -1505,28 +1603,76 @@ def _wati_send_file_args(
     raise MatonError("Provide either `attachment_id` or `file_url`.")
 
 
+def drive_fetch(client: MatonClient, file_id: str) -> dict[str, Any]:
+    """Fetch a Drive file's metadata and — for PDF/JPEG/PNG — its real bytes,
+    through Maton. Shared by `_drive_read_file` (the chat tool) and
+    `hermes/artefacts.py` (the live canvas) so the metadata + magic-byte + size
+    checks live in exactly one place.
+
+    Returns a dict:
+      {ok, readable, name, mime, web_link, raw, size_bytes, note, resp}
+    `ok` is False only when the Drive *metadata* call itself failed (`resp`
+    carries the Maton envelope to return verbatim). When `ok` but `readable` is
+    False, `note` explains why and `raw` is None (the caller should surface
+    `web_link`). When `readable`, `raw` holds the verified bytes."""
+    meta_resp = client.request(
+        "google-drive", "GET", f"drive/v3/files/{file_id}",
+        query={"fields": "id,name,mimeType,webViewLink"},
+    )
+    if not meta_resp.get("ok"):
+        return {
+            "ok": False, "readable": False, "name": None, "mime": None,
+            "web_link": None, "raw": None, "size_bytes": 0, "note": None,
+            "resp": meta_resp,
+        }
+
+    meta = meta_resp.get("data") or {}
+    name = meta.get("name", "untitled")
+    mime = (meta.get("mimeType") or "").lower()
+    web_link = meta.get("webViewLink")
+
+    def _out(readable: bool, raw: bytes | None, note: str | None) -> dict[str, Any]:
+        return {
+            "ok": True, "readable": readable, "name": name, "mime": mime,
+            "web_link": web_link, "raw": raw,
+            "size_bytes": len(raw) if raw else 0, "note": note, "resp": meta_resp,
+        }
+
+    if mime not in _DRIVE_READABLE_MIMES:
+        return _out(False, None, "Not a PDF/JPEG/PNG — share the webViewLink with the user instead.")
+
+    dl = client.download_binary(
+        "google-drive", "GET", f"drive/v3/files/{file_id}", query={"alt": "media"},
+    )
+    raw = dl.get("raw") or b""
+    magic_ok = any(raw[: len(m)] == m for m in _DRIVE_MAGIC.get(mime, ()))
+    if not dl.get("ok") or not magic_ok:
+        return _out(False, None, "Couldn't fetch readable binary content for this file — share the webViewLink with the user instead.")
+    if len(raw) > _MAX_FETCH_BYTES:
+        return _out(
+            False, None,
+            f"File exceeds the {_MAX_FETCH_BYTES // (1024 * 1024)}MB limit for inline "
+            "reading — share the webViewLink with the user instead.",
+        )
+    return _out(True, raw, None)
+
+
 def _drive_read_file(
     client: MatonClient, tool_input: dict[str, Any], active_business: str | None
 ) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]] | None]:
     """Download a Drive file's real bytes through Maton and hand them back as a
     native document/image content block so Claude can read the file directly —
     no OCR step needed. Falls back to metadata + webViewLink when the type
-    isn't PDF/JPEG/PNG, or the gateway can't proxy real binary content for it
-    (checked via magic bytes — the same check ingestion-service's Drive
-    connector uses, which proved this `alt=media` download path works)."""
+    isn't PDF/JPEG/PNG, or the gateway can't proxy real binary content for it."""
     file_id = tool_input["file_id"]
 
-    meta_resp = client.request(
-        "google-drive", "GET", f"drive/v3/files/{file_id}",
-        query={"fields": "id,name,mimeType,webViewLink"},
-    )
-    if not meta_resp.get("ok"):
-        return meta_resp, None, None
+    f = drive_fetch(client, file_id)
+    if not f["ok"]:
+        return f["resp"], None, None
 
-    meta = meta_resp.get("data") or {}
-    name = meta.get("name", "untitled")
-    mime = (meta.get("mimeType") or "").lower()
-    web_link = meta.get("webViewLink")
+    name = f["name"]
+    mime = f["mime"]
+    web_link = f["web_link"]
 
     def _locator(note: str) -> dict[str, Any]:
         return {
@@ -1538,25 +1684,10 @@ def _drive_read_file(
             },
         }
 
-    if mime not in _DRIVE_READABLE_MIMES:
-        return _locator("Not a PDF/JPEG/PNG — share the webViewLink with the user instead."), None, None
+    if not f["readable"]:
+        return _locator(f["note"]), None, None
 
-    dl = client.download_binary(
-        "google-drive", "GET", f"drive/v3/files/{file_id}", query={"alt": "media"},
-    )
-    raw: bytes = dl.get("raw") or b""
-    magic_ok = any(raw[: len(m)] == m for m in _DRIVE_MAGIC.get(mime, ()))
-    if not dl.get("ok") or not magic_ok:
-        return _locator(
-            "Couldn't fetch readable binary content for this file — share the "
-            "webViewLink with the user instead."
-        ), None, None
-    if len(raw) > _MAX_FETCH_BYTES:
-        return _locator(
-            f"File exceeds the {_MAX_FETCH_BYTES // (1024 * 1024)}MB limit for inline "
-            "reading — share the webViewLink with the user instead."
-        ), None, None
-
+    raw: bytes = f["raw"]
     b64 = base64.standard_b64encode(raw).decode("utf-8")
     block_type = "document" if mime == "application/pdf" else "image"
     block: dict[str, Any] = {
@@ -1942,6 +2073,123 @@ def _create_scheduled_task(tool_input: dict[str, Any], active_business: str | No
     }
 
 
+def _create_artefact(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Create a live artefact from a chat request: persist the source binding +
+    render recipe, then do one initial sync to validate the source and warm the
+    cache. The artefact re-renders from its live source on every open (no LLM)."""
+    from . import artefacts as artefacts_engine
+    from .db import artefacts as artefacts_db
+
+    title = (tool_input.get("title") or "").strip()
+    source_type = (tool_input.get("source_type") or "").strip().lower()
+    if not title:
+        return {"ok": False, "status": 400, "error": "A title is required."}
+    if source_type not in artefacts_engine.VALID_SOURCE_TYPES:
+        return {"ok": False, "status": 400,
+                "error": f"source_type must be one of {sorted(artefacts_engine.VALID_SOURCE_TYPES)}."}
+
+    # Resolve the owning business. 'reviews' is cross-business/public, so business
+    # is optional there; every other type needs a connection to read its source.
+    business = (tool_input.get("business") or "").strip().lower()
+    if not business:
+        business = active_business if (active_business and active_business != ALL_BUSINESSES) else ""
+    entity_slug = None
+    if source_type != "reviews":
+        if not business:
+            return {"ok": False, "status": 400,
+                    "error": "A business is required for this source — set `business` to the entity "
+                             "that owns the document (afk/gak/gif/gakc/nh/per)."}
+        entity_slug = to_entity_slug(business)
+        if not entity_slug:
+            return {"ok": False, "status": 400,
+                    "error": f"Unknown business '{business}'. Valid: {sorted(BUSINESS_TO_ENTITY_SLUG)}."}
+        if not Config.maton_key_for_slug(business):
+            return {"ok": False, "status": 400,
+                    "error": f"'{business}' has no Maton connection configured, so its documents can't be read."}
+
+    # Build the source binding from the type-specific fields.
+    binding: dict[str, Any] = {}
+    if source_type == "sheets":
+        sid = (tool_input.get("spreadsheet_id") or "").strip()
+        if not sid:
+            return {"ok": False, "status": 400, "error": "spreadsheet_id is required for a sheets artefact."}
+        binding = {"spreadsheet_id": sid, "range": (tool_input.get("range") or "").strip()}
+    elif source_type == "drive":
+        fid = (tool_input.get("file_id") or "").strip()
+        if not fid:
+            return {"ok": False, "status": 400, "error": "file_id is required for a drive artefact."}
+        binding = {"file_id": fid}
+    elif source_type == "docs":
+        did = (tool_input.get("document_id") or "").strip()
+        if not did:
+            return {"ok": False, "status": 400, "error": "document_id is required for a docs artefact."}
+        binding = {"document_id": did}
+    elif source_type == "reviews":
+        binding = {"date": (tool_input.get("date") or "").strip()}
+
+    # Render recipe.
+    render = (tool_input.get("render") or "").strip().lower()
+    if render and render not in ("table", "kv", "raw", "dashboard"):
+        return {"ok": False, "status": 400, "error": "render must be one of dashboard, table, kv, raw."}
+    recipe: dict[str, Any] = {"title": title}
+    if render:
+        recipe["render"] = render
+    cols = [c.strip() for c in (tool_input.get("columns") or []) if isinstance(c, str) and c.strip()]
+    if cols:
+        recipe["columns"] = cols
+
+    if render == "dashboard":
+        # Keep only known keys so a malformed spec can't reach the renderer.
+        kpis = []
+        for k in tool_input.get("kpis") or []:
+            if isinstance(k, dict) and k.get("label"):
+                kpis.append({key: k[key] for key in ("label", "column", "agg") if k.get(key) is not None})
+        charts = []
+        for c in tool_input.get("charts") or []:
+            if isinstance(c, dict) and c.get("group_by"):
+                charts.append({key: c[key] for key in ("type", "title", "group_by", "value", "agg", "bucket", "limit", "sort")
+                               if c.get(key) is not None})
+        if kpis:
+            recipe["kpis"] = kpis
+        if charts:
+            recipe["charts"] = charts
+        if tool_input.get("table"):
+            recipe["table"] = True
+        if tool_input.get("description"):
+            recipe["description"] = str(tool_input["description"])
+
+    artefact_id = artefacts_db.create_artefact(
+        entity_slug=entity_slug, business_slug=(business or None), title=title,
+        source_type=source_type, source_binding=binding, render_recipe=recipe,
+    )
+    if not artefact_id:
+        return {"ok": False, "status": 500, "error": "Could not create the artefact (storage error)."}
+
+    # One initial sync validates readability + warms the cache. A failure still
+    # leaves the artefact created (last_error stored) — surface it as a warning.
+    warning = None
+    try:
+        artefacts_engine.sync_and_render(artefact_id)
+    except Exception as exc:  # noqa: BLE001 — never fail creation on a fetch blip
+        warning = f"Created, but the source couldn't be read yet: {exc}"
+    art = artefacts_db.get_artefact(artefact_id) or {}
+    if not warning and art.get("last_error"):
+        warning = f"Created, but the source couldn't be read yet: {art['last_error']}"
+
+    result = {
+        "ok": True, "status": 200, "artefact_id": artefact_id, "title": title,
+        "source_type": source_type, "business": business or None,
+        "url": f"/api/artefacts/{artefact_id}/view",
+        "last_synced_at": art.get("last_synced_at"),
+        "message": (f"Artefact '{title}' created — it's in the Artefacts tab and re-syncs with its "
+                    "source every time it's opened. ALWAYS end your reply with the artefact link as a "
+                    f"markdown link so the user can open it, e.g. [Open “{title}”](/api/artefacts/{artefact_id}/view)."),
+    }
+    if warning:
+        result["warning"] = warning
+    return result
+
+
 def _list_scheduled_tasks(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
     """List existing Scheduled Tasks, optionally scoped to a business."""
     from . import scheduler as sched
@@ -2144,6 +2392,10 @@ def dispatch(
         elif name == "set_guardrail":
             # No Maton client — flips a safety setting in hermes_settings.
             result = _set_guardrail(tool_input)
+        elif name == "create_artefact":
+            # No Maton client here — the handler builds its own per-business
+            # client for the initial validation sync from the resolved slug.
+            result = _create_artefact(tool_input, active_business)
         elif name == "calendar_list_upcoming":
             # hermes.calendar resolves its own per-business Maton key internally.
             result = _calendar_list_upcoming(tool_input, active_business)
@@ -2286,6 +2538,7 @@ _TOOL_STATUS: dict[str, str] = {
     "list_scheduled_tasks": "🗓️ Checking your scheduled tasks…",
     "update_scheduled_task": "🗓️ Updating your scheduled task…",
     "delete_scheduled_task": "🗓️ Removing that scheduled task…",
+    "create_artefact": "🎨 Building your artefact…",
     "wati_list_contacts": "💬 Looking up WhatsApp contacts…",
     "wati_add_contact": "💬 Adding a WhatsApp contact…",
     "wati_update_contact_attributes": "💬 Updating contact info…",

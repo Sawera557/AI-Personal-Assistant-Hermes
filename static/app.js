@@ -119,6 +119,61 @@ function renderUserText(text) {
   return escapeHtml(String(text)).replace(/\n/g, "<br>");
 }
 
+// ---- Artefact links in chat ----
+// Any /api/artefacts/{uuid}/view URL an assistant reply contains — whether the
+// model wrote it as a markdown link or as bare text — is turned into a chip that
+// opens the right-side artefact viewer (with a new-tab fallback on the chip).
+const ARTEFACT_URL_RE =
+  /(?:https?:\/\/[^\s/"']+)?\/api\/artefacts\/([0-9a-fA-F-]{36})\/view(?:\?[^\s"'<>]*)?/;
+
+function artefactChipNode(id, label) {
+  const a = document.createElement("a");
+  a.className = "artefact-chip";
+  a.href = `/api/artefacts/${id}/view`;
+  a.dataset.artefactId = id;
+  a.textContent = `🎨 ${label || "Open artefact"}`;
+  return a;
+}
+
+function enhanceArtefactLinks(container) {
+  if (!container) return;
+  // 1) Existing anchors already pointing at an artefact view.
+  container.querySelectorAll('a[href*="/api/artefacts/"]').forEach((a) => {
+    const m = a.getAttribute("href").match(ARTEFACT_URL_RE);
+    if (!m) return;
+    a.classList.add("artefact-chip");
+    a.dataset.artefactId = m[1];
+    const label = a.textContent.trim();
+    if (!label || /\/api\/artefacts\//.test(label)) a.textContent = "🎨 Open artefact";
+    else if (!label.startsWith("🎨")) a.textContent = `🎨 ${label}`;
+  });
+  // 2) Bare URLs sitting in plain text (the model often prints the raw path).
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!ARTEFACT_URL_RE.test(node.nodeValue || "")) return NodeFilter.FILTER_REJECT;
+      if (node.parentNode && node.parentNode.closest && node.parentNode.closest("a"))
+        return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets = [];
+  while (walker.nextNode()) targets.push(walker.currentNode);
+  const re = new RegExp(ARTEFACT_URL_RE.source, "g");
+  targets.forEach((node) => {
+    const s = node.nodeValue;
+    const frag = document.createDocumentFragment();
+    let last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(s))) {
+      if (m.index > last) frag.appendChild(document.createTextNode(s.slice(last, m.index)));
+      frag.appendChild(artefactChipNode(m[1]));
+      last = m.index + m[0].length;
+    }
+    if (last < s.length) frag.appendChild(document.createTextNode(s.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  });
+}
+
 // Apply syntax highlighting to any code blocks inside a container.
 function highlightCode(container) {
   if (!window.hljs || !container) return;
@@ -204,8 +259,53 @@ document.addEventListener("keydown", (e) => {
 // Event delegation: images render asynchronously (streaming + history replay),
 // so listen on the whole message list instead of binding per-<img>.
 messagesEl.addEventListener("click", (e) => {
+  const chip = e.target.closest("a[data-artefact-id]");
+  if (chip) {
+    // Plain click opens the docked viewer; ctrl/cmd/middle-click keeps the
+    // browser's native "open in new tab" (the anchor href stays valid).
+    if (e.metaKey || e.ctrlKey || e.button === 1) return;
+    e.preventDefault();
+    openArtefactPanel(chip.dataset.artefactId, "");
+    return;
+  }
   const img = e.target.closest(".tool-media-img");
   if (img && img.src) openLightbox(img.src, img.alt);
+});
+
+// ---- Right-side artefact viewer ----
+const artefactSideEl = document.getElementById("artefact-side");
+let _artefactSideId = null;
+const artefactViewUrl = (id, refresh) =>
+  `/api/artefacts/${encodeURIComponent(id)}/view${refresh ? "?refresh=1&_=" + Date.now() : ""}`;
+
+function openArtefactPanel(id, title) {
+  if (!artefactSideEl) { window.open(artefactViewUrl(id, true), "_blank", "noopener"); return; }
+  _artefactSideId = id;
+  const titleEl = document.getElementById("artefact-side-title");
+  titleEl.textContent = title || "Artefact";
+  document.getElementById("artefact-side-frame").src = artefactViewUrl(id, true);
+  artefactSideEl.hidden = false;
+  appEl.classList.add("artefact-side-open");
+  if (!title) {
+    fetch(`/api/artefacts/${encodeURIComponent(id)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j && j.artefact) titleEl.textContent = j.artefact.title || "Artefact"; })
+      .catch(() => {});
+  }
+}
+function closeArtefactPanel() {
+  if (!artefactSideEl) return;
+  artefactSideEl.hidden = true;
+  document.getElementById("artefact-side-frame").src = "about:blank";
+  appEl.classList.remove("artefact-side-open");
+  _artefactSideId = null;
+}
+document.getElementById("artefact-side-close")?.addEventListener("click", closeArtefactPanel);
+document.getElementById("artefact-side-newtab")?.addEventListener("click", () => {
+  if (_artefactSideId) window.open(artefactViewUrl(_artefactSideId, true), "_blank", "noopener");
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && artefactSideEl && !artefactSideEl.hidden) closeArtefactPanel();
 });
 
 function renderThinking(thinking) {
@@ -284,6 +384,7 @@ function renderAssistantTurn(turn) {
     renderToolTrace(turn.tool_calls) + renderUsage(turn.usage, turn.cost_usd, turn.model_used);
   highlightCode(bubble);
   hydrateMedia(bubble);
+  enhanceArtefactLinks(bubble);
 }
 
 function renderTranscript(transcript) {
@@ -529,6 +630,7 @@ async function sendStreaming(body, bubble) {
       renderToolTrace(final.tool_calls) + renderUsage(final.usage, final.cost_usd, final.model_used);
     highlightCode(bubble);
     hydrateMedia(bubble);
+    enhanceArtefactLinks(bubble);
     // Lock (or reaffirm) this session's business from the server's
     // authoritative resolved value — never a bare null ("all" = open).
     HermesBiz.setLock(sessionId, final.entity_id || "all");
@@ -647,7 +749,7 @@ const openMobileNav  = () => appEl.classList.add("mobile-open");
 const closeMobileNav = () => appEl.classList.remove("mobile-open");
 
 // Wire up every hamburger button (chat topbar + bills topbar)
-["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context", "menu-btn-tasks", "menu-btn-files", "menu-btn-jobs", "menu-btn-pricing", "menu-btn-settings"].forEach((id) => {
+["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context", "menu-btn-tasks", "menu-btn-files", "menu-btn-jobs", "menu-btn-pricing", "menu-btn-settings", "menu-btn-artefacts"].forEach((id) => {
   document.getElementById(id)?.addEventListener("click", openMobileNav);
 });
 
@@ -696,6 +798,10 @@ function setView(view) {
   // Lazy-init jobs on first open
   if (view === "jobs" && typeof window._jobsInit === "function") {
     window._jobsInit();
+  }
+  // Lazy-init artefacts on first open
+  if (view === "artefacts" && typeof window._artefactsInit === "function") {
+    window._artefactsInit();
   }
   // (Re)load the usage report every time the Usage tab is opened
   if (view === "pricing" && typeof window._pricingInit === "function") {
