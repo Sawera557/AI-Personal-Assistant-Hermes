@@ -1,6 +1,7 @@
 """Configuration loaded from environment variables (.env supported)."""
 from __future__ import annotations
 
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -8,6 +9,8 @@ from dotenv import load_dotenv
 # override=True makes values in .env win over any stale variable already set in
 # the OS environment (a common cause of "invalid x-api-key").
 load_dotenv(override=True)
+
+log = logging.getLogger("hermes.config")
 
 
 def _bool(value: str | None, default: bool = False) -> bool:
@@ -36,6 +39,38 @@ APP_LABELS: dict[str, str] = {
     "notion": "Notion (pages, databases, comments)",
     "jira": "Jira (issues/tasks, assignment)",
 }
+
+
+def _int_env(name: str, default: int) -> int:
+    """Read an int env var, treating blank/whitespace/garbage as "not set".
+
+    os.getenv returns "" — not None — for a variable that exists with an empty
+    value, so `int(os.getenv(NAME, "8000"))` raises ValueError instead of using
+    its default. That happens in the class body below, at import time, which
+    takes the whole app down with a 500 on every route before any handler runs.
+    A dashboard env var left blank (or holding a typo) must degrade to the
+    default, never crash the process.
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        log.warning("%s=%r is not an integer — falling back to %s", name, raw, default)
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    """Float counterpart of `_int_env`; same blank-and-garbage tolerance."""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        log.warning("%s=%r is not a number — falling back to %s", name, raw, default)
+        return default
 
 
 class Config:
@@ -98,16 +133,16 @@ class Config:
 
     MODEL: str = os.getenv("HERMES_MODEL", "claude-sonnet-5")
     EFFORT: str = os.getenv("HERMES_EFFORT", "low")
-    MAX_TOKENS: int = int(os.getenv("HERMES_MAX_TOKENS", "8000"))
+    MAX_TOKENS: int = _int_env("HERMES_MAX_TOKENS", 8000)
     # Upper bound the agent may auto-grow a single turn's output budget to when a
     # reply is cut off by the token cap (stop_reason == "max_tokens"). The turn
     # keeps continuing with a doubled budget until it finishes or hits this cap.
     # Default is 4x the base budget, so lowering HERMES_MAX_TOKENS lowers the
     # ceiling proportionally rather than leaving a surprising fixed floor.
-    MAX_TOKENS_CEILING: int = int(
-        os.getenv("HERMES_MAX_TOKENS_CEILING", str(int(os.getenv("HERMES_MAX_TOKENS", "8000")) * 4))
+    MAX_TOKENS_CEILING: int = _int_env(
+        "HERMES_MAX_TOKENS_CEILING", _int_env("HERMES_MAX_TOKENS", 8000) * 4
     )
-    MAX_TOOL_ITERATIONS: int = int(os.getenv("HERMES_MAX_TOOL_ITERATIONS", "12"))
+    MAX_TOOL_ITERATIONS: int = _int_env("HERMES_MAX_TOOL_ITERATIONS", 12)
 
     # Dedicated fast model for the live meeting copilot's per-utterance guidance
     # calls (hermes.meeting_copilot.get_guidance / get_guidance_comprehensive).
@@ -205,7 +240,7 @@ class Config:
     def voice_enabled(cls) -> bool:
         return bool(cls.voice_api_key())
 
-    PORT: int = int(os.getenv("PORT", "5000"))
+    PORT: int = _int_env("PORT", 5000)
 
     # ---- Scheduled Tasks ---------------------------------------------------
     # The run-due endpoint (POST /api/scheduled-tasks/run-due) is what a cron
@@ -217,7 +252,7 @@ class Config:
     # tasks can override per-task in the UI.
     SCHEDULER_DEFAULT_TZ: str = os.getenv("SCHEDULER_DEFAULT_TZ", "America/Chicago").strip()
     # How often the in-process poller scans for due tasks (seconds).
-    SCHEDULER_POLL_SECONDS: int = int(os.getenv("SCHEDULER_POLL_SECONDS", "60"))
+    SCHEDULER_POLL_SECONDS: int = _int_env("SCHEDULER_POLL_SECONDS", 60)
 
     @classmethod
     def scheduler_inprocess(cls) -> bool:
@@ -281,11 +316,11 @@ class Config:
     # Cosine-similarity thresholds for write-time consolidation (see
     # hermes/db/memories.py::write_memory) — same scale as pgvector's
     # `1 - cosine_distance` score, so 1.0 is identical, 0.0 is unrelated.
-    MEMORY_DUP_THRESHOLD: float = float(os.getenv("MEMORY_DUP_THRESHOLD", "0.92"))
-    MEMORY_UPDATE_THRESHOLD: float = float(os.getenv("MEMORY_UPDATE_THRESHOLD", "0.75"))
+    MEMORY_DUP_THRESHOLD: float = _float_env("MEMORY_DUP_THRESHOLD", 0.92)
+    MEMORY_UPDATE_THRESHOLD: float = _float_env("MEMORY_UPDATE_THRESHOLD", 0.75)
     # Retrieval knobs (hermes/memory_retrieve.py).
-    MEMORY_ALWAYS_INJECT_MAX: int = int(os.getenv("MEMORY_ALWAYS_INJECT_MAX", "20"))
-    MEMORY_SEMANTIC_TOP_K: int = int(os.getenv("MEMORY_SEMANTIC_TOP_K", "5"))
+    MEMORY_ALWAYS_INJECT_MAX: int = _int_env("MEMORY_ALWAYS_INJECT_MAX", 20)
+    MEMORY_SEMANTIC_TOP_K: int = _int_env("MEMORY_SEMANTIC_TOP_K", 5)
     MEMORY_MAX_SENSITIVITY: str = os.getenv("MEMORY_MAX_SENSITIVITY", "confidential")
 
     # ---- Retrieval-augmented context (RAG over business knowledge) ---------
@@ -307,16 +342,16 @@ class Config:
     # Federated retrieval knobs (hermes/rag.py). max_sensitivity is hard-capped
     # at 'confidential' in the reader so 'restricted' content never surfaces,
     # regardless of this value.
-    RAG_TOP_K: int = int(os.getenv("HERMES_RAG_TOP_K", "6"))
+    RAG_TOP_K: int = _int_env("HERMES_RAG_TOP_K", 6)
     RAG_MAX_SENSITIVITY: str = os.getenv("HERMES_RAG_MAX_SENSITIVITY", "confidential")
     # Minimum cosine similarity (1 - distance, same scale for pgvector and
     # Pinecone) for a chunk to enter the always-on context block. Below this the
     # block stays empty rather than injecting weak/irrelevant matches — the guard
     # that keeps "considered on every query" from bloating the prompt on
     # small-talk turns.
-    RAG_SCORE_THRESHOLD: float = float(os.getenv("HERMES_RAG_SCORE_THRESHOLD", "0.30"))
+    RAG_SCORE_THRESHOLD: float = _float_env("HERMES_RAG_SCORE_THRESHOLD", 0.30)
     # Char cap on the injected RETRIEVED CONTEXT block.
-    RAG_CONTEXT_MAX_CHARS: int = int(os.getenv("HERMES_RAG_CONTEXT_MAX_CHARS", "6000"))
+    RAG_CONTEXT_MAX_CHARS: int = _int_env("HERMES_RAG_CONTEXT_MAX_CHARS", 6000)
 
     @classmethod
     def rag_pinecone_enabled(cls) -> bool:
@@ -340,13 +375,13 @@ class Config:
     #   HERMES_CONVO_MEMORY_WRITE  — record each turn (+ summary) after it ends.
     #   HERMES_CONVO_MEMORY        — inject the EARLIER CONVERSATIONS recall block.
     # Write can run ahead of read to backfill history before switching recall on.
-    CONVO_MEMORY_TOP_K: int = int(os.getenv("HERMES_CONVO_MEMORY_TOP_K", "6"))
+    CONVO_MEMORY_TOP_K: int = _int_env("HERMES_CONVO_MEMORY_TOP_K", 6)
     # Higher than the RAG threshold: conversation recall favours precision — a
     # weak match here reads as "you said X" and is worse than silence.
-    CONVO_MEMORY_SCORE_THRESHOLD: float = float(os.getenv("HERMES_CONVO_MEMORY_SCORE_THRESHOLD", "0.35"))
-    CONVO_MEMORY_MAX_CHARS: int = int(os.getenv("HERMES_CONVO_MEMORY_MAX_CHARS", "4000"))
+    CONVO_MEMORY_SCORE_THRESHOLD: float = _float_env("HERMES_CONVO_MEMORY_SCORE_THRESHOLD", 0.35)
+    CONVO_MEMORY_MAX_CHARS: int = _int_env("HERMES_CONVO_MEMORY_MAX_CHARS", 4000)
     # Verbatim 'turn' rows older than this are pruned (summaries are kept).
-    CONVO_MEMORY_TURN_TTL_DAYS: int = int(os.getenv("HERMES_CONVO_MEMORY_TTL_DAYS", "45"))
+    CONVO_MEMORY_TURN_TTL_DAYS: int = _int_env("HERMES_CONVO_MEMORY_TTL_DAYS", 45)
 
     @classmethod
     def convo_memory_enabled(cls) -> bool:
@@ -378,7 +413,7 @@ class Config:
     # this a slow document could outlast the serverless request limit and kill the
     # function BEFORE the Claude-vision fallback gets to run. Keep it comfortably
     # under the platform's function timeout (see vercel.json maxDuration).
-    NUEXTRACT_TIMEOUT: int = int(os.getenv("NUEXTRACT_TIMEOUT", "45"))
+    NUEXTRACT_TIMEOUT: int = _int_env("NUEXTRACT_TIMEOUT", 45)
     # Anthropic vision model used to read documents when NuExtract is unavailable
     # (billing exhausted, outage, DNS). Must be an Anthropic model — the fallback
     # calls Claude directly, independent of the switchable agent model.
