@@ -23,6 +23,8 @@ from contextlib import contextmanager
 
 import psycopg
 
+from ..config import float_env, int_env
+
 log = logging.getLogger("hermes.db.connection")
 
 # Cache the generated IAM token (valid ~15 min) so we don't call boto3 on every
@@ -87,9 +89,9 @@ def connect() -> psycopg.Connection:
     if not cfg["host"]:
         raise RuntimeError("DBRDS_HOST is not set — cannot connect to Postgres.")
 
-    attempts = max(1, int(os.getenv("DB_CONNECT_RETRIES", "5")))
-    backoff_base = float(os.getenv("DB_CONNECT_BACKOFF", "0.5"))
-    backoff_max = float(os.getenv("DB_CONNECT_BACKOFF_MAX", "3.0"))
+    attempts = max(1, int_env("DB_CONNECT_RETRIES", 5))
+    backoff_base = float_env("DB_CONNECT_BACKOFF", 0.5)
+    backoff_max = float_env("DB_CONNECT_BACKOFF_MAX", 3.0)
     last_exc: Exception | None = None
     for i in range(attempts):
         kwargs: dict[str, object] = {
@@ -146,8 +148,8 @@ def connect() -> psycopg.Connection:
 # (guards against the server dropping a long-idle socket). Disable with DB_POOL=0.
 _pool: list[tuple[psycopg.Connection, float]] = []   # (conn, released_at monotonic)
 _pool_lock = threading.Lock()
-_POOL_MAX = int(os.getenv("DB_POOL_MAX", "8"))
-_POOL_IDLE = float(os.getenv("DB_POOL_IDLE", "280"))  # seconds; under typical server idle timeouts
+_POOL_MAX = int_env("DB_POOL_MAX", 8)
+_POOL_IDLE = float_env("DB_POOL_IDLE", 280.0)  # seconds; under typical server idle timeouts
 _POOL_ENABLED = os.getenv("DB_POOL", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 

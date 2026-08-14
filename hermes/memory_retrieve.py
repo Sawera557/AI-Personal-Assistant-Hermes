@@ -18,14 +18,14 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 from .businesses import to_entity_slug
-from .config import Config
+from .config import Config, int_env
 from .db import documents as docs_repo
 from .db import memories as mem_repo
 from .db.connection import cursor
 from .vector_store import embed
 
 import os  # B4: env-driven memory-block cap (default raised 2000 -> 8000)
-_MAX_BLOCK_CHARS = int(os.getenv("MEMORY_BLOCK_MAX_CHARS", "8000"))
+_MAX_BLOCK_CHARS = int_env("MEMORY_BLOCK_MAX_CHARS", 8000)
 
 
 def _resolve_entity_id(active_business: str | None) -> str | None:

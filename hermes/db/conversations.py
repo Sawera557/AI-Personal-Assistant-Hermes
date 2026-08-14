@@ -31,6 +31,7 @@ import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from ..config import int_env
 from .connection import cursor
 
 log = logging.getLogger("hermes.db.conversations")
@@ -183,7 +184,7 @@ class PostgresConversationStore:
     @staticmethod
     def _history_limit() -> int:
         try:
-            return max(2, int(os.getenv("HERMES_HISTORY_MESSAGES", "40")))
+            return max(2, int_env("HERMES_HISTORY_MESSAGES", 40))
         except ValueError:
             return 40
 

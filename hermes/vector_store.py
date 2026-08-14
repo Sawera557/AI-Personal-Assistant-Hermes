@@ -30,13 +30,14 @@ from typing import Any, Iterable
 import requests
 from pgvector import Vector
 
+from .config import int_env
 from .db.connection import cursor
 
 # Sensitivity ladder (low -> high). A viewer may see their level and below.
 SENSITIVITY_ORDER = ["public", "internal", "confidential", "restricted"]
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
-EMBED_DIM = int(os.getenv("EMBED_DIM", "1536"))
+EMBED_DIM = int_env("EMBED_DIM", 1536)
 
 
 # ---- Namespaces -----------------------------------------------------------

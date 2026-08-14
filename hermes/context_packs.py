@@ -17,14 +17,15 @@ import os
 import threading
 import time
 
+from .config import float_env, int_env
 from .db import context_packs as repo
 
 log = logging.getLogger("hermes.context_packs")
 
 # Combined global+business cap (chars). The business pack tail is trimmed first;
 # the global pack is never truncated. Curated packs sit well under this.
-_MAX_PACK_CHARS = int(os.getenv("CONTEXT_PACK_MAX_CHARS", "40000"))
-_CACHE_TTL = float(os.getenv("CONTEXT_PACK_CACHE_TTL", "300"))  # seconds
+_MAX_PACK_CHARS = int_env("CONTEXT_PACK_MAX_CHARS", 40000)
+_CACHE_TTL = float_env("CONTEXT_PACK_CACHE_TTL", 300.0)  # seconds
 
 _cache: dict[str, tuple[float, str]] = {}
 _lock = threading.Lock()
