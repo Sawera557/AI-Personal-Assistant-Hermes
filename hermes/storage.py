@@ -60,10 +60,20 @@ def key_of(s3_uri: str) -> str | None:
 
 
 def put(key: str, data: bytes, content_type: str | None = None) -> str | None:
-    """Store bytes at ``key``; return the ``s3://`` URI (or None if disabled)."""
+    """Store bytes at ``key``; return the ``s3://`` URI (or None if disabled).
+
+    Objects under PUBLIC_PREFIX are written with SSE-S3 (AES256) rather than the
+    bucket default when public serving is on: an anonymous GET cannot authenticate
+    to KMS, so an SSE-KMS object answers a public request with "The authorization
+    mechanism you have provided is not supported. Please use Signature Version 4."
+    instead of the bytes. Scoped to that prefix on purpose — ingested documents and
+    attachments keep whatever the bucket default is (typically SSE-KMS).
+    """
     if not enabled():
         return None
     extra = {"ContentType": content_type} if content_type else {}
+    if public_base() and key.startswith(PUBLIC_PREFIX):
+        extra["ServerSideEncryption"] = "AES256"
     _client().put_object(Bucket=bucket(), Key=key, Body=data, **extra)
     return f"s3://{bucket()}/{key}"
 

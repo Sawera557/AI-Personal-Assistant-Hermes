@@ -115,6 +115,49 @@ def test_public_url_ignores_malformed_uri(monkeypatch):
     assert storage.public_url("https://not-an-s3-uri/x") is None
 
 
+# ---- put(): encryption for publicly-readable objects ----
+
+class _RecordingClient:
+    """Captures put_object kwargs instead of calling S3."""
+
+    def __init__(self):
+        self.calls = []
+
+    def put_object(self, **kw):
+        self.calls.append(kw)
+        return {}
+
+
+@pytest.fixture
+def s3_client(monkeypatch):
+    client = _RecordingClient()
+    monkeypatch.setenv("S3_BUCKET", "bkt")
+    monkeypatch.setattr(storage, "_client", lambda: client)
+    return client
+
+
+def test_public_objects_written_with_sse_s3_not_kms(monkeypatch, s3_client):
+    """SSE-KMS objects can't be read anonymously — KMS needs a signed request, so
+    S3 answers a public GET with "Please use Signature Version 4". Public-prefix
+    objects must therefore use S3-managed keys."""
+    monkeypatch.setenv("S3_PUBLIC_BASE_URL", BUCKET_ORIGIN)
+    storage.put("generated/afk/abc/report.md", b"x", "text/markdown")
+    assert s3_client.calls[-1]["ServerSideEncryption"] == "AES256"
+
+
+def test_private_prefixes_keep_the_bucket_default_encryption(monkeypatch, s3_client):
+    """Ingested documents must not be silently downgraded off SSE-KMS."""
+    monkeypatch.setenv("S3_PUBLIC_BASE_URL", BUCKET_ORIGIN)
+    storage.put("ingest/afk/patient-records.pdf", b"x", "application/pdf")
+    assert "ServerSideEncryption" not in s3_client.calls[-1]
+
+
+def test_no_encryption_override_when_public_serving_is_off(monkeypatch, s3_client):
+    monkeypatch.setenv("S3_PUBLIC_BASE_URL", "")
+    storage.put("generated/afk/abc/report.md", b"x", "text/markdown")
+    assert "ServerSideEncryption" not in s3_client.calls[-1]
+
+
 # ---- _create_file: link preference, best first ----
 
 def test_prefers_permanent_public_url(monkeypatch, s3, indexed):
