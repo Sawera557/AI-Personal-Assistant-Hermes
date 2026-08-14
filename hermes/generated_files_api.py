@@ -31,19 +31,29 @@ def _entity_scope(entity_id: str | None) -> str | None:
 
 @router.get("")
 async def list_generated_files(entity_id: str | None = None):
-    """List the owner's generated files, scoped to a business (or all)."""
+    """List the owner's generated files, scoped to a business (or all).
+
+    Each file carries `public_url` — a permanent, no-login link — when public
+    serving is configured, so files made before that was turned on are shareable
+    too. It's None otherwise; the UI should fall back to the download route.
+    """
     scope = _entity_scope(entity_id)
     files = await run_in_threadpool(gen_files_db.list_files, scope)
+    for f in files:
+        f["public_url"] = storage.public_url(f.get("s3_uri") or "")
     return {"files": files, "entity_id": entity_id}
 
 
 @router.get("/{file_id}/download")
 async def download_generated_file(file_id: str):
-    """Redirect to a freshly-presigned S3 URL for the file (link never stale)."""
+    """Redirect to the file: its permanent public URL if public serving is on,
+    otherwise a freshly-presigned S3 URL (so the link is never stale either way)."""
     rec = await run_in_threadpool(gen_files_db.get_file, file_id)
     if not rec:
         return JSONResponse({"error": "File not found."}, status_code=404)
-    url = await run_in_threadpool(storage.presign, rec["s3_uri"], _LINK_EXPIRES)
+    url = storage.public_url(rec["s3_uri"])
+    if not url:
+        url = await run_in_threadpool(storage.presign, rec["s3_uri"], _LINK_EXPIRES)
     if not url:
         return JSONResponse(
             {"error": "Could not generate a download link (S3 not configured?)."},

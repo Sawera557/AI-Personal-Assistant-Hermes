@@ -935,8 +935,13 @@ def build_tools(
             "link. Use this whenever the user asks you to generate a document, report, note, "
             "CSV, or any other file they can download — write the full content yourself, then "
             "call this to persist it and get a real, working link. Always share the returned "
-            "`download_url` with the user in your reply; never invent or guess a URL yourself. "
-            "The link expires after 24 hours — tell the user if they'll need it longer than that. "
+            "`download_url` in your reply EXACTLY as returned — copy it character for character, "
+            "never shorten, tidy, or re-type it, and never invent or guess a URL yourself "
+            "(a truncated link is a dead link). The result says whether it expires: if it "
+            "returns `expires_in_hours`, tell the user the link only lasts that long; if it "
+            "returns `link_expires: false`, the link is permanent and you shouldn't claim otherwise. "
+            "If it returns `public_link: true`, the link needs no login — anyone it's forwarded to "
+            "can open it, so say so plainly when the file holds anything sensitive. "
             "A `.pdf` filename is rendered into a REAL PDF automatically — but as plain text "
             "only: markdown syntax (#, **, etc.) is NOT interpreted/formatted, it just shows up "
             "as literal characters, so write clean prose for a PDF rather than markdown. Every "
@@ -1408,9 +1413,10 @@ def _search_business_knowledge(tool_input: dict[str, Any], active_business: str 
     }
 
 
-# Presigned link lifetime for create_file — much longer than the 900s used for
-# internal search-result previews, since the user is meant to actually click
-# this one, possibly a while after the turn it was created in.
+# Fallback presigned lifetime for create_file, used only when a permanent app
+# link can't be built (no PUBLIC_BASE_URL, or the DB index write failed). Much
+# longer than the 900s used for internal search-result previews, since the user
+# is meant to actually click this one.
 _CREATED_FILE_LINK_EXPIRES = 24 * 60 * 60
 
 
@@ -1444,16 +1450,14 @@ def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dic
     key = f"generated/{scope}/{uuid.uuid4().hex}/{filename}"
 
     s3_uri = storage.put(key, raw, content_type)
-    download_url = storage.presign(s3_uri, expires=_CREATED_FILE_LINK_EXPIRES)
-    if not download_url:
-        raise MatonError("File was written but a download link could not be generated.")
 
-    # Index it so it's browsable in the Library tab and re-downloadable after the
-    # presigned link above expires. Best-effort — never fail file creation on it.
+    # Index it first: the row's file_id is what makes a permanent download link
+    # possible. Best-effort — never fail file creation on it.
     business_slug = scope if scope != "general" else None
+    file_id: str | None = None
     try:
         from .db import generated_files as gen_files_db
-        gen_files_db.record_file(
+        file_id = gen_files_db.record_file(
             entity_slug=to_entity_slug(business_slug) if business_slug else None,
             business_slug=business_slug, filename=filename, content_type=content_type,
             s3_uri=s3_uri, size_bytes=len(raw),
@@ -1461,18 +1465,42 @@ def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dic
     except Exception as exc:  # noqa: BLE001 — indexing is non-critical
         log.warning("Could not index generated file %s: %s", filename, exc)
 
-    return {
+    # Link preference, best first. A 500-char signed URL is routinely shortened by
+    # the model into an unsigned, permanently-403 one, so short + stable wins:
+    #   1. public S3 URL   — permanent, no auth, shareable with anyone
+    #   2. app route       — permanent (re-presigns per hit), but behind whatever
+    #                        gates the app itself (e.g. Vercel SSO)
+    #   3. presigned URL   — 24h, last resort
+    download_url = storage.public_url(s3_uri)
+    public = bool(download_url)
+    permanent = public
+    if not download_url and file_id and Config.PUBLIC_BASE_URL:
+        download_url = f"{Config.PUBLIC_BASE_URL}/api/generated-files/{file_id}/download"
+        permanent = True
+    if not download_url:
+        download_url = storage.presign(s3_uri, expires=_CREATED_FILE_LINK_EXPIRES)
+    if not download_url:
+        raise MatonError("File was written but a download link could not be generated.")
+
+    out = {
         "ok": True,
         "filename": filename,
         "content_type": content_type,
         "size_bytes": len(raw),
         "business": business_slug,
         "download_url": download_url,
-        "expires_in_hours": _CREATED_FILE_LINK_EXPIRES // 3600,
         # s3_uri lets you read this file back later with `read_document` (e.g. to
         # quote or re-check what you generated); share download_url with the user.
         "s3_uri": s3_uri,
     }
+    if permanent:
+        out["link_expires"] = False
+        # Anyone with the URL can open it — no login. Surfaced so you can warn the
+        # user before they forward a link to a document that shouldn't travel.
+        out["public_link"] = public
+    else:
+        out["expires_in_hours"] = _CREATED_FILE_LINK_EXPIRES // 3600
+    return out
 
 
 # Max bytes to pull back from S3 for reading, and max extracted chars to hand
