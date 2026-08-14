@@ -1,5 +1,11 @@
 """S3 — the locker. Stores the real file bytes; the app serves them via short,
-temporary presigned links (never a public URL).
+temporary presigned links.
+
+One deliberate exception: objects under the ``generated/`` prefix (files the
+agent authors for the user with create_file) can be served as permanent, unsigned
+public URLs — see `public_url`. That is opt-in via S3_PUBLIC_BASE_URL *and* a
+bucket policy that grants anonymous reads on that prefix only. Everything else —
+ingested source documents, attachments, media — stays private and presigned-only.
 
 Optional: if S3_BUCKET is not set, ingestion still works (documents are recorded
 and made searchable) but the original bytes are not persisted to S3. Set
@@ -8,6 +14,7 @@ S3_BUCKET to turn the locker on.
 from __future__ import annotations
 
 import os
+from urllib.parse import quote
 
 
 def bucket() -> str:
@@ -53,10 +60,20 @@ def key_of(s3_uri: str) -> str | None:
 
 
 def put(key: str, data: bytes, content_type: str | None = None) -> str | None:
-    """Store bytes at ``key``; return the ``s3://`` URI (or None if disabled)."""
+    """Store bytes at ``key``; return the ``s3://`` URI (or None if disabled).
+
+    Objects under PUBLIC_PREFIX are written with SSE-S3 (AES256) rather than the
+    bucket default when public serving is on: an anonymous GET cannot authenticate
+    to KMS, so an SSE-KMS object answers a public request with "The authorization
+    mechanism you have provided is not supported. Please use Signature Version 4."
+    instead of the bytes. Scoped to that prefix on purpose — ingested documents and
+    attachments keep whatever the bucket default is (typically SSE-KMS).
+    """
     if not enabled():
         return None
     extra = {"ContentType": content_type} if content_type else {}
+    if public_base() and key.startswith(PUBLIC_PREFIX):
+        extra["ServerSideEncryption"] = "AES256"
     _client().put_object(Bucket=bucket(), Key=key, Body=data, **extra)
     return f"s3://{bucket()}/{key}"
 
@@ -116,6 +133,39 @@ def list_objects(prefix: str = "") -> list[dict]:
                 "last_modified": lm.isoformat() if lm else None,
             })
     return out
+
+
+# Only keys under this prefix may ever be handed out as public URLs. create_file
+# writes here (see tools._create_file); ingestion and attachments do not.
+PUBLIC_PREFIX = "generated/"
+
+
+def public_base() -> str:
+    """Public origin for anonymously-readable objects, or "" when disabled.
+
+    Set S3_PUBLIC_BASE_URL to the bucket's public origin (e.g.
+    ``https://my-bucket.s3.us-east-1.amazonaws.com``) or a CloudFront domain in
+    front of it. Note this is the *bucket* origin — an S3 Access Point host never
+    serves anonymous requests, so it cannot be used here.
+    """
+    return os.getenv("S3_PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+
+def public_url(s3_uri: str) -> str | None:
+    """A permanent, unsigned URL for an object under PUBLIC_PREFIX.
+
+    Returns None when public serving is off, the URI is malformed, or the key
+    falls outside PUBLIC_PREFIX — so a caller can never accidentally publish an
+    ingested document by passing the wrong uri. The URL only actually resolves if
+    the bucket policy grants anonymous s3:GetObject on that prefix.
+    """
+    base = public_base()
+    if not base:
+        return None
+    key = key_of(s3_uri)
+    if not key or not key.startswith(PUBLIC_PREFIX):
+        return None
+    return f"{base}/{quote(key)}"
 
 
 def presign(s3_uri: str, expires: int = 900) -> str | None:
