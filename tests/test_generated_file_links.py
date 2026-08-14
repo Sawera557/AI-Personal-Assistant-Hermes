@@ -85,6 +85,26 @@ def test_public_url_refuses_keys_outside_generated_prefix(monkeypatch, uri):
     assert storage.public_url(uri) is None
 
 
+ACCESS_POINT_ARN = "arn:aws:s3:us-east-1:922383607007:accesspoint/ai-assistant"
+
+
+def test_public_url_handles_access_point_arn_bucket(monkeypatch):
+    """Production sets S3_BUCKET to an Access Point ARN, so s3_uris look like
+    s3://arn:aws:s3:...:accesspoint/name/generated/... — the key must still be
+    extracted correctly, and the public URL points at the *bucket* origin (an
+    access point host never answers anonymous requests)."""
+    monkeypatch.setenv("S3_BUCKET", ACCESS_POINT_ARN)
+    monkeypatch.setenv("S3_PUBLIC_BASE_URL", BUCKET_ORIGIN)
+    url = storage.public_url(f"s3://{ACCESS_POINT_ARN}/generated/afk/abc/report.md")
+    assert url == f"{BUCKET_ORIGIN}/generated/afk/abc/report.md"
+
+
+def test_prefix_guard_holds_for_access_point_arn(monkeypatch):
+    monkeypatch.setenv("S3_BUCKET", ACCESS_POINT_ARN)
+    monkeypatch.setenv("S3_PUBLIC_BASE_URL", BUCKET_ORIGIN)
+    assert storage.public_url(f"s3://{ACCESS_POINT_ARN}/ingest/afk/bill.pdf") is None
+
+
 def test_public_url_disabled_without_env(monkeypatch):
     monkeypatch.setenv("S3_PUBLIC_BASE_URL", "")
     assert storage.public_url("s3://bkt/generated/afk/abc/report.md") is None
