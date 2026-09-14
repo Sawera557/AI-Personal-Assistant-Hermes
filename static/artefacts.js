@@ -152,8 +152,8 @@
       const r = await fetch(`/api/artefacts/${encodeURIComponent(id)}`);
       if (r.ok) art = (await r.json()).artefact;
     } catch (_) { /* best-effort; the iframe still loads by id */ }
-    openArt = art || { artefact_id: id, title: "Artefact" };
-    $("af-detail-name").textContent = openArt.title || "Artefact";
+    openArt = art || { artefact_id: id, title: "Artifact" };
+    $("af-detail-name").textContent = openArt.title || "Artifact";
     const meta = SOURCE_META[openArt.source_type];
     $("af-detail-sub").textContent = meta ? meta.label : "";
     $("af-detail-msg").textContent = "Loading the latest data…";

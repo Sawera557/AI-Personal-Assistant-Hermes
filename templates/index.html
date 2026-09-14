@@ -87,13 +87,13 @@
             </svg>
             <span>Jobs</span>
           </button>
-          <button class="strip-tab" type="button" data-view="artefacts" title="Library">
+          <button class="strip-tab" type="button" data-view="artefacts" title="Artifacts">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M4 5h5l2 2h9v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>
               <path d="M8 11h8"/>
               <path d="M8 15h5"/>
             </svg>
-            <span>Library</span>
+            <span>Artifacts</span>
           </button>
           <button class="strip-tab" type="button" data-view="pricing" title="Usage &amp; Cost">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -395,7 +395,7 @@
           <div class="panel">
             <h2>What's here</h2>
             <ul class="feature-list">
-              <li><strong>Artefacts</strong> — live views that re-sync on open</li>
+              <li><strong>Artifacts</strong> — live views that re-sync on open</li>
               <li><strong>Files</strong> — generated reports/sheets/PDFs</li>
               <li>Files stay re-downloadable after links expire</li>
               <li>All created by the AI from chat</li>
@@ -403,7 +403,7 @@
           </div>
 
           <div class="panel push-bottom">
-            <p class="hint">Open an artefact to see current data (or <strong>Sync now</strong>). Files re-download with a fresh link every time.</p>
+            <p class="hint">Open an artifact to see current data (or <strong>Sync now</strong>). Files re-download with a fresh link every time.</p>
           </div>
         </div>
 
@@ -468,15 +468,15 @@
 
       <!-- Right-side artefact viewer — opens in-place when an artefact link in
            chat is clicked; the header offers "open in new tab". -->
-      <aside class="artefact-side" id="artefact-side" hidden aria-label="Artefact viewer">
+      <aside class="artefact-side" id="artefact-side" hidden aria-label="Artifact viewer">
         <header class="artefact-side-head">
-          <div class="artefact-side-title" id="artefact-side-title">Artefact</div>
+          <div class="artefact-side-title" id="artefact-side-title">Artifact</div>
           <div class="artefact-side-actions">
             <button class="artefact-side-btn" id="artefact-side-newtab" type="button" title="Open in new tab">↗ New tab</button>
             <button class="artefact-side-btn" id="artefact-side-close" type="button" title="Close" aria-label="Close">✕</button>
           </div>
         </header>
-        <iframe id="artefact-side-frame" class="artefact-side-frame" title="Artefact canvas" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
+        <iframe id="artefact-side-frame" class="artefact-side-frame" title="Artifact canvas" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
       </aside>
     </main>
 
@@ -1097,21 +1097,21 @@
         <button class="icon-btn" id="menu-btn-artefacts" aria-label="Open menu">
           <span></span><span></span><span></span>
         </button>
-        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(47,107,255,.18);font-size:15px;">🗂️</span> Library</div>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(47,107,255,.18);font-size:15px;">🗂️</span> Artifacts</div>
       </header>
 
       <div class="tasks-page" id="artefacts-page">
         <div class="tasks-pg-header">
           <div>
-            <h2 class="tasks-pg-title">Library</h2>
-            <p class="tasks-pg-sub">Everything the AI has produced — live artefacts and generated files, in one place.</p>
+            <h2 class="tasks-pg-title">Artifacts</h2>
+            <p class="tasks-pg-sub">Everything the AI has produced — live artifacts and generated files, in one place.</p>
           </div>
           <button class="tasks-new-btn" id="artefacts-refresh-main" type="button">↻ Refresh</button>
         </div>
 
         <!-- Sub-tabs: Artefacts (live) vs Files (generated downloads) -->
         <div class="lib-subtabs" role="tablist">
-          <button class="lib-subtab active" type="button" data-libview="artefacts" role="tab">🎨 Artefacts</button>
+          <button class="lib-subtab active" type="button" data-libview="artefacts" role="tab">🎨 Artifacts</button>
           <button class="lib-subtab" type="button" data-libview="files" role="tab">📄 Files</button>
         </div>
 
@@ -1120,7 +1120,7 @@
           <div class="tasks-list" id="artefacts-list"></div>
           <div class="tasks-empty" id="artefacts-empty" hidden>
             <div class="tasks-empty-icon">🎨</div>
-            <h3>No artefacts yet</h3>
+            <h3>No artifacts yet</h3>
             <p class="hint">Ask the AI in chat to build one — e.g. “make a live dashboard from this budget sheet”. It’ll appear here.</p>
           </div>
         </div>
@@ -1141,13 +1141,13 @@
         <div class="tk-modal af-modal">
           <div class="tk-header">
             <div class="tk-detail-head">
-              <div class="tk-title" id="af-detail-name">Artefact</div>
+              <div class="tk-title" id="af-detail-name">Artifact</div>
               <div class="tk-detail-sched" id="af-detail-sub"></div>
             </div>
             <button class="tk-close-btn" id="af-detail-close" type="button" aria-label="Close">✕</button>
           </div>
           <div class="af-canvas-wrap">
-            <iframe id="af-canvas" class="af-canvas" title="Artefact canvas" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
+            <iframe id="af-canvas" class="af-canvas" title="Artifact canvas" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
           </div>
           <div class="tk-footer">
             <span class="hint" id="af-detail-msg"></span>
