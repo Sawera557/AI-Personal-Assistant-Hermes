@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import logging
 import uuid
@@ -42,9 +43,107 @@ _MAX_FETCH_BYTES = 25 * 1024 * 1024
 _MAX_MEDIA_INLINE_B64_CHARS = 200_000
 
 
+# --------------------------------------------------------------------------
+# Autonomy: a hard gate, not a prompt.
+#
+# A scheduled task carries an autonomy tier (readonly / draft / full). Until
+# now that tier was enforced only by a paragraph prepended to the run prompt
+# (scheduler._AUTONOMY_GUARDRAIL) — so a "readonly" task whose allowed_apps
+# included google-mail still had a live `send_email` tool, and a working
+# maton_request that could POST to Gmail's send endpoint or overwrite a Sheets
+# register. Instruction is not enforcement for an unattended run. These sets
+# remove the capability itself.
+# --------------------------------------------------------------------------
+
+_NO_WRITE_AUTONOMY = frozenset({"readonly", "draft"})
+
+# Tools that put something in front of another human.
+_SEND_TOOLS = frozenset({
+    "send_email", "email_with_attachment", "zoom_send_invite",
+    "wati_send_message", "wati_send_file",
+})
+
+# Everything that mutates state outside Hermes, plus the send tools. `create_file`
+# is deliberately absent: the readonly guardrail explicitly permits saving a
+# document, and it writes only into Hermes' own storage.
+_WRITE_TOOLS = _SEND_TOOLS | frozenset({
+    "maton_create_connection",
+    "wati_add_contact", "wati_update_contact_attributes", "wati_assign_operator",
+    "jira_create_issue", "jira_assign_issue",
+    "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task",
+    "set_guardrail",
+})
+
+_READ_METHODS = frozenset({"GET", "HEAD"})
+
+# The one write a `draft` run may make through the raw gateway: creating a Gmail
+# draft. Matched on the path so sending (/messages/send) can never qualify.
+_DRAFT_PATH_MARKER = "/drafts"
+
+
+def _restrict_writes(tools: list[dict[str, Any]], autonomy: str) -> list[dict[str, Any]]:
+    """Drop write tools and narrow maton_request's methods for a sub-`full` run.
+
+    Mirrored by the same check in `dispatch` — the schema tells the model what it
+    may do, dispatch is what actually stops it."""
+    out: list[dict[str, Any]] = []
+    for t in tools:
+        if t.get("name") in _WRITE_TOOLS:
+            continue
+        if t.get("name") == "maton_request":
+            t = copy.deepcopy(t)
+            method = t["input_schema"]["properties"].get("method")
+            if isinstance(method, dict):
+                if autonomy == "draft":
+                    method["enum"] = ["GET", "POST"]
+                    method["description"] = (
+                        "HTTP method. This run is draft-only: POST is accepted ONLY to "
+                        "create a Gmail draft (a path containing '/drafts'). Every other "
+                        "write is refused."
+                    )
+                else:
+                    method["enum"] = ["GET"]
+                    method["description"] = (
+                        "HTTP method. This run is read-only, so GET is the only method "
+                        "accepted; any write is refused."
+                    )
+        out.append(t)
+    return out
+
+
+def write_blocked_reason(name: str, tool_input: dict[str, Any], autonomy: str | None) -> str | None:
+    """Why this tool call is refused under `autonomy`, or None if it's allowed.
+
+    The enforcement point. `autonomy` is None for interactive chat, which is
+    unchanged — a human is there to approve."""
+    if autonomy not in _NO_WRITE_AUTONOMY:
+        return None
+    if name in _WRITE_TOOLS:
+        what = "send messages" if name in _SEND_TOOLS else "make that change"
+        return (
+            f"Refused: `{name}` is unavailable because this scheduled run is "
+            f"{autonomy}-only, so it cannot {what}. Describe what you would send or "
+            "change and report it instead — the owner will act on it."
+        )
+    if name == "maton_request":
+        method = str(tool_input.get("method") or "GET").upper()
+        if method in _READ_METHODS:
+            return None
+        path = str(tool_input.get("path") or "")
+        if autonomy == "draft" and method == "POST" and _DRAFT_PATH_MARKER in path.lower():
+            return None
+        return (
+            f"Refused: this scheduled run is {autonomy}-only, so maton_request may only "
+            f"read ({'GET, or POST to a Gmail /drafts path' if autonomy == 'draft' else 'GET'}). "
+            f"A {method} to {path or 'that path'} is a write. Report what you would change instead."
+        )
+    return None
+
+
 def build_tools(
     active_business: str | None = None,
     allowed_apps: list[str] | None = None,
+    autonomy: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return the tool list passed to the Messages API.
 
@@ -1203,6 +1302,9 @@ def build_tools(
 
     if restricted:
         tools = _restrict_tools(tools, allowed_set)
+
+    if autonomy in _NO_WRITE_AUTONOMY:
+        tools = _restrict_writes(tools, autonomy)
 
     return tools
 
@@ -2377,6 +2479,7 @@ def dispatch(
     name: str,
     tool_input: dict[str, Any],
     active_business: str | None = None,
+    autonomy: str | None = None,
 ) -> tuple[str, bool, dict[str, Any] | None, list[dict[str, Any]] | None]:
     """Execute a local tool. Returns (content_string, is_error, media, blocks).
 
@@ -2391,6 +2494,15 @@ def dispatch(
     """
     media: dict[str, Any] | None = None
     blocks: list[dict[str, Any]] | None = None
+
+    # Autonomy gate, before anything executes. build_tools already hides these
+    # from the model, but a tool call can still arrive (a replayed transcript, a
+    # hallucinated name), and this is the call that actually reaches the network.
+    blocked = write_blocked_reason(name, tool_input, autonomy)
+    if blocked:
+        log.warning("autonomy=%s blocked tool %s", autonomy, name)
+        return blocked, True, None, None
+
     try:
         if name == "maton_create_connection":
             # Connection provisioning is interactive/rare — keep it scoped to a

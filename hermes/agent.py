@@ -822,6 +822,7 @@ def stream_turn(
     allowed_apps: list[str] | None = None,
     effort: str | None = None,
     interactive: bool = True,
+    autonomy: str | None = None,
 ):
     """Generator version of the agent loop — yields incremental events instead
     of blocking until the whole turn (every tool round-trip included) is done.
@@ -845,7 +846,7 @@ def stream_turn(
     # Plain-chat mode: no tool schemas (~11k tokens of the ~20k a trivial
     # message costs) and no retrieval blocks below. See hermes.context_mode.
     rich_context = context_mode.enabled()
-    tools = build_tools(active_business, allowed_apps=allowed_apps) if rich_context else []
+    tools = build_tools(active_business, allowed_apps=allowed_apps, autonomy=autonomy) if rich_context else []
 
     if isinstance(user_content, str):
         user_content = [{"type": "text", "text": user_content}]
@@ -1097,7 +1098,9 @@ def stream_turn(
                     })
                     continue
 
-                content_str, is_error, media, blocks = dispatch(name, tool_input, active_business)
+                content_str, is_error, media, blocks = dispatch(
+                    name, tool_input, active_business, autonomy=autonomy
+                )
                 trace_entry = {
                     "tool": name,
                     "input": tool_input,
@@ -1199,6 +1202,7 @@ def run_turn(
     allowed_apps: list[str] | None = None,
     effort: str | None = None,
     interactive: bool = True,
+    autonomy: str | None = None,
 ) -> dict[str, Any]:
     """Run one user turn through the agent loop and return a structured result.
 
@@ -1215,7 +1219,8 @@ def run_turn(
     """
     result: dict[str, Any] = {}
     for event in stream_turn(
-        session_id, user_content, voice, active_business, allowed_apps, effort, interactive
+        session_id, user_content, voice, active_business, allowed_apps, effort,
+        interactive, autonomy,
     ):
         if event["type"] == "done":
             result = event["result"]
