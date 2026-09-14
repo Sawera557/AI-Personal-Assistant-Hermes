@@ -16,15 +16,25 @@ const ctxSensitivitySelect = document.getElementById("context-sensitivity");
 const ctxSaveBtn = document.getElementById("context-save-btn");
 const ctxResultEl = document.getElementById("context-result");
 
-// Files/Memories sub-tabs
+// Files/Memories/Skills sub-tabs
 const filesSubviewEl = document.getElementById("files-subview");
 const memoriesSubviewEl = document.getElementById("memories-subview");
+const skillsSubviewEl = document.getElementById("skills-subview");
 const subtabFilesBtn = document.getElementById("context-subtab-files");
 const subtabMemoriesBtn = document.getElementById("context-subtab-memories");
+const subtabSkillsBtn = document.getElementById("context-subtab-skills");
 const memoryListEl = document.getElementById("memory-list");
 const memoryEmptyEl = document.getElementById("memory-empty");
+const skillListEl = document.getElementById("skill-list");
+const skillEmptyEl = document.getElementById("skill-empty");
 let activeSubview = "files";
 let currentMemories = [];
+let currentSkills = [];
+
+// Files and Skills are both `documents` rows through the same ingest pipeline —
+// only `source_system` tells them apart, which is what each sub-tab filters on.
+const CONTEXT_SOURCE = "business_context";
+const SKILL_SOURCE = "business_skill";
 
 // Editor modal
 const cxOverlay = document.getElementById("cx-overlay");
@@ -99,25 +109,33 @@ function ctxFileItemHtml(d) {
 }
 
 // ---- Files ---------------------------------------------------------------
+// Shared by the Files and Skills sub-tabs — same endpoint, same rendering, the
+// only difference is which `source_system` is asked for. Returns the rows so
+// the caller can keep them for the editor modal to look up by id.
+async function loadDocuments(sourceSystem, listEl, emptyEl, itemHtmlFn) {
+  const slug = currentSlug();
+  const r = await fetch(
+    `/api/documents?entity_id=${encodeURIComponent(slug || "all")}&source_system=${encodeURIComponent(sourceSystem)}`
+  );
+  const j = await r.json();
+  const docs = j.documents || [];
+  emptyEl.hidden = docs.length !== 0;
+  renderGrouped(
+    listEl, docs, slug,
+    (d) => (d.is_global ? "🌐 All Businesses" : (d.entity_name || d.entity_slug)),
+    itemHtmlFn,
+  );
+  return docs;
+}
+
 async function loadContextList() {
   if (!ctxListEl) return;
-  const slug = currentSlug();
   // Adding now works from BOTH a specific business and "All Businesses" (the
   // latter saves a global note) — the hint just explains what "all" means here.
-  ctxScopeHintEl.hidden = !!slug;
+  ctxScopeHintEl.hidden = !!currentSlug();
 
   try {
-    const r = await fetch(
-      `/api/documents?entity_id=${encodeURIComponent(slug || "all")}&source_system=business_context`
-    );
-    const j = await r.json();
-    currentDocs = j.documents || [];
-    ctxEmptyEl.hidden = currentDocs.length !== 0;
-    renderGrouped(
-      ctxListEl, currentDocs, slug,
-      (d) => (d.is_global ? "🌐 All Businesses" : (d.entity_name || d.entity_slug)),
-      ctxFileItemHtml,
-    );
+    currentDocs = await loadDocuments(CONTEXT_SOURCE, ctxListEl, ctxEmptyEl, ctxFileItemHtml);
   } catch (e) {
     console.error("loadContextList:", e);
     ctxSetResult("Failed to load context files.", true);
@@ -130,7 +148,7 @@ async function quickDelete(id) {
     const r = await fetch(`/api/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "Delete failed");
-    await loadContextList();
+    await refreshActiveSubview();
   } catch (err) {
     ctxSetResult(`Delete failed: ${err.message}`, true);
   }
@@ -204,26 +222,87 @@ if (memoryListEl) {
   });
 }
 
+// ---- Skills (documents again, tagged `business_skill`) -------------------
+function skillItemHtml(d) {
+  const globalBadge = d.is_global
+    ? '<span class="memory-item-type" title="Available to every business">🌐 All Businesses</span>'
+    : "";
+  return `
+      <li class="context-item" data-id="${ctxEscapeHtml(d.document_id)}">
+        <span class="context-item-title">🧠 ${ctxEscapeHtml(d.title || "untitled skill")}</span>
+        ${globalBadge}
+        <span class="context-item-meta">${ctxEscapeHtml(d.sensitivity_level || "")}</span>
+        <button type="button" class="context-item-delete" title="Remove" data-id="${ctxEscapeHtml(d.document_id)}">×</button>
+      </li>`;
+}
+
+async function loadSkillList() {
+  if (!skillListEl) return;
+  ctxScopeHintEl.hidden = !!currentSlug();
+  try {
+    currentSkills = await loadDocuments(SKILL_SOURCE, skillListEl, skillEmptyEl, skillItemHtml);
+  } catch (e) {
+    console.error("loadSkillList:", e);
+    ctxSetResult("Failed to load skills.", true);
+  }
+}
+
+if (skillListEl) {
+  skillListEl.addEventListener("click", (e) => {
+    const delBtn = e.target.closest(".context-item-delete");
+    if (delBtn) {
+      e.stopPropagation();
+      quickDelete(delBtn.dataset.id);
+      return;
+    }
+    const item = e.target.closest(".context-item");
+    if (item) openEditor(item.dataset.id);
+  });
+}
+
 // ---- Sub-tab toggle --------------------------------------------------------
+// Files and Skills both write through the quick-add box; only the
+// `source_system` they save under differs.
+function addSourceSystem() {
+  return activeSubview === "skills" ? SKILL_SOURCE : CONTEXT_SOURCE;
+}
+
 function setSubview(view) {
   activeSubview = view;
   filesSubviewEl.hidden = view !== "files";
   memoriesSubviewEl.hidden = view !== "memories";
+  if (skillsSubviewEl) skillsSubviewEl.hidden = view !== "skills";
   subtabFilesBtn.classList.toggle("active", view === "files");
   subtabMemoriesBtn.classList.toggle("active", view === "memories");
-  // The quick-add box is file-specific — only ever shown on the Files sub-tab
-  // (any business selection, including "all", is now valid for adding).
-  ctxAddEl.hidden = view !== "files";
-  if (ctxUploadBtn) ctxUploadBtn.disabled = view !== "files";
-  if (view === "memories") loadMemoryList();
-  else loadContextList();
+  if (subtabSkillsBtn) subtabSkillsBtn.classList.toggle("active", view === "skills");
+  // Memories are written by the agent, not pasted in — the quick-add box is
+  // only meaningful on the two document-backed sub-tabs.
+  const canAdd = view === "files" || view === "skills";
+  ctxAddEl.hidden = !canAdd;
+  if (ctxUploadBtn) ctxUploadBtn.disabled = !canAdd;
+  if (ctxUploadBtn) ctxUploadBtn.textContent = view === "skills" ? "🧠 Upload SKILL.md" : "📄 Upload .md file";
+  if (ctxTitleInput) {
+    ctxTitleInput.placeholder = view === "skills"
+      ? 'Skill name (e.g. "Rent roll reconciliation")'
+      : 'Title (e.g. "Lease terms overview")';
+  }
+  if (ctxBodyInput) {
+    ctxBodyInput.placeholder = view === "skills"
+      ? "Paste the skill markdown here — what it does, when to use it, the steps…"
+      : "Paste markdown context here…";
+  }
+  if (ctxSaveBtn) ctxSaveBtn.textContent = view === "skills" ? "Save as skill" : "Save as context";
+  ctxSetResult("", false);
+  refreshActiveSubview();
 }
 
 if (subtabFilesBtn) subtabFilesBtn.addEventListener("click", () => setSubview("files"));
 if (subtabMemoriesBtn) subtabMemoriesBtn.addEventListener("click", () => setSubview("memories"));
+if (subtabSkillsBtn) subtabSkillsBtn.addEventListener("click", () => setSubview("skills"));
 
 function refreshActiveSubview() {
   if (activeSubview === "memories") loadMemoryList();
+  else if (activeSubview === "skills") loadSkillList();
   else loadContextList();
 }
 
@@ -237,7 +316,10 @@ function resetDeleteBtn() {
 }
 
 function openEditor(id) {
-  const doc = currentDocs.find((d) => d.document_id === id);
+  // The same modal serves both document-backed sub-tabs, so look in whichever
+  // list the clicked row came from.
+  const doc = currentDocs.find((d) => d.document_id === id)
+    || currentSkills.find((d) => d.document_id === id);
   if (!doc || !cxOverlay) return;
   openDocId = id;
   resetDeleteBtn();
@@ -293,7 +375,7 @@ if (cxSaveBtn) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "Save failed");
       cxResultEl.textContent = "Saved.";
-      await loadContextList();
+      await refreshActiveSubview();
     } catch (e) {
       cxResultEl.textContent = `Failed: ${e.message}`;
     }
@@ -317,7 +399,7 @@ if (cxDeleteBtn) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "Delete failed");
       closeEditor();
-      await loadContextList();
+      await refreshActiveSubview();
     } catch (e) {
       cxResultEl.textContent = `Delete failed: ${e.message}`;
       resetDeleteBtn();
@@ -329,7 +411,7 @@ if (cxDeleteBtn) {
 function contextFormData(slug, file) {
   const fd = new FormData();
   fd.append("entity_id", slug);
-  fd.append("source_system", "business_context");
+  fd.append("source_system", addSourceSystem());
   fd.append("sensitivity_level", ctxSensitivitySelect ? ctxSensitivitySelect.value : "internal");
   fd.append("files", file);
   return fd;
@@ -342,7 +424,7 @@ async function uploadContext(formData) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "Upload failed");
     ctxSetResult("Saved.", false);
-    await loadContextList();
+    await refreshActiveSubview();
   } catch (e) {
     ctxSetResult(`Failed: ${e.message}`, true);
   }

@@ -761,6 +761,7 @@
         <div class="context-subtabs" role="tablist">
           <button type="button" class="context-subtab active" id="context-subtab-files" data-subview="files">Files</button>
           <button type="button" class="context-subtab" id="context-subtab-memories" data-subview="memories">Memories</button>
+          <button type="button" class="context-subtab" id="context-subtab-skills" data-subview="skills">Skills</button>
         </div>
 
         <div id="files-subview">
@@ -771,6 +772,12 @@
         <div id="memories-subview" hidden>
           <ul class="context-list" id="memory-list"></ul>
           <p class="hint" id="memory-empty" hidden>No memories yet.</p>
+        </div>
+
+        <div id="skills-subview" hidden>
+          <p class="hint">Reusable playbooks Hermes can pull up mid-chat — each one is a markdown skill scoped to this business.</p>
+          <ul class="context-list" id="skill-list"></ul>
+          <p class="hint" id="skill-empty" hidden>No skills yet.</p>
         </div>
       </div>
 
