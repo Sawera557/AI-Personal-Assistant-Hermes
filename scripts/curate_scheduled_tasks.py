@@ -758,6 +758,38 @@ End with the one day this week most likely to fall apart, and why.
 """),
     },
     {
+        "name": "Urgent email triage (all entities)",
+        "business": None,
+        "apps": ["google-mail", "google-calendar"],
+        "autonomy": "draft",
+        "schedule": sched("weekdays", ["09:30"]),
+        "timezone": CT,
+        "rollout": True,
+        "prompt": body("""
+The catch-all weekday email sweep: anything urgent that no other triage task covers.
+
+SCOPE — read this first so you do not duplicate work:
+- GAK Properties, GIF Properties and Gandi's personal inbox each have their OWN triage task that already ran earlier this morning (08:00, 08:30, 09:00). Do NOT re-triage their routine mail. Only raise something from those three lanes if it is genuinely urgent AND looks like it would be missed by a single-business triage — for example a thread that spans two entities, or something addressed to the wrong lane.
+- Your real job is the three businesses with no triage of their own: Afro Farm (AFK), Nour Hammam (NH) and GAK Commodities (GAKC). Cover their inboxes properly.
+
+For each message that genuinely needs Gandi — time-sensitive, from a real person, asking something of him — report: entity, sender, subject, one line on why it is urgent, and what it is asking for.
+
+For the urgent ones, create a Gmail DRAFT reply in Gandi's voice, threaded to that specific message, in the correct lane for that entity. Never send. Gandi reviews and sends from Gmail himself.
+
+ENTITY SEPARATION IS ABSOLUTE HERE. This task reads several businesses' mail, so:
+- Label every single item with its entity. There is no unlabelled section.
+- Never combine two entities into one item, one count, or one figure.
+- Never draft a reply that mentions another entity's business, tenants or numbers.
+- Before drafting, confirm which account the thread actually belongs to. The lanes are: gandikediye@gmail.com (GAK / GIF / GAKC / personal), gandimohamed@gmail.com (tenant communications), admin@afrofarmke.com (AFK ops). Use `maton_list_connections` to check what is actually connected rather than assuming.
+
+Do not quote a rent, balance or payroll figure in any draft. If a message asks about money, draft a reply saying Gandi will confirm the figure, and flag it for him.
+
+For AFK, remember Kenya is EAT (UTC+3): something sent overnight Kenya time may already be a full working day old. Say so when it matters.
+
+End with a ranked list: what he should read first, and what is still waiting on his decision rather than on a draft.
+"""),
+    },
+    {
         "name": "Month-close prep (all entities)",
         "business": None,
         "apps": ["quickbooks", "google-mail", "google-drive"],

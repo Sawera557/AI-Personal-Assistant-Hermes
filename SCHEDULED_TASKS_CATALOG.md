@@ -89,7 +89,7 @@ Three of them also changed shape:
 - **`Daily farm briefing (AFK)` → `Kenya Window morning brief`, moved 06:30 → 05:45.** The Kenya Window opens at 6:00 AM CST. The brief has to be read *before* the calls, not during them.
 - **`Leasing lead triage` moved 08:30 → 09:00**, off the same slot as GAK triage.
 
-### Create — 11
+### Create — 12
 
 | Business | New task | Why it was missing |
 |---|---|---|
@@ -103,9 +103,10 @@ Three of them also changed shape:
 | `gakc` | **GAK Commodities activity check** (Fri 10:00) | GAKC had **zero** tasks. Built to stay quiet: if there is no fresh activity it says exactly that and stops. Carries the two identity guards — GAKC is not Kediye Holdings, and Abdikadir Kadeye is not Abdirahman Abdiaziz. |
 | `nh` | **NH formation & related-party lease status** (Tue 10:00) | The pre-launch tracker covered buildout and marketing. Nothing tracked whether the entity legally exists (MN filing, EIN, bank, insurance, operating agreement) or whether the GAK↔NH lease — Gandi on both sides — is actually signed and documented on both books. That is the compliance-critical item. |
 | `per` | **Week ahead: father's care & schedule conflicts** (Sun 18:00) | The daily brief is same-day. Appointments, refills and home-care gaps need a week of lead time. Leads with father's care, then prayer-time and religious-calendar collisions for the coming 7 days. |
+| all | **Urgent email triage** (weekdays 09:30) | GAK, GIF and Personal each have their own triage; **AFK, Nour Hammam and GAK Commodities had none**. This is the catch-all sweep that covers those three and defers the routine mail in the other three lanes to their own tasks. `draft` — composes Gmail drafts, cannot send. |
 | all | **Month-close prep** (Wed 13:00, date-gated to month-end ±6 days) | The scheduler has no monthly frequency, so this runs weekly and gates on the date. Per-entity close checklist, plus the related-party memos (1st Attentive at three GAK sites, NH at 720) that the CPA needs documented. Never writes to QuickBooks. |
 
-**Result: 32 tasks → 25**, zero duplicates, zero test rows, every one of the six wired businesses covered.
+**Result: 32 tasks → 26**, zero duplicates, zero test rows, every one of the six wired businesses covered.
 
 ---
 
@@ -115,7 +116,7 @@ Every prompt is built as `body + RULES + FORMAT` in the script, so the guardrail
 
 **`RULES`** — stay inside this business; money from live QuickBooks only, never from a document or memory, and say so rather than estimating if it is unreachable; never invent a tenant, date, amount or person (`no indexed source found` + `UNVERIFIED` instead); a company is an active tenant only if the pack lists it; tag 1st Attentive and Nour Hammam `RELATED PARTY`; send nothing, draft only where told; no credentials or account numbers in output.
 
-**`FORMAT`** — headline first line with a count, one fact per line, `Label: value` with the currency named, short blocks, end with `Decisions needed` (or `Decisions needed: none`), and **say it in one line and stop if there is nothing to report**. That last rule is what keeps 25 tasks from becoming 25 pieces of noise.
+**`FORMAT`** — headline first line with a count, one fact per line, `Label: value` with the currency named, short blocks, end with `Decisions needed` (or `Decisions needed: none`), and **say it in one line and stop if there is nothing to report**. That last rule is what keeps 26 tasks from becoming 26 pieces of noise.
 
 **Two scheduler constraints worth knowing** (`hermes/scheduler.py`):
 
@@ -128,7 +129,7 @@ Every prompt is built as `body + RULES + FORMAT` in the script, so the guardrail
 
 ## 5. No scheduled task can send email — enforced, not requested
 
-**Autonomy** is `readonly` on 22 tasks and `draft` on the three triage tasks (GAK, GIF leads, personal). Nothing is `full`, and no prompt instructs a task to send anything.
+**Autonomy** is `readonly` on 22 tasks and `draft` on the four triage tasks (GAK, GIF leads, personal, all-entities). Nothing is `full`, and no prompt instructs a task to send anything.
 
 That was not sufficient. Until this change, the autonomy tier existed **only as a paragraph prepended to the run prompt** (`scheduler._AUTONOMY_GUARDRAIL`) — `build_tools` never saw it. The call site in `scheduler.run_task` even carried a comment calling autonomy "the safety gate". In practice:
 
