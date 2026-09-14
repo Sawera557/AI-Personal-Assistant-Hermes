@@ -5,6 +5,16 @@ guidance and Drive classification all name Config.GUIDANCE_MODEL (a Claude
 model). When that account emptied, every one of them stopped for a month while
 chat ran fine on NVIDIA. Offline — all provider calls are stubbed.
 """
+import sys
+from pathlib import Path
+
+# CI runs each test file as a script (`python tests/foo.py`), which puts tests/
+# on sys.path rather than the repo root — so a bare `from hermes import ...`
+# raises ModuleNotFoundError there while passing under pytest.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import anthropic
 import httpx
 import pytest
