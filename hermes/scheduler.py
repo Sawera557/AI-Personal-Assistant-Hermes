@@ -382,9 +382,14 @@ def run_task(task: dict[str, Any]) -> dict[str, Any]:
             active_business=business,
             allowed_apps=allowed_apps,
             # Unattended run: no human to confirm with. The confirm-before-write
-            # guardrail no-ops here; the task's autonomy tier (readonly/draft/full)
-            # is the safety gate instead — see build_run_prompt / _AUTONOMY_GUARDRAIL.
+            # guardrail no-ops here; the task's autonomy tier is the safety gate
+            # instead. It is enforced in two places: as prompt text
+            # (_AUTONOMY_GUARDRAIL, via build_run_prompt) and — because an
+            # instruction is not a control — as a hard capability gate in
+            # tools.build_tools/dispatch, which withholds every send/write tool
+            # from a readonly or draft run. Passing it here is what arms that gate.
             interactive=False,
+            autonomy=(task.get("autonomy") or "readonly"),
         )
     finally:
         # Never let a scheduled run accumulate working memory across fires.

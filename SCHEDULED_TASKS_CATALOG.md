@@ -122,15 +122,33 @@ Every prompt is built as `body + RULES + FORMAT` in the script, so the guardrail
 1. Frequencies are `daily` / `weekdays` / `weekly` / `hourly` — **there is no monthly**. Date-specific work (rent window, month close) is therefore a frequent task with a date gate as the first instruction in its prompt, so it costs nothing outside its window.
 2. `days_of_week` is `0 = Mon … 6 = Sun`.
 
-**Autonomy** stays `readonly` everywhere except the three triage tasks (GAK, GIF leads, personal), which are `draft` — they create Gmail drafts threaded to the original and never send. Nothing is set to `full`.
-
 **Load:** the week is deliberately spread — Mon 3, Tue 4, Wed 3, Thu 3, Fri 3, Sun 1 — plus 5 daily tasks, of which 2 are date-gated and usually silent. Morning slots are staggered 05:45 → 09:00 so nothing lands on the same minute.
 
 ---
 
+## 5. No scheduled task can send email — enforced, not requested
+
+**Autonomy** is `readonly` on 22 tasks and `draft` on the three triage tasks (GAK, GIF leads, personal). Nothing is `full`, and no prompt instructs a task to send anything.
+
+That was not sufficient. Until this change, the autonomy tier existed **only as a paragraph prepended to the run prompt** (`scheduler._AUTONOMY_GUARDRAIL`) — `build_tools` never saw it. The call site in `scheduler.run_task` even carried a comment calling autonomy "the safety gate". In practice:
+
+- **All 25 tasks had a live `send_email` tool**, plus `email_with_attachment`, because every one of them lists `google-mail` in `allowed_apps`.
+- **`maton_request` accepted any HTTP method**, so a "readonly" run could `POST` to `/gmail/v1/users/me/messages/send` directly, or `PUT` to a Sheets range — writing the very registers §6 tells it never to touch.
+
+Nothing had actually sent an email. But for an unattended run with no human watching, an instruction is not a control. The tier is now a capability gate in two layers:
+
+1. **`tools.build_tools(..., autonomy=...)`** withholds the write tools from a `readonly` or `draft` run entirely — `send_email`, `email_with_attachment`, `zoom_send_invite`, the `wati_send_*` pair, `maton_create_connection`, the Jira and scheduled-task writers, `set_guardrail` — and narrows `maton_request`'s method enum to `GET` (`readonly`) or `GET`/`POST` (`draft`). `search_business_knowledge` and `create_file` stay: the readonly guardrail explicitly permits saving a document, and `create_file` writes only into Hermes' own storage.
+2. **`tools.dispatch(..., autonomy=...)`** refuses the call before anything reaches the network, because a tool call can still arrive from a replayed transcript or a hallucinated name. A `draft` run may `POST` only to a path containing `/drafts`, so creating a draft works and `/messages/send` cannot.
+
+`autonomy=None` is the default everywhere, so **interactive chat is unchanged** — a human is there to approve. `full` is also unchanged, for a task the owner deliberately authorises later.
+
+Covered by `scripts/_test_autonomy_gate.py` (28 assertions: tools withheld, methods narrowed, raw Gmail send refused at both tiers, Gmail draft still allowed at `draft` only, Sheets write refused, chat and `full` untouched).
+
+**On the three `draft` tasks:** they create Gmail drafts threaded to the original message and leave them in the inbox for review. They do not send, and can no longer send even if instructed to. If drafts themselves are unwanted, set those three to `readonly` — they will then describe the reply they would write instead of composing it.
+
 ---
 
-## 5. The other automation layer — and the boundary between them
+## 6. The other automation layer — and the boundary between them
 
 Hermes is **not** the only automation running against these businesses. A separate layer on the Claude Artifact / Cowork surface maintains Google Sheets workbooks as the operational register for most of the portfolio, on a **Verifier / Updater** pattern:
 
@@ -156,7 +174,7 @@ Those 18 tasks also get `google-sheets` in `allowed_apps` so they can actually r
 
 ---
 
-## 6. Open items
+## 7. Open items
 
 1. **Set `OWNER_EMAIL`.** This is the one-line fix for the undeliverable `owner@hermes.local` (see §2). Per-task `notify_to` is left unset by default and is available via `--notify-to`.
 2. **Sheet IDs are described, not linked.** The `REGISTERS` block identifies each workbook by name, owner and tab structure, so the agent has to find it via Drive/Sheets search. Pasting the actual spreadsheet IDs into that block would make the lookup deterministic and cheaper.
