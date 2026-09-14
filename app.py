@@ -282,6 +282,7 @@ def index(request: Request):
             "active_model": hermes_models.active_model(),
             "active_effort": Config.EFFORT,
             "context_enabled": _context_enabled_for_template(),
+            "apps_enabled": _apps_enabled_for_template(),
             "web_search": Config.WEB_SEARCH,
             "voice_enabled": Config.voice_enabled(),
             "voices": Config.voice_voices(),
@@ -299,6 +300,18 @@ def _context_enabled_for_template() -> bool:
         from hermes import context_mode
 
         return context_mode.enabled()
+    except Exception:  # noqa: BLE001 — rendering the page must not depend on it
+        return True
+
+
+def _apps_enabled_for_template() -> bool:
+    """Apps-access state for the settings panel. Fails OPEN for the same reason
+    as context above: a toggle rendered off when the backend is actually on is
+    worse than no toggle at all."""
+    try:
+        from hermes import apps_access
+
+        return apps_access.enabled()
     except Exception:  # noqa: BLE001 — rendering the page must not depend on it
         return True
 
@@ -353,7 +366,8 @@ def set_model_setting(body: ModelUpdate):
 
 @app.get("/api/settings/context")
 def get_context_setting():
-    """Whether turns carry full business context + tools, or run as plain chat."""
+    """Whether turns carry the user's business knowledge (memory, context pack,
+    documents, past-conversation recall). Independent of apps access below."""
     from hermes import context_mode
 
     return {"enabled": context_mode.enabled()}
@@ -365,12 +379,36 @@ class ContextUpdate(BaseModel):
 
 @app.post("/api/settings/context")
 def set_context_setting(body: ContextUpdate):
-    """Switch full context on/off platform-wide. Off = no memory, no business
-    knowledge, no tool schemas — a plain assistant at a fraction of the tokens.
-    Takes effect on the next turn of every conversation."""
+    """Switch business context on/off platform-wide. Off = no memory, no
+    business knowledge, no retrieved documents — but the apps stay reachable
+    (that is `/api/settings/apps`). Takes effect on the next turn of every
+    conversation."""
     from hermes import context_mode
 
     return {"enabled": context_mode.set_enabled(body.enabled)}
+
+
+@app.get("/api/settings/apps")
+def get_apps_setting():
+    """Whether turns carry the tool schemas and can act on connected apps."""
+    from hermes import apps_access
+
+    return {"enabled": apps_access.enabled()}
+
+
+class AppsUpdate(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/settings/apps")
+def set_apps_setting(body: AppsUpdate):
+    """Switch apps access on/off platform-wide. Off = no tool schemas sent, so
+    Hermes cannot email, reach Drive/Jira/WhatsApp, search the web or read
+    files — it still keeps whatever business context is switched on. This is the
+    big token line (~11k of ~20k). Takes effect on the next turn."""
+    from hermes import apps_access
+
+    return {"enabled": apps_access.set_enabled(body.enabled)}
 
 
 @app.get("/api/settings/guardrails")
@@ -1704,10 +1742,31 @@ def api_bill_view(bill_id: str):
         url = s3.presign(file_url, expires=900)
         if not url:
             return JSONResponse({"error": "Could not generate document URL."}, status_code=500)
-        return {"url": url, "type": "pdf", "expires_in": 900}
+        return {
+            "url": url,
+            # Every S3 object used to be announced as "pdf", so the frontend put
+            # the 3 stored PNG/JPG bills inside a PDF iframe and its <img>
+            # branch was unreachable. Report what the file actually is.
+            "type": _doc_type_for(file_url),
+            "expires_in": 900,
+        }
 
     # Drive webViewLink or other web URL
     return {"url": file_url, "type": "web"}
+
+
+# Browsers render PDFs and these image types inline; HEIC/HEIF they cannot, so
+# it is offered as a download instead of a preview that would silently stay blank.
+_INLINE_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+
+def _doc_type_for(file_url: str) -> str:
+    path = file_url.split("?", 1)[0].lower()
+    if path.endswith(".pdf"):
+        return "pdf"
+    if path.endswith(_INLINE_IMAGE_EXTS):
+        return "image"
+    return "download"
 
 
 @app.get("/api/bills/{bill_id}/email-body")
@@ -1726,14 +1785,29 @@ async def api_bill_email_body(bill_id: str):
     if not source_ref:
         return JSONResponse({"error": "No message ID for this bill."}, status_code=404)
 
+    # Read the mailbox this bill actually came from. Passing no business made
+    # every preview use the default Maton key, which for most bills is simply
+    # the wrong account — the message isn't there, so the snapshot 404s.
+    businesses = await run_in_threadpool(list_businesses)
+    business = next(
+        (b for b in businesses if str(b.get("business_id")) == str(bill.get("business_id"))),
+        None,
+    )
+
     try:
-        body = await run_in_threadpool(fetch_gmail_body, source_ref)
+        body = await run_in_threadpool(fetch_gmail_body, source_ref, business)
     except Exception as exc:
         log.warning("email-body fetch error for bill %s: %s", bill_id, exc)
         return JSONResponse({"error": str(exc)}, status_code=502)
 
     if not body:
-        return JSONResponse({"error": "Could not retrieve email body."}, status_code=404)
+        return JSONResponse(
+            {
+                "error": "This email is no longer in the mailbox it was imported from.",
+                "business": (business or {}).get("slug"),
+            },
+            status_code=404,
+        )
     return body
 
 

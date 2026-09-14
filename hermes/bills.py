@@ -469,13 +469,24 @@ def _decode_b64url(data: str) -> str:
     return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
 
 
-def fetch_gmail_body(message_id: str) -> dict | None:
+def fetch_gmail_body(message_id: str, business: dict | None = None) -> dict | None:
     """Fetch and return the decoded body of a Gmail message.
 
     Returns {"type": "html"|"text", "content": "..."} or None.
     Handles both simple (top-level body) and multipart messages.
+
+    `business` selects WHICH mailbox to read. Without it this used the default
+    Maton key for every bill regardless of who the bill belonged to — so the
+    email preview searched the wrong mailbox (a 404, hence "no snapshot") and,
+    where a message id happened to resolve, would have shown one business's
+    email under another's bill. _client_for_business() exists precisely to stop
+    that silent cross-account fallback; this caller was never updated to use it.
     """
-    maton = MatonClient()
+    try:
+        maton = _client_for_business(business) if business else MatonClient()
+    except ValueError as exc:
+        log.info("fetch_gmail_body: %s", exc)
+        return None
     try:
         resp = maton.request(
             "google-mail", "GET",

@@ -383,6 +383,20 @@ function billCardHTML(bill) {
     </div>`;
 }
 
+/* Turn a Drive share link into its embeddable /preview form.
+   https://drive.google.com/file/d/<id>/view?usp=… -> …/file/d/<id>/preview
+   Returns "" for anything that isn't a recognised Drive file link. */
+function drivePreviewUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!/(^|\.)drive\.google\.com$/.test(u.hostname)) return "";
+    const m = u.pathname.match(/^\/file\/d\/([^/]+)/);
+    if (m) return `https://drive.google.com/file/d/${m[1]}/preview`;
+    const id = u.searchParams.get("id");
+    return id ? `https://drive.google.com/file/d/${id}/preview` : "";
+  } catch { return ""; }
+}
+
 /* `new Date("2026-13-45T00:00:00")` is Invalid Date, and toLocaleDateString
    then renders the literal string "Invalid Date" in the due column. */
 function formatDueDate(value, opts) {
@@ -945,16 +959,42 @@ async function openBillViewer(billId) {
           </div>`;
       } else if (json.type === "pdf") {
         docEl.innerHTML = `<iframe src="${escAttr(url)}" title="Bill document"></iframe>`;
-      } else if (json.type === "web") {
+      } else if (json.type === "image") {
+        docEl.innerHTML = `<img src="${escAttr(url)}" alt="Bill document" />`;
+      } else if (json.type === "download") {
+        // HEIC and friends: no browser renders them inline, so offer the file
+        // rather than an <img> that stays permanently blank.
         docEl.innerHTML = `
           <div class="bv-no-doc">
-            <div class="bv-no-doc-icon">📁</div>
-            <div class="bv-no-doc-text">Stored in Google Drive</div>
-            <div class="bv-no-doc-sub">Tap to open in Drive — embedded preview requires authentication.</div>
+            <div class="bv-no-doc-icon">📎</div>
+            <div class="bv-no-doc-text">Preview not supported</div>
+            <div class="bv-no-doc-sub">This file type can't be shown in the browser.</div>
             <a class="bv-open-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer">
-              Open in Google Drive →
+              Open the file →
             </a>
           </div>`;
+      } else if (json.type === "web") {
+        // Drive's /view page refuses to be framed, but its /preview endpoint is
+        // built for embedding. Try that first so Drive bills actually show
+        // their document instead of only ever offering a link; the link stays
+        // underneath for when the browser isn't signed in to that account.
+        const embed = drivePreviewUrl(url);
+        docEl.innerHTML = embed
+          ? `<div class="bv-drive-wrap">
+               <iframe class="bv-drive-iframe" src="${escAttr(embed)}" title="Bill document"
+                       referrerpolicy="no-referrer-when-downgrade"></iframe>
+               <a class="bv-drive-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer">
+                 Not showing? Open in Google Drive →
+               </a>
+             </div>`
+          : `<div class="bv-no-doc">
+               <div class="bv-no-doc-icon">📁</div>
+               <div class="bv-no-doc-text">Stored in Google Drive</div>
+               <div class="bv-no-doc-sub">Tap to open in Drive.</div>
+               <a class="bv-open-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer">
+                 Open in Google Drive →
+               </a>
+             </div>`;
       } else if (json.type === "gmail") {
         await _loadGmailBody(billId, url, docEl);
       } else {
@@ -1119,9 +1159,14 @@ async function _loadGmailBody(billId, gmailUrl, docEl) {
       <div style="margin-top:10px;font-size:12px;color:var(--muted)">Loading email…</div>
     </div>`;
 
+  let reason = "";
   try {
     const bodyResp = await fetch(`/api/bills/${billId}/email-body`);
-    if (!bodyResp.ok) throw new Error("no body");
+    if (!bodyResp.ok) {
+      const err = await bodyResp.json().catch(() => ({}));
+      reason = err.error || "";
+      throw new Error("no body");
+    }
     const body = await bodyResp.json();
 
     if (body.type === "html") {
@@ -1131,7 +1176,16 @@ async function _loadGmailBody(billId, gmailUrl, docEl) {
       // frame renders the email just as well. The CSP additionally blocks the
       // remote image loads that make marketing invoices into tracking pixels.
       docEl.innerHTML = `<div class="bv-email-wrap"><iframe class="bv-email-iframe" id="bv-email-iframe" sandbox="" referrerpolicy="no-referrer" title="Email body"></iframe></div>`;
-      const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:">`;
+      // Deny-list the dangerous capabilities rather than starting from
+      // `default-src 'none'`: inside sandbox="" the document has an opaque
+      // origin, and a blanket default-src blocks the srcdoc's own styles and
+      // images too — the email rendered as a blank white page. This keeps the
+      // protection that matters (no script execution, no plugins, no nested
+      // frames, no form posts to a phishing endpoint) while the email still
+      // displays. sandbox="" independently blocks scripts, forms and popups.
+      // Remote images do load, so a tracking pixel can fire; referrerpolicy
+      // keeps our URL out of that request.
+      const csp = `<meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">`;
       // Set srcdoc via property to avoid attribute-encoding issues
       document.getElementById("bv-email-iframe").srcdoc = csp + body.content;
     } else if (body.type === "text") {
@@ -1140,12 +1194,14 @@ async function _loadGmailBody(billId, gmailUrl, docEl) {
       throw new Error("empty");
     }
   } catch (_) {
-    // Body unavailable — fall back to the Gmail link only
+    // Body unavailable — say why. "No attachment in this email" was wrong and
+    // unhelpful: the usual cause is that the message has since been deleted
+    // from the mailbox, or that mailbox's connection has dropped.
     docEl.innerHTML = `
       <div class="bv-no-doc">
         <div class="bv-no-doc-icon">📧</div>
-        <div class="bv-no-doc-text">No attachment in this email</div>
-        <div class="bv-no-doc-sub">Open the original email in Gmail to view its contents.</div>
+        <div class="bv-no-doc-text">Email preview unavailable</div>
+        <div class="bv-no-doc-sub">${esc(reason || "Couldn't load this email's contents.")}</div>
         ${gmailUrl ? `<a class="bv-open-link" href="${escAttr(gmailUrl)}" target="_blank" rel="noopener noreferrer">Open in Gmail →</a>` : ""}
       </div>`;
   }

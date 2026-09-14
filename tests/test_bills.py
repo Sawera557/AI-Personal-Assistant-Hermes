@@ -255,6 +255,39 @@ def test_bad_email_date_header_is_ignored(bad):
     assert _parse_rfc2822_date(bad) is None
 
 
+# ---- the document viewer must announce what a file actually is ----
+
+@pytest.mark.parametrize("uri,expected", [
+    ("s3://b/bills/gmail/x.pdf",   "pdf"),
+    ("s3://b/bills/gmail/x.PDF",   "pdf"),
+    ("s3://b/bills/gmail/x.png",   "image"),   # was announced as "pdf"
+    ("s3://b/bills/gmail/x.jpg",   "image"),
+    ("s3://b/bills/gmail/x.jpeg",  "image"),
+    ("s3://b/bills/gmail/x.webp",  "image"),
+    ("s3://b/bills/gmail/x.heic",  "download"),  # no browser renders HEIC inline
+    ("s3://b/bills/gmail/x.bin",   "download"),
+])
+def test_document_type_follows_the_file_not_a_hardcoded_pdf(uri, expected):
+    """Every S3 object was reported as type "pdf", so stored PNG/JPG bills were
+    loaded into a PDF iframe and the viewer's <img> branch was unreachable."""
+    from app import _doc_type_for
+
+    assert _doc_type_for(uri) == expected
+
+
+def test_fetch_gmail_body_takes_the_business_whose_mailbox_to_read():
+    """It used to always use the default Maton key, so the preview searched the
+    wrong account — a 404 for most bills, and the wrong business's mail for the
+    rest."""
+    import inspect
+
+    from hermes.bills import fetch_gmail_body
+
+    params = inspect.signature(fetch_gmail_body).parameters
+    assert "business" in params
+    assert params["business"].default is None
+
+
 # ---- a Maton error body is not message data ----
 
 def test_a_failed_maton_call_raises_instead_of_yielding_empty_data():

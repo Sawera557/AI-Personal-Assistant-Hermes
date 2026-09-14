@@ -1111,7 +1111,16 @@ body {
 .bv-modal {
   background: #131820; border: 1px solid var(--border-strong);
   border-radius: 20px; width: 100%; max-width: 960px;
-  max-height: calc(100vh - 48px); display: flex; flex-direction: column;
+  /* A real height, not just a max. The document pane, the email preview and
+     the image view are all `height: 100%` of .bv-doc, which sits in a chain of
+     flex children. With only a max-height the modal was content-sized, so
+     .bv-doc had no resolved height to be a percentage OF — the chain collapsed
+     and the <iframe> fell back to its intrinsic default of 150px. That is why
+     documents, pictures and email snapshots all showed as a thin sliver. */
+  height: 100%;
+  max-height: calc(100vh - 48px);
+  min-height: 320px;
+  display: flex; flex-direction: column;
   overflow: hidden; box-shadow: 0 24px 64px rgba(0,0,0,.6);
 }
 
@@ -1151,6 +1160,16 @@ body {
 }
 .bstat-note { line-height: 1.2; }
 
+/* Embedded Google Drive preview, with the open-in-Drive escape hatch beneath. */
+.bv-drive-wrap { width: 100%; height: 100%; display: flex; flex-direction: column; }
+.bv-drive-iframe { flex: 1; min-height: 0; width: 100%; border: none; display: block; background: #fff; }
+.bv-drive-link {
+  flex-shrink: 0; text-align: center; padding: 7px 10px; font-size: 11.5px;
+  color: var(--muted); text-decoration: none; border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.bv-drive-link:hover { color: var(--accent); }
+
 /* Inline bill-detail editor in the document viewer. */
 .bv-edit {
   display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
@@ -1188,7 +1207,10 @@ body {
   background: rgba(0,0,0,.2);
 }
 .bv-doc {
-  flex: 1; display: flex; align-items: center; justify-content: center;
+  /* min-height:0 lets this flex child actually shrink-to-fit its parent; without
+     it a tall document would push the modal past its max-height instead of
+     scrolling inside. */
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
   position: relative;
 }
 .bv-doc iframe {
