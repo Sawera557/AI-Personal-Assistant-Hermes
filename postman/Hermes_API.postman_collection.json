@@ -244,7 +244,7 @@
                   ]
                 },
                 "url": { "raw": "{{base_url}}/api/documents", "host": ["{{base_url}}"], "path": ["api", "documents"] },
-                "description": "Ingests files into the semantic-search knowledge base: stores the file (S3, if configured), records it in `documents`, chunks it, embeds it, and writes rows into pgvector.\n\n**Form fields**\n- `files` (required, one or more)\n- `entity_id` (required) — business slug, or `\"all\"` to make it a GLOBAL document visible to every business\n- `sensitivity_level` (optional, default `internal`)\n- `source_system` (optional, default `upload`)\n- `message_id` (optional) — links the document to a chat message"
+                "description": "Ingests files into the semantic-search knowledge base: stores the file (S3, if configured), records it in `documents`, chunks it, embeds it, and writes rows into pgvector.\n\n**Form fields**\n- `files` (required, one or more)\n- `entity_id` (required) — business slug, or `\"all\"` to make it a GLOBAL document visible to every business\n- `sensitivity_level` (optional, default `internal`)\n- `source_system` (optional, default `upload`)\n- `message_id` (optional) — links the document to a chat message\n\n**`source_system` — what the Context page's sub-tabs filter on**\n- `business_context` — the Files sub-tab: notes and reference documents\n- `business_skill` — the Skills sub-tab: reusable markdown playbooks (see `skills/README.md`)\n\nIt is a free-form tag affecting listing and provenance only — every document is chunked and embedded identically, so a Skill is reachable through `/api/search` and the agent's `search_business_knowledge` tool like any other."
               },
               "response": []
             },
@@ -258,7 +258,40 @@
                   "host": ["{{base_url}}"], "path": ["api", "documents"],
                   "query": [{ "key": "entity_id", "value": "{{entity_id}}" }, { "key": "source_system", "value": "", "disabled": true }]
                 },
-                "description": "Lists ingested documents, newest first (omits `body_text` — use the detail endpoint for that).\n\n**Query**\n- `entity_id` (required) — business slug, or `\"all\"` (each row tagged with its `business_slug`)\n- `source_system` (optional filter)"
+                "description": "Lists ingested documents, newest first (omits `body_text` — use the detail endpoint for that).\n\n**Query**\n- `entity_id` (required) — business slug, or `\"all\"` (each row tagged with its `business_slug`)\n- `source_system` (optional filter) — `business_context` for the Context page's Files sub-tab, `business_skill` for its Skills sub-tab; omit to list everything\n\nA real `entity_id` returns that business's documents **plus** global (`\"all\"`) ones, so a business-scoped Skills list includes the global skills."
+              },
+              "response": []
+            },
+            {
+              "name": "List skills for a business",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/documents?entity_id={{entity_id}}&source_system=business_skill",
+                  "host": ["{{base_url}}"], "path": ["api", "documents"],
+                  "query": [{ "key": "entity_id", "value": "{{entity_id}}" }, { "key": "source_system", "value": "business_skill" }]
+                },
+                "description": "Every skill the selected business can see — its own plus the global (`\"all\"`) ones. This is exactly what the Context page's **Skills** sub-tab calls.\n\nSet `entity_id` to `all` to list every business's skills at once, each row tagged with its business."
+              },
+              "response": []
+            },
+            {
+              "name": "Upload a skill",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    { "key": "entity_id", "value": "{{entity_id}}", "type": "text" },
+                    { "key": "source_system", "value": "business_skill", "type": "text" },
+                    { "key": "sensitivity_level", "value": "internal", "type": "text" },
+                    { "key": "files", "type": "file", "src": [] }
+                  ]
+                },
+                "url": { "raw": "{{base_url}}/api/documents", "host": ["{{base_url}}"], "path": ["api", "documents"] },
+                "description": "Saves a markdown SKILL file under one business, or `\"all\"` for a global skill. Identical to the ingest call above apart from the `business_skill` tag.\n\nThe upload filename becomes the document title, so it lands as `My Skill.md` — PATCH the title afterwards to drop the extension (a title-only PATCH does not re-embed).\n\n`scripts/seed_business_skills.py` does all of this in bulk from `skills/MANIFEST.json`."
               },
               "response": []
             },

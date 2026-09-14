@@ -67,8 +67,37 @@ A ready-to-import collection is at [postman/Hermes_API.postman_collection.json](
 | POST | `/api/documents` | multipart: `files[]`, `entity_id` (required, or `"all"` for global), `sensitivity_level?`, `source_system?`, `message_id?` | Ingest + chunk + embed |
 | GET | `/api/documents` | `entity_id` (required, or `"all"`), `source_system?` | List (no `body_text`) |
 | GET | `/api/documents/{document_id}` | — | Full detail incl. `body_text` |
-| PATCH | `/api/documents/{document_id}` | `{title?, sensitivity_level?, body_text?}` | Editing `body_text` re-embeds |
+| PATCH | `/api/documents/{document_id}` | `{title?, sensitivity_level?, body_text?}` | Editing `body_text` re-embeds; title-only is free |
 | DELETE | `/api/documents/{document_id}` | — | Cascades chunks + best-effort S3 cleanup |
+
+A real `entity_id` returns that business's documents **plus** global (`"all"`)
+ones — so a business-scoped list always includes anything saved under `"all"`.
+
+#### `source_system` — what the Context page's sub-tabs filter on
+
+`source_system` is a free-form tag, and it is the only thing separating the
+Context page's two document-backed sub-tabs. Both read and write through the
+endpoints above:
+
+| Sub-tab | `source_system` | What it holds |
+|---|---|---|
+| Files | `business_context` | Notes and reference documents |
+| Skills | `business_skill` | Reusable markdown playbooks — see [skills/README.md](skills/README.md) |
+
+Anything ingested another way (chat uploads, Drive sync, …) carries its own tag
+and defaults to `upload`. The tag affects listing and provenance only — every
+document is chunked and embedded identically, so a Skill is reachable through
+`/api/search` and the agent's `search_business_knowledge` tool like any other.
+
+```bash
+# Every skill GAK Properties can see (its own, plus the global ones)
+curl "$BASE/api/documents?entity_id=gak&source_system=business_skill"
+
+# Save a new skill under one business
+curl -X POST "$BASE/api/documents" \
+  -F entity_id=gak -F source_system=business_skill \
+  -F files=@rent-roll-normalizer.md
+```
 
 ### Memories
 

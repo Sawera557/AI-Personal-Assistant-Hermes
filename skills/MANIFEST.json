@@ -1,0 +1,234 @@
+{
+  "_comment": [
+    "The Skills roster for the Context page's Skills sub-tab.",
+    "Every entry is a real, openly-licensed Agent Skill fetched from a public",
+    "repo — `scripts/fetch_business_skills.py` downloads them into",
+    "skills/<scope>/, and `scripts/seed_business_skills.py` uploads them to",
+    "/api/documents with source_system='business_skill' so they show up under",
+    "the right business and become searchable by search_business_knowledge.",
+    "`scope` is a businesses.slug, or 'all' for a global skill every business sees."
+  ],
+  "sources": {
+    "s4ag": {
+      "repo": "human-avatar/skills-for-agriculture",
+      "url": "https://github.com/human-avatar/skills-for-agriculture",
+      "license": "MIT",
+      "raw": "https://raw.githubusercontent.com/human-avatar/skills-for-agriculture/main/skills/{path}/SKILL.md"
+    },
+    "cre": {
+      "repo": "sasha-deneux/claude-skills-cre",
+      "url": "https://github.com/sasha-deneux/claude-skills-cre",
+      "license": "MIT",
+      "raw": "https://raw.githubusercontent.com/sasha-deneux/claude-skills-cre/main/skills/{path}/SKILL.md"
+    },
+    "openaccountant": {
+      "repo": "openaccountant/skills",
+      "url": "https://github.com/openaccountant/skills",
+      "license": "MIT",
+      "raw": "https://raw.githubusercontent.com/openaccountant/skills/main/{path}/SKILL.md"
+    },
+    "marketing": {
+      "repo": "coreyhaines31/marketingskills",
+      "url": "https://github.com/coreyhaines31/marketingskills",
+      "license": "MIT",
+      "raw": "https://raw.githubusercontent.com/coreyhaines31/marketingskills/main/skills/{path}/SKILL.md"
+    },
+    "deepresearch": {
+      "repo": "199-biotechnologies/claude-deep-research-skill",
+      "url": "https://github.com/199-biotechnologies/claude-deep-research-skill",
+      "license": "MIT",
+      "raw": "https://raw.githubusercontent.com/199-biotechnologies/claude-deep-research-skill/main/{path}SKILL.md"
+    }
+  },
+  "skills": [
+    {
+      "scope": "afk",
+      "business": "Afro Farm Holding Ltd",
+      "source": "s4ag",
+      "path": "s4ag-finance",
+      "file": "farm-enterprise-finance.md",
+      "title": "Farm Enterprise Finance",
+      "why": "Per-enterprise gross margins and cash flow for a 128-acre mixed farm — the shape AFK's KES reporting needs."
+    },
+    {
+      "scope": "afk",
+      "business": "Afro Farm Holding Ltd",
+      "source": "s4ag",
+      "path": "s4ag-labour",
+      "file": "farm-labour-planning.md",
+      "title": "Farm Labour Planning",
+      "why": "AFK runs ~54 staff in Loitokitok; this covers crew sizing, seasonal peaks, and task allocation."
+    },
+    {
+      "scope": "afk",
+      "business": "Afro Farm Holding Ltd",
+      "source": "s4ag",
+      "path": "s4ag-seasons",
+      "file": "crop-calendar-and-rotation.md",
+      "title": "Crop Calendar & Rotation",
+      "why": "Rotation, succession planting and a 12-month calendar to plan against the Kenyan rain seasons."
+    },
+    {
+      "scope": "gak",
+      "business": "GAK Properties LLC",
+      "source": "cre",
+      "path": "rent-roll-normalizer",
+      "file": "rent-roll-normalizer.md",
+      "title": "Rent Roll & T-12 Normalizer",
+      "why": "Turns a messy rent roll into an honest occupancy and NOI picture across the seven properties."
+    },
+    {
+      "scope": "gak",
+      "business": "GAK Properties LLC",
+      "source": "openaccountant",
+      "path": "business/rental-property",
+      "file": "rental-property-books.md",
+      "title": "Rental Property Bookkeeping",
+      "why": "Per-property income and expense tracking — the ledger layer under the rent roll."
+    },
+    {
+      "scope": "gak",
+      "business": "GAK Properties LLC",
+      "source": "openaccountant",
+      "path": "business/invoice-aging",
+      "file": "receivables-aging.md",
+      "title": "Receivables Aging",
+      "why": "Ages unpaid rent into buckets and drives the chase list — including related-party tenants."
+    },
+    {
+      "scope": "gif",
+      "business": "GIF Properties LLC",
+      "source": "cre",
+      "path": "zoning-entitlement-decoder",
+      "file": "zoning-entitlement-decoder.md",
+      "title": "Zoning & Entitlement Decoder",
+      "why": "Decodes a Minneapolis zoning code into a buildable envelope and the entitlement path to get there."
+    },
+    {
+      "scope": "gif",
+      "business": "GIF Properties LLC",
+      "source": "cre",
+      "path": "entitlement-permit-monitor",
+      "file": "permit-monitor.md",
+      "title": "Entitlement & Permit Monitor",
+      "why": "Tracks permits across the portfolio, traces the critical path, and flags slippage."
+    },
+    {
+      "scope": "gif",
+      "business": "GIF Properties LLC",
+      "source": "openaccountant",
+      "path": "business/cash-flow-forecast",
+      "file": "cash-flow-forecast.md",
+      "title": "Cash Flow Forecast",
+      "why": "Forward cash view on a three-property portfolio where one vacancy moves the whole month."
+    },
+    {
+      "scope": "gakc",
+      "business": "GAK Commodities Ltd",
+      "source": "cre",
+      "path": "off-market-deal-sourcing",
+      "file": "off-market-deal-sourcing.md",
+      "title": "Off-Market Deal Sourcing",
+      "why": "Builds ranked prospect lists from public records — the top of GAKC's Kenya acquisition funnel."
+    },
+    {
+      "scope": "gakc",
+      "business": "GAK Commodities Ltd",
+      "source": "cre",
+      "path": "developer-feasibility",
+      "file": "developer-feasibility.md",
+      "title": "Developer Feasibility",
+      "why": "Ground-up feasibility: costs, returns, take-out test and what the land is actually worth."
+    },
+    {
+      "scope": "gakc",
+      "business": "GAK Commodities Ltd",
+      "source": "openaccountant",
+      "path": "business/multi-entity",
+      "file": "multi-entity-separation.md",
+      "title": "Multi-Entity Separation",
+      "why": "Keeps a Kenya entity's books cleanly separate from the US entities — the rule Hermes must never break."
+    },
+    {
+      "scope": "nh",
+      "business": "Nour Hammam LLC",
+      "source": "marketing",
+      "path": "competitors",
+      "file": "competitor-analysis.md",
+      "title": "Competitor Analysis",
+      "why": "Structured competitive teardown — pairs with the review-intelligence work already done on rival hammams."
+    },
+    {
+      "scope": "nh",
+      "business": "Nour Hammam LLC",
+      "source": "marketing",
+      "path": "pricing",
+      "file": "pricing-strategy.md",
+      "title": "Pricing Strategy",
+      "why": "Service and package pricing for a pre-revenue spa that has to set its card before opening."
+    },
+    {
+      "scope": "nh",
+      "business": "Nour Hammam LLC",
+      "source": "marketing",
+      "path": "launch",
+      "file": "launch-playbook.md",
+      "title": "Launch Playbook",
+      "why": "Nour Hammam is pre-formation and mid-buildout at 720 E Lake — this is the go-to-market sequence."
+    },
+    {
+      "scope": "per",
+      "business": "Personal & Family",
+      "source": "openaccountant",
+      "path": "personal/net-worth",
+      "file": "net-worth-statement.md",
+      "title": "Net Worth Statement",
+      "why": "Rolls personal assets and liabilities into one statement, separate from every business ledger."
+    },
+    {
+      "scope": "per",
+      "business": "Personal & Family",
+      "source": "openaccountant",
+      "path": "personal/insurance-audit",
+      "file": "insurance-audit.md",
+      "title": "Insurance Audit",
+      "why": "Coverage-gap review across personal, family and father's-care policies."
+    },
+    {
+      "scope": "per",
+      "business": "Personal & Family",
+      "source": "openaccountant",
+      "path": "personal/subscription-audit",
+      "file": "subscription-audit.md",
+      "title": "Subscription Audit",
+      "why": "Finds recurring charges that have quietly outlived their use."
+    },
+    {
+      "scope": "all",
+      "business": "All Businesses",
+      "source": "deepresearch",
+      "path": "",
+      "file": "deep-research.md",
+      "title": "Deep Research",
+      "why": "Eight-phase research pipeline with source-credibility scoring and citation verification — the deep-research skill, available to every business."
+    },
+    {
+      "scope": "all",
+      "business": "All Businesses",
+      "source": "openaccountant",
+      "path": "business/month-end-close",
+      "file": "month-end-close.md",
+      "title": "Month-End Close",
+      "why": "One close checklist that works the same way for whichever entity is being closed."
+    },
+    {
+      "scope": "all",
+      "business": "All Businesses",
+      "source": "openaccountant",
+      "path": "shared/monthly-digest",
+      "file": "monthly-digest.md",
+      "title": "Monthly Digest",
+      "why": "The recurring what-changed-this-month summary, in the scannable shape Gandi reads best."
+    }
+  ]
+}

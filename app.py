@@ -852,9 +852,19 @@ async def upload_documents(request: Request):
     the BUSINESS slug, e.g. "afk", same convention as /api/chat, converted to
     the underlying entities.slug here; or "all" to make it a GLOBAL document
     that surfaces for every business), `sensitivity_level` (optional, default
-    'internal'), `source_system` (optional, default 'upload' — the Business
-    Context panel tags its uploads 'business_context'), `message_id` (optional,
-    link to a chat message)."""
+    'internal'), `source_system` (optional, default 'upload'),
+    `message_id` (optional, link to a chat message).
+
+    `source_system` is a free-form tag, and it's what the Context page's
+    sub-tabs filter on — the same endpoint backs all of them:
+
+    * `business_context` — the Files sub-tab: notes and reference documents.
+    * `business_skill`   — the Skills sub-tab: reusable markdown playbooks
+      scoped to one business (or global). See skills/README.md.
+
+    The tag only affects listing and provenance; every document is chunked and
+    embedded the same way, so a Skill is searchable via the agent's
+    `search_business_knowledge` tool just like any other document."""
     form = await request.form()
     business_slug = (form.get("entity_id") or "").strip()
     if not business_slug:
@@ -909,8 +919,15 @@ def _tag_business_slug(rows: list[dict]) -> list[dict]:
 async def list_documents_endpoint(entity_id: str, source_system: str | None = None):
     """List ingested documents (newest first), one business or every business.
     `entity_id` is the BUSINESS slug (same convention as /api/chat), or "all"
-    to list across every business (each row tagged with its business). Optional
-    `source_system` filter (the Context tab passes 'business_context')."""
+    to list across every business (each row tagged with its business).
+
+    Optional `source_system` filter — the Context page's sub-tabs each pass
+    their own tag: 'business_context' for Files, 'business_skill' for Skills.
+    Omit it to list everything regardless of origin. Note that a real
+    `entity_id` returns that business's documents PLUS global ones, so a
+    business-scoped Skills list includes the skills saved under "all".
+
+    Rows carry metadata only — use GET /api/documents/{id} for `body_text`."""
     all_mode = entity_id == "all"
     resolved = None if all_mode else (to_entity_slug(entity_id) or entity_id)
     try:
