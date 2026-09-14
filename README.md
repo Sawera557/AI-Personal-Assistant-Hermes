@@ -5,9 +5,10 @@ that acts across your connected business apps (via the [Maton](https://maton.ai)
 gateway), the web, and your documents — plus a voice layer (speech-to-text and
 text-to-speech).
 
-> This branch is **backend-only**. There is no UI: every route returns JSON (or
-> raw audio bytes). Deploy it on its own and point any frontend, mobile app, or
-> service at it.
+> `/` serves a single-page web UI ([`templates/index.html`](templates/index.html)
+> + [`static/`](static/)); everything under `/api/*` returns JSON (or raw audio
+> bytes). The API is self-contained, so you can ignore the UI entirely and point
+> any frontend, mobile app, or service at the backend.
 
 ---
 
@@ -289,10 +290,46 @@ listening (STT) and speaking (TTS).
 
 ---
 
+## Business skills
+
+A **skill** is a reusable markdown playbook scoped to one business — a rent-roll
+normalizer for the property entities, a crop calendar for the farm, a deep-research
+pipeline shared by all of them. They show up under **Context → Skills** in the UI
+and the agent can pull one up mid-conversation.
+
+There is no separate skills API. A skill is an ordinary document tagged
+`source_system = "business_skill"`, which is the only thing distinguishing it
+from a Context file (`business_context`) — see the
+[`source_system` table](API_ENDPOINTS.md#source_system--what-the-context-pages-sub-tabs-filter-on).
+Because it goes through the normal ingest path it is chunked and embedded too,
+so `search_business_knowledge` can reach it like any other document.
+
+[`skills/`](skills/README.md) holds an openly-licensed starter set sourced from
+public skill repos, three per business plus three global ones, with
+[`skills/MANIFEST.json`](skills/MANIFEST.json) recording where each came from:
+
+```bash
+# Re-download every skill from its upstream repo
+python scripts/fetch_business_skills.py
+
+# See what would be loaded, without touching the database
+python scripts/seed_business_skills.py --dry-run
+
+# Load them (embeds each one, so it costs API calls)
+python scripts/seed_business_skills.py --base-url http://127.0.0.1:5000
+```
+
+Seeding twice duplicates rows — `/api/documents` has no upsert. Pass `--replace`
+to drop a same-titled skill in the same scope first, or `--scope gak nh` to
+re-seed just those businesses. You can also add one by hand from the Skills
+sub-tab, which writes under the same tag.
+
+---
+
 ## Project layout
 
 ```
-app.py            # FastAPI app (routes only — no UI)
+app.py            # FastAPI app (routes only)
 hermes/
   agent.py        # Claude tool-use loop (the agent brain)
   attachments.py  # In-memory attachment store (swap for Redis/object storage)
@@ -301,6 +338,10 @@ hermes/
   memory.py       # In-memory conversation store (swap for Redis/DB to persist)
   tools.py        # Tool definitions + dispatcher
   voice.py        # Speech-to-text / text-to-speech
+skills/           # Per-business skill library + MANIFEST.json (see above)
+scripts/          # Operational scripts — fetch/seed skills, tests, one-off pulls
+static/           # Front-end assets for the web UI
+templates/        # index.html — the single-page UI
 requirements.txt
 vercel.json       # Vercel deployment config
 ```
