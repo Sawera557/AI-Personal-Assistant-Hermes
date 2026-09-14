@@ -1160,6 +1160,85 @@ body {
 }
 .bstat-note { line-height: 1.2; }
 
+/* ── Register view (the Google Sheet, rendered in-app) ─────────────────── */
+/* An author `display` rule beats the UA stylesheet's [hidden] { display:none },
+   so the documents grid stayed visible underneath the register until this. */
+[hidden] { display: none !important; }
+
+.reg-tabs { display: flex; align-items: center; gap: 6px; margin: 0 0 14px; }
+.reg-tab {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  padding: 6px 13px; border-radius: 9px; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+}
+.reg-tab.is-active { color: var(--text); border-color: var(--accent); background: rgba(245,166,35,.08); }
+.reg-tab-count { opacity: .55; font-weight: 500; margin-left: 3px; }
+.reg-sheet-link { margin-left: auto; font-size: 11.5px; color: var(--muted); text-decoration: none; }
+.reg-sheet-link:hover { color: var(--accent); }
+
+.reg-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.reg-list { display: flex; flex-direction: column; gap: 7px; }
+
+.reg-row {
+  display: grid; grid-template-columns: 44px 1fr auto; gap: 11px; align-items: start;
+  padding: 11px 13px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); border-left-width: 3px;
+}
+.reg-row.ok     { border-left-color: #34d399; }
+.reg-row.watch  { border-left-color: #f59e0b; }
+.reg-row.risk   { border-left-color: #f87171; }
+.reg-row.closed { border-left-color: var(--border-strong); opacity: .62; }
+
+.reg-ref { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.reg-main { min-width: 0; }
+.reg-vendor { font-size: 13.5px; font-weight: 650; }
+.reg-what { font-size: 11.5px; color: var(--muted); margin-top: 2px; word-break: break-word; }
+.reg-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; font-size: 10.5px; color: var(--muted); }
+.reg-meta > span { border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+.reg-entity { color: var(--text); }
+
+.reg-right { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.reg-amount { font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.reg-billed { display: block; font-size: 10.5px; font-weight: 500; color: var(--muted); }
+.reg-unverified { font-size: 11.5px; font-weight: 600; color: var(--accent); }
+.reg-status { font-size: 10px; letter-spacing: .3px; border-radius: 6px; padding: 2px 7px; border: 1px solid var(--border); }
+.reg-status.ok    { color: #34d399; border-color: rgba(52,211,153,.3); }
+.reg-status.watch { color: #f59e0b; border-color: rgba(245,158,11,.3); }
+.reg-status.risk  { color: #f87171; border-color: rgba(248,113,113,.35); }
+.reg-doc-btn {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 7px; padding: 2px 7px; font-size: 10.5px; cursor: pointer; font-family: inherit;
+}
+.reg-doc-btn:hover { color: var(--accent); border-color: rgba(245,166,35,.35); }
+
+/* A proposed amount, shown with the evidence and reasoning behind it. */
+.reg-proposal {
+  grid-column: 1 / -1; margin-top: 9px; padding: 10px 12px;
+  border: 1px dashed rgba(245,166,35,.4); border-radius: 10px; background: rgba(245,166,35,.05);
+}
+.reg-prop-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.reg-prop-tag {
+  font-size: 9.5px; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--accent); border: 1px solid rgba(245,166,35,.4); border-radius: 5px; padding: 1px 5px;
+}
+.reg-prop-amount { font-size: 15px; font-variant-numeric: tabular-nums; }
+.reg-prop-inv, .reg-prop-conf { font-size: 10.5px; color: var(--muted); }
+.reg-prop-why { font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.45; }
+.reg-prop-items { font-size: 10.5px; color: var(--muted); margin-top: 5px; opacity: .85; }
+.reg-prop-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.reg-approve { color: #34d399; border-color: rgba(52,211,153,.35); }
+.reg-reject  { color: var(--muted); }
+
+.reg-empty { text-align: center; padding: 38px 16px; color: var(--muted); }
+.reg-empty-icon { font-size: 30px; margin-bottom: 10px; }
+.reg-empty-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
+.reg-empty-sub { font-size: 12px; }
+
+@media (max-width: 720px) {
+  .reg-row { grid-template-columns: 34px 1fr; }
+  .reg-right { grid-column: 2; flex-direction: row; align-items: center; flex-wrap: wrap; }
+}
+
 /* Embedded Google Drive preview, with the open-in-Drive escape hatch beneath. */
 .bv-drive-wrap { width: 100%; height: 100%; display: flex; flex-direction: column; }
 .bv-drive-iframe { flex: 1; min-height: 0; width: 100%; border: none; display: block; background: #fff; }

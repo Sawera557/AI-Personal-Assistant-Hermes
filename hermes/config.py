@@ -472,6 +472,16 @@ class Config:
     # function BEFORE the Claude-vision fallback gets to run. Keep it comfortably
     # under the platform's function timeout (see vercel.json maxDuration).
     NUEXTRACT_TIMEOUT: int = int_env("NUEXTRACT_TIMEOUT", 45)
+    # ---- Subscriptions & bills register (hermes/register.py) ---------------
+    # The Google Sheet that OWNS the recurring-bill register. Hermes reads it
+    # and proposes verified amounts for its "AMOUNT IN PDF - UNVERIFIED" lines;
+    # it never authors a line of its own. REGISTER_SHEET_BUSINESS names the
+    # business slug whose Maton Google account can open that spreadsheet.
+    REGISTER_SHEET_ID: str = os.getenv(
+        "REGISTER_SHEET_ID", "1YKoQNPEe-EPNmZ8-eDa2aKESiDbuq7N4IcV8n8-AePo"
+    ).strip()
+    REGISTER_SHEET_BUSINESS: str = os.getenv("REGISTER_SHEET_BUSINESS", "afk").strip()
+
     # Anthropic vision model used to read documents when NuExtract is unavailable
     # (billing exhausted, outage, DNS). Must be an Anthropic model — the fallback
     # calls Claude directly, independent of the switchable agent model.

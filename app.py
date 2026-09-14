@@ -39,6 +39,7 @@ import logging
 import os
 import re
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -65,6 +66,8 @@ from hermes import calendar as hermes_calendar
 from hermes.config import Config
 from hermes.fathom import find_recording_link as find_fathom_link
 from hermes import storage as s3
+from hermes import register
+from hermes import verify_amounts
 from hermes import files_tree
 from hermes.db.bills import (
     _BILL_NOT_FOUND,
@@ -262,7 +265,7 @@ def _asset_version() -> int:
     """A version stamp that changes whenever a static asset changes, so browsers
     fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
     latest = 0.0
-    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js", "tasks.js", "context.js", "model.js", "files.js", "jobs.js", "artefacts.js", "library.js"):
+    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "register.js", "business.js", "tasks.js", "context.js", "model.js", "files.js", "jobs.js", "artefacts.js", "library.js"):
         try:
             latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
         except OSError:
@@ -1809,6 +1812,126 @@ async def api_bill_email_body(bill_id: str):
             status_code=404,
         )
     return body
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Subscriptions & bills register — the Google Sheet is the source of truth
+# ══════════════════════════════════════════════════════════════════════════
+# Hermes reads the register and never authors a line. What it contributes is
+# the thing the Sheet cannot do for itself: it holds the original PDFs and can
+# read them, so the lines recorded as "AMOUNT IN PDF - UNVERIFIED" can be
+# resolved against real evidence. Every result is a PROPOSAL awaiting a human —
+# see hermes/verify_amounts.py.
+
+# The register changes on a fortnightly cadence, so a short cache keeps the tab
+# responsive without hammering the Sheets API on every render.
+_register_cache: dict | None = None
+_register_cache_at: float = 0.0
+_REGISTER_TTL = 120.0
+
+
+def _load_register(force: bool = False) -> dict:
+    global _register_cache, _register_cache_at
+    now = time.monotonic()
+    if not force and _register_cache and (now - _register_cache_at) < _REGISTER_TTL:
+        return _register_cache
+    lines = register.fetch_register()
+    payload = {
+        "lines": lines,
+        "deadlines": register.fetch_deadlines(),
+        "summary": register.summarise(lines),
+    }
+    _register_cache, _register_cache_at = payload, now
+    return payload
+
+
+@app.get("/api/register")
+async def api_register(refresh: bool = False):
+    """The register as the Sheet holds it, plus any documents Hermes can attach."""
+    try:
+        payload = await run_in_threadpool(_load_register, refresh)
+    except register.RegisterError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+    proposals = await run_in_threadpool(verify_amounts.list_proposals, "pending")
+    by_ref: dict[str, dict] = {str(p["register_ref"]): p for p in proposals}
+
+    # Attach the evidence Hermes already holds, so a line can open its document.
+    docs = await run_in_threadpool(verify_amounts._candidate_documents)
+    lines = []
+    for line in payload["lines"]:
+        matches = verify_amounts.find_documents_for(line, docs)
+        lines.append({
+            **line,
+            "proposal": by_ref.get(str(line["ref"])),
+            "documents": [
+                {"bill_id": str(d["bill_id"]), "vendor": d["vendor"],
+                 "score": d["score"], "source": d["source"]}
+                for d in matches[:3]
+            ],
+        })
+    return {
+        "lines": lines,
+        "deadlines": payload["deadlines"],
+        "summary": {**payload["summary"], "pending_proposals": len(proposals)},
+        "sheet_url": f"https://docs.google.com/spreadsheets/d/{Config.REGISTER_SHEET_ID}/edit",
+    }
+
+
+class VerifyRequest(BaseModel):
+    ref: str | None = None      # one register line, or None to sweep
+    limit: int = 10
+
+
+@app.post("/api/register/verify")
+async def api_register_verify(body: VerifyRequest):
+    """Read stored documents and file proposals for unverified amounts.
+
+    Each line can cost an OCR call and an LLM call, so `limit` bounds a sweep.
+    """
+    try:
+        result = await run_in_threadpool(
+            verify_amounts.verify_unverified, max(1, min(body.limit, 40)), body.ref,
+        )
+    except register.RegisterError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    except Exception as exc:
+        log.warning("register verify failed: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return result
+
+
+@app.get("/api/register/proposals")
+async def api_register_proposals(status: str = "pending"):
+    return {"proposals": await run_in_threadpool(
+        verify_amounts.list_proposals, None if status == "all" else status
+    )}
+
+
+class DecideRequest(BaseModel):
+    approve: bool
+    note: str | None = None
+
+
+@app.post("/api/register/proposals/{proposal_id}")
+async def api_register_decide(proposal_id: str, body: DecideRequest):
+    """Approve or reject a proposed amount.
+
+    Approving is the only path that writes to the Sheet, and it writes the
+    Amount cell together with a CHANGE LOG row carrying the evidence — so the
+    register's audit trail stays complete regardless of who made the edit.
+    """
+    global _register_cache
+    try:
+        decided = await run_in_threadpool(
+            verify_amounts.decide, proposal_id, body.approve, body.note,
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except register.RegisterError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    _register_cache = None      # the Sheet changed; don't serve a stale copy
+    return {"proposal": decided}
 
 
 # ── Connected-app scan ───────────────────────────────────────────────────────

@@ -66,6 +66,16 @@ async function initBilling() {
   renderSkeleton();
   await loadBills();
   renderAll();
+  // The register (the Google Sheet) is the default view: it is the source of
+  // truth for recurring bills. This tab's own bill list is the document store
+  // behind it, not a second register. Guarded so a register failure can never
+  // take the document view down with it.
+  try {
+    if (typeof initRegister === "function") await initRegister();
+    if (typeof setBillingMode === "function") setBillingMode("register");
+  } catch (e) {
+    console.error("register init:", e);
+  }
   bindDropzone();
   bindConfirmOverlay();
   bindBillViewer();
