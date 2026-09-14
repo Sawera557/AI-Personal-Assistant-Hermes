@@ -253,47 +253,60 @@ def _anthropic():
 
 
 def _extract_via_claude(filename: str, raw: bytes, mime: str) -> str:
-    """Read a PDF/image with Claude's native vision — the fallback OCR path when
-    NuExtract is unavailable. Runs against Anthropic directly, independent of the
-    switchable agent model, so it works even when the chat model is set to OpenAI."""
+    """Read a PDF/image with a vision model — the fallback OCR path when
+    NuExtract is unavailable.
+
+    Runs on NVIDIA NIM, not Anthropic: OCR is background work triggered by
+    uploads and sync jobs, and operator policy keeps background spend off the
+    metered Anthropic/OpenAI accounts (see models.background_model). The name is
+    kept because several modules import it.
+
+    PDFs are the one thing this path loses by moving off Claude — the
+    OpenAI-shaped vision API takes images only. Callers already handle
+    ExtractionError, and PDFs have a real text-extraction path upstream; this
+    fallback only ever mattered for scanned ones.
+    """
     import base64
 
+    from . import models
     from .config import Config
-
-    if not Config.ANTHROPIC_API_KEY:
-        raise ExtractionError("no Claude fallback available (ANTHROPIC_API_KEY is not set)")
 
     media_type = "image/jpeg" if mime == "image/jpg" else (mime or "").lower()
     if media_type == "application/pdf" or filename.lower().endswith(".pdf"):
-        block_type, media_type = "document", "application/pdf"
-    elif media_type in _CLAUDE_IMAGE_MIMES:
-        block_type = "image"
-    else:
-        raise ExtractionError(f"Claude vision can't read '{filename}' ({mime}).")
+        raise ExtractionError(
+            f"'{filename}' is a scanned PDF and NuExtract is unavailable. The "
+            "vision fallback reads images only — convert the page to PNG/JPEG, "
+            "or restore NuExtract."
+        )
+    if media_type not in _CLAUDE_IMAGE_MIMES:
+        raise ExtractionError(f"Vision fallback can't read '{filename}' ({mime}).")
 
+    model_id = models.background_model(preferred=Config.OCR_FALLBACK_MODEL, vision=True)
     b64 = base64.standard_b64encode(raw).decode("utf-8")
-    source_block = {
-        "type": block_type,
-        "source": {"type": "base64", "media_type": media_type, "data": b64},
-    }
     try:
-        msg = _anthropic().messages.create(
-            model=Config.OCR_FALLBACK_MODEL,
+        from .llm_json import _openai_compatible
+
+        resp = _openai_compatible("nvidia", model_id).chat.completions.create(
+            model=model_id,
             max_tokens=8000,
             messages=[{
                 "role": "user",
-                "content": [source_block, {"type": "text", "text": _VISION_PROMPT}],
+                "content": [
+                    {"type": "text", "text": _VISION_PROMPT},
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:{media_type};base64,{b64}"}},
+                ],
             }],
         )
+        text = (resp.choices[0].message.content or "").strip()
+    except ExtractionError:
+        raise
     except Exception as exc:  # noqa: BLE001 — surface a readable error
-        raise ExtractionError(f"Claude vision request failed: {exc}") from exc
+        raise ExtractionError(f"Vision request failed ({model_id}): {exc}") from exc
 
-    text = "".join(
-        b.text for b in msg.content if getattr(b, "type", None) == "text"
-    ).strip()
     # Only a genuinely blank/corrupt file fails now — a text-less photo comes back
     # as a description, not an error.
     if not text or text == "BLANK_IMAGE":
         raise ExtractionError(f"'{filename}' appears to be blank or unreadable.")
-    log.info("Read %s via Claude vision fallback (%d chars)", filename, len(text))
+    log.info("Read %s via %s vision fallback (%d chars)", filename, model_id, len(text))
     return text

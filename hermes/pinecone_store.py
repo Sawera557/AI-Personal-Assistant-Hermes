@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from . import health
 from .config import Config
 from .vector_store import SENSITIVITY_ORDER, embed
 
@@ -154,7 +155,11 @@ def query(
             include_metadata=True,
             filter=flt,
         )
-    except Exception:  # noqa: BLE001 — Pinecone unreachable/misconfigured => empty, not fatal
+    except Exception as exc:  # noqa: BLE001 — Pinecone unreachable/misconfigured => empty, not fatal
+        # Recorded, not just logged: this returns [] on a missing `pinecone`
+        # package or a bad key, which silently removes every one of the ~56k
+        # indexed vectors from retrieval while chat carries on looking fine.
+        health.record("pinecone", "failed", exc)
         log.warning("Pinecone query failed for %s", entity_slug, exc_info=True)
         return []
 
@@ -191,4 +196,5 @@ def query(
             "namespace %s (expected entity_id=%s / slug=%s, sample foreign id=%s)",
             dropped, entity_namespace(entity_slug), verify_entity_id, verify_entity_slug, sample_bad,
         )
+    health.record("pinecone", "ok" if out else "empty")
     return out

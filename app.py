@@ -280,6 +280,7 @@ def index(request: Request):
             "model_options": hermes_models.options(),
             "active_model": hermes_models.active_model(),
             "active_effort": Config.EFFORT,
+            "context_enabled": _context_enabled_for_template(),
             "web_search": Config.WEB_SEARCH,
             "voice_enabled": Config.voice_enabled(),
             "voices": Config.voice_voices(),
@@ -289,9 +290,35 @@ def index(request: Request):
     )
 
 
+def _context_enabled_for_template() -> bool:
+    """Context-mode state for the settings panel. Fails OPEN to full context so
+    a settings hiccup never renders the toggle as off and mislead the user into
+    thinking their business knowledge is disabled."""
+    try:
+        from hermes import context_mode
+
+        return context_mode.enabled()
+    except Exception:  # noqa: BLE001 — rendering the page must not depend on it
+        return True
+
+
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "problems": Config.validate()}
+    """Liveness AND quality. `problems` covers configuration; `degraded` covers
+    the fail-open paths that can quietly stop working while chat keeps
+    answering — the condition that hid a month of dead memory extraction.
+    `status` is "degraded" when either is non-empty, so a monitor watching one
+    field still notices."""
+    from hermes import health as health_mod
+
+    problems = Config.validate()
+    signals = health_mod.snapshot()
+    degraded = signals.get("degraded") or []
+    return {
+        "status": "ok" if not (problems or degraded) else "degraded",
+        "problems": problems,
+        **signals,
+    }
 
 
 @app.get("/api/settings/model")
@@ -308,11 +335,41 @@ class ModelUpdate(BaseModel):
 def set_model_setting(body: ModelUpdate):
     """Switch the agent's active model platform-wide (Claude <-> OpenAI, cheap
     <-> expensive tier). Takes effect on the next turn of every conversation."""
+    # Refuse a model that can only answer with a billing message — and refuse it
+    # BEFORE persisting, so a rejected pick doesn't quietly become the stored
+    # platform setting.
+    if not hermes_models.is_available(body.model):
+        from hermes import credits
+
+        provider = hermes_models.provider_of(body.model)
+        return JSONResponse({"error": credits.message(provider)}, status_code=400)
     try:
         hermes_models.set_active_model(body.model)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     return {"active": hermes_models.active_model()}
+
+
+@app.get("/api/settings/context")
+def get_context_setting():
+    """Whether turns carry full business context + tools, or run as plain chat."""
+    from hermes import context_mode
+
+    return {"enabled": context_mode.enabled()}
+
+
+class ContextUpdate(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/settings/context")
+def set_context_setting(body: ContextUpdate):
+    """Switch full context on/off platform-wide. Off = no memory, no business
+    knowledge, no tool schemas — a plain assistant at a fraction of the tokens.
+    Takes effect on the next turn of every conversation."""
+    from hermes import context_mode
+
+    return {"enabled": context_mode.set_enabled(body.enabled)}
 
 
 @app.get("/api/settings/guardrails")

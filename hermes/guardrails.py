@@ -36,9 +36,11 @@ Fail-safe: any error resolving config or classifying a tool defaults to
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import os
+import secrets
 import threading
 from typing import Any, NamedTuple
 
@@ -287,8 +289,11 @@ def set_guardrail_enabled(key: str, enabled: bool, business: str | None = None) 
 
 
 # ---- Approval-token store (per session) ------------------------------------
+_secret_cache: bytes | None = None
 _pending_lock = threading.Lock()
 _pending: dict[str, set[str]] = {}
+#: Approvals already acted on — one approval, one execution.
+_spent: dict[str, set[str]] = {}
 _MAX_PENDING_PER_SESSION = 64  # soft cap so a long session can't grow unbounded
 
 
@@ -299,28 +304,93 @@ def _salient_args(tool_input: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in (tool_input or {}).items() if k != "approval_token"}
 
 
+def _secret() -> bytes:
+    """Key for the approval HMAC.
+
+    The token used to be a bare SHA-256 of the arguments, which anyone (the
+    model included) could recompute offline. That was survivable only because a
+    token also had to be *issued* in-session to be usable. Binding the issuing
+    turn into the token removes that crutch — a plain hash would let the model
+    mint a token claiming to come from an earlier turn — so it is keyed now.
+
+    Reuses AUTH_SESSION_SECRET / the cron secret if present. With none of them
+    set, a per-process random key still secures a single-process deployment; it
+    only degrades on multi-process/serverless, where the warning says so.
+    """
+    global _secret_cache
+    if _secret_cache is None:
+        configured = (
+            os.getenv("HERMES_GUARDRAIL_SECRET", "").strip()
+            or os.getenv("AUTH_SESSION_SECRET", "").strip()
+            or os.getenv("SCHEDULER_SECRET", "").strip()
+            or os.getenv("CRON_SECRET", "").strip()
+        )
+        if not configured:
+            configured = secrets.token_hex(32)
+            log.warning(
+                "No HERMES_GUARDRAIL_SECRET/AUTH_SESSION_SECRET set — approval "
+                "tokens are keyed per-process. On a multi-process or serverless "
+                "deployment a confirmation issued by one worker cannot be "
+                "approved on another; set a secret to fix that."
+            )
+        _secret_cache = configured.encode("utf-8")
+    return _secret_cache
+
+
 def token_for(
-    tool_name: str, tool_input: dict[str, Any], business: str | None
+    tool_name: str, tool_input: dict[str, Any], business: str | None, turn: int = 0
 ) -> str:
-    """Deterministic token for a specific action: same tool + business + args ->
-    same token; any change -> a different token."""
+    """Deterministic token for a specific action IN a specific turn.
+
+    Same tool + business + args + turn -> same token; any change -> a different
+    token. The `turn` prefix is carried in clear so the verifier knows which
+    turn to check the signature against; it is covered by the signature, so it
+    cannot be edited to claim an earlier turn.
+    """
     payload = json.dumps(
         {
             "tool": tool_name,
             "business": _scope_key(business) or "all",
             "args": _salient_args(tool_input),
+            "turn": int(turn),
         },
         sort_keys=True,
         default=str,
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    digest = hmac.new(_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{int(turn)}.{digest[:16]}"
+
+
+def _turn_of(token: str) -> int | None:
+    """The turn a token claims to have been issued in, or None if malformed."""
+    head, _, _rest = (token or "").partition(".")
+    try:
+        return int(head)
+    except ValueError:
+        return None
 
 
 def _issue(session_id: str, token: str) -> None:
     with _pending_lock:
         bucket = _pending.setdefault(session_id, set())
         if len(bucket) >= _MAX_PENDING_PER_SESSION:
-            bucket.clear()
+            # Drop the OLDEST only. This used to clear() the whole bucket, which
+            # silently invalidated every other approval the user had in flight.
+            bucket.pop()
+        bucket.add(token)
+
+
+def _already_spent(session_id: str, token: str) -> bool:
+    with _pending_lock:
+        return token in _spent.get(session_id, ())
+
+
+def _mark_spent(session_id: str, token: str) -> None:
+    """Remember that this approval has been acted on, so it can't run twice."""
+    with _pending_lock:
+        bucket = _spent.setdefault(session_id, set())
+        if len(bucket) >= _MAX_PENDING_PER_SESSION:
+            bucket.pop()
         bucket.add(token)
 
 
@@ -338,6 +408,7 @@ def clear_session(session_id: str) -> None:
     """Drop any pending approvals for a session (e.g. on reset)."""
     with _pending_lock:
         _pending.pop(session_id, None)
+        _spent.pop(session_id, None)
 
 
 # ---- Human-readable action summary -----------------------------------------
@@ -373,9 +444,13 @@ class Decision(NamedTuple):
     allow: bool
     summary: str
     approval_token: str | None
+    #: "confirm"  — show the user this summary and ask; re-call on a later turn.
+    #: "awaiting" — already asked this turn; the model must STOP and wait for
+    #:              the user rather than burning tool iterations retrying.
+    reason: str = "confirm"
 
 
-_ALLOWED = Decision(True, "", None)
+_ALLOWED = Decision(True, "", None, "allowed")
 
 
 def check(
@@ -384,11 +459,21 @@ def check(
     tool_input: dict[str, Any] | None,
     active_business: str | None = None,
     interactive: bool = True,
+    turn: int | None = None,
 ) -> Decision:
     """Decide whether a tool call may execute now.
 
     Returns ALLOW, or REQUIRE_CONFIRMATION carrying a summary and an
     approval_token the model must echo back (with unchanged args) to proceed.
+
+    `turn` is a monotonically increasing counter for the conversation (the agent
+    passes the number of user messages so far). An approval issued during turn N
+    is only honoured from turn N+1 — i.e. after the user has actually spoken
+    again. Without it the gate merely required the model to echo back a string
+    it had just been handed, which it could do unprompted in the same turn: that
+    enforced "the arguments did not change", not "a human agreed". Pass None
+    only from callers with no conversational turn (they keep the legacy
+    same-turn behaviour).
 
     `interactive=False` (unattended/scheduled runs) defers to the scheduler's
     autonomy tiers — the gate no-ops so a run with no human never deadlocks.
@@ -401,10 +486,44 @@ def check(
     if not confirm_writes_enabled(active_business):
         return _ALLOWED
 
-    expected = token_for(tool_name, ti, active_business)
+    current = 0 if turn is None else int(turn)
     supplied = str(ti.get("approval_token") or "").strip()
-    if supplied and supplied == expected and _consume(session_id, expected):
-        return _ALLOWED
 
+    if supplied:
+        issued_turn = _turn_of(supplied)
+        # Recompute the signature for the turn the token CLAIMS. A forged or
+        # edited turn fails here, because the turn is inside the signed payload.
+        if issued_turn is not None and hmac.compare_digest(
+            supplied, token_for(tool_name, ti, active_business, issued_turn)
+        ):
+            if turn is None or issued_turn < current:
+                # Legitimately approved: issued earlier, args unchanged.
+                #
+                # Single use. `_pending` only exists in the process that issued
+                # the token, and on a serverless deploy the approving request is
+                # usually a different one — so a miss there cannot mean "reject",
+                # or the legitimate flow would break. `_spent` is what actually
+                # stops a replay: one approval, one execution, per process. A
+                # cross-process replay remains possible and is the accepted cost
+                # of not deadlocking real users; the signature still pins the
+                # arguments, so it can only ever repeat the approved action.
+                if _already_spent(session_id, supplied):
+                    return Decision(
+                        False, _summarize(tool_name, ti), None, "spent"
+                    )
+                _consume(session_id, supplied)
+                _mark_spent(session_id, supplied)
+                return _ALLOWED
+            else:
+                # Correct token, but minted this very turn — the user has not
+                # spoken since. Tell the model to stop, not to retry.
+                return Decision(
+                    False,
+                    _summarize(tool_name, ti),
+                    supplied,
+                    "awaiting",
+                )
+
+    expected = token_for(tool_name, ti, active_business, current)
     _issue(session_id, expected)
-    return Decision(False, _summarize(tool_name, ti), expected)
+    return Decision(False, _summarize(tool_name, ti), expected, "confirm")

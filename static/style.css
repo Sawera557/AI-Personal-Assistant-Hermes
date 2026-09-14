@@ -2113,3 +2113,12 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
   .files-content.tiles { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   .files-folder-tree { max-height: none; }
 }
+
+/* Business Context switch (sidebar) — the guardrail-row layout is built for the
+   wide Settings panel; in this narrow column the description has to sit under
+   the control rather than beside it. */
+.context-toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 2px 0 6px;
+}
+.context-toggle-state { font-size: 13px; font-weight: 600; color: var(--text); }

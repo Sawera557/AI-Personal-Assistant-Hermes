@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import threading
 
+from . import credits, health
 from .config import Config
 from .db import documents as docs_repo
 from .db import memories as mem_repo
@@ -128,8 +129,18 @@ def _safe_extract_and_store(
 ) -> None:
     try:
         _extract_and_store(session_id, entity_slug, user_text, reply)
-    except Exception:  # noqa: BLE001 — never let a bad extraction surface anywhere
+    except credits.CreditsExhausted as exc:
+        # Not a fault to debug — hermes.credits already said it once. A stack
+        # trace per turn for a billing state is noise that buries real errors.
+        # But it IS recorded: this exact condition silently stopped memory
+        # extraction for a month before anything surfaced it.
+        health.record("memory_extract", "failed", exc)
+        log.warning("memory extraction skipped for session %s: no API credit", session_id)
+    except Exception as exc:  # noqa: BLE001 — never let a bad extraction surface anywhere
+        health.record("memory_extract", "failed", exc)
         log.warning("memory extraction failed for session %s", session_id, exc_info=True)
+    else:
+        health.record("memory_extract", "ok")
 
 
 def _extract_and_store(

@@ -147,10 +147,29 @@
             <h2>Model</h2>
             <select id="model-select" class="voice-select" aria-label="Agent model">
               {% for m in model_options %}
-              <option value="{{ m.id }}" {% if m.id == active_model %}selected{% endif %}>{{ m.label }}</option>
+              <option value="{{ m.id }}" {% if m.id == active_model %}selected{% endif %}
+                      {% if m.available is defined and not m.available %}disabled{% endif %}>{{ m.label }}</option>
               {% endfor %}
             </select>
             <p class="hint" id="model-select-status" hidden></p>
+          </div>
+
+          <div class="panel">
+            <h2>Business Context</h2>
+            <div class="context-toggle-row">
+              <span class="context-toggle-state" id="context-toggle-label">{% if context_enabled %}On{% else %}Off{% endif %}</span>
+              <label class="tk-toggle" id="context-toggle" title="{% if context_enabled %}On{% else %}Off{% endif %}">
+                <input type="checkbox" id="context-toggle-input"
+                       aria-label="Business context"
+                       {% if context_enabled %}checked{% endif %}>
+                <span class="tk-toggle-track"></span>
+              </label>
+            </div>
+            <p class="hint">
+              Off, Hermes replies as a plain assistant — far cheaper, but no
+              apps, memory or documents.
+            </p>
+            <p class="hint" id="context-select-status" hidden></p>
           </div>
 
           <div class="panel">
@@ -1176,6 +1195,7 @@
   <script src="/static/business.js?v={{ v }}"></script>
   <script src="/static/context.js?v={{ v }}"></script>
   <script src="/static/model.js?v={{ v }}"></script>
+  <script src="/static/context-mode.js?v={{ v }}"></script>
   <script src="/static/app.js?v={{ v }}"></script>
   <script src="/static/settings.js?v={{ v }}"></script>
   <script src="/static/bills.js?v={{ v }}"></script>

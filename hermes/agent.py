@@ -1,4 +1,4 @@
-"""The Hermes agent: a tool-use loop over the Maton tools, on Claude or OpenAI.
+"""The Hermes agent: a tool-use loop over the Maton tools, on Claude, OpenAI or NVIDIA.
 
 Which model runs the loop is a global, switchable setting (see hermes.models)
 rather than hardcoded — but everything the agent can DO (Maton/WATI tools,
@@ -9,6 +9,10 @@ Conversation history is always stored in Anthropic's content-block shape
 of the app (storage, transcript replay, tool dispatch) provider-agnostic, and
 means switching models mid-conversation doesn't lose history — `_to_openai_messages`
 below just translates that shared format into OpenAI's wire format per call.
+
+There are only two wire protocols here, not three: NVIDIA NIM speaks the
+OpenAI chat-completions API, so `_openai_turn` serves both and differs only in
+which client it uses and which per-provider knobs it sends (see _PROVIDERS).
 """
 from __future__ import annotations
 
@@ -19,7 +23,7 @@ from typing import Any
 import anthropic
 import openai
 
-from . import guardrails, models
+from . import context_mode, credits, guardrails, health, models
 from .attachments import ATTACHMENT_TEXT_PREFIX
 from .config import Config
 from .memory import store
@@ -28,6 +32,8 @@ from .tools import LOCAL_TOOLS, build_tools, dispatch, tool_status
 
 _anthropic_client: anthropic.Anthropic | None = None
 _openai_client: openai.OpenAI | None = None
+#: NIM clients keyed by API key — models can be provisioned under different keys.
+_nvidia_clients: dict[str, openai.OpenAI] = {}
 
 
 def _anthropic() -> anthropic.Anthropic:
@@ -42,6 +48,82 @@ def _openai() -> openai.OpenAI:
     if _openai_client is None:
         _openai_client = openai.OpenAI(api_key=Config.OPENAI_API_KEY, base_url=Config.OPENAI_BASE_URL)
     return _openai_client
+
+
+def _nvidia(model_id: str) -> openai.OpenAI:
+    """The OpenAI SDK pointed at NVIDIA NIM — same protocol, different host and
+    key. Kept as its own client (not an OPENAI_BASE_URL override) so switching
+    the chat model to a NIM model doesn't also redirect embeddings and voice.
+
+    Cached per key, not globally: build.nvidia.com hands out a key per model
+    page, so two NIM models may authenticate differently.
+    """
+    key = Config.nvidia_key_for(model_id)
+    if not key:
+        raise RuntimeError(
+            f"No NVIDIA API key configured for {model_id!r} — set NVIDIA_API_KEY (or "
+            "that model's own key) in .env, or switch the model back to a "
+            "Claude/OpenAI option in Settings."
+        )
+    if key not in _nvidia_clients:
+        _nvidia_clients[key] = openai.OpenAI(
+            api_key=key,
+            base_url=Config.NVIDIA_BASE_URL,
+            timeout=Config.NVIDIA_TIMEOUT,
+            max_retries=1,
+        )
+    return _nvidia_clients[key]
+
+
+#: Per-model NIM recipes, taken from each model's own card. NIM models agree on
+#: the wire protocol and on almost nothing else, so each entry is data rather
+#: than a branch:
+#:
+#:   `params`          top-level request params (temperature, top_p, penalties).
+#:   `extra`           top-level body params the OpenAI SDK doesn't model, sent
+#:                     via extra_body — e.g. Kimi's `reasoning_effort`.
+#:   `thinking_kwargs` what to put in chat_template_kwargs to switch reasoning
+#:                     ON. The key name is NOT standard: Nemotron/Gemma use
+#:                     `enable_thinking`, DeepSeek uses `thinking` and wants a
+#:                     `reasoning_effort` alongside it. Boolean values here are
+#:                     flipped to False on a continuation call (see below);
+#:                     non-boolean ones ride along unchanged. A model with no
+#:                     entry is never sent the key at all — gpt-oss and Kimi
+#:                     reason unconditionally and reject the toggle.
+#:   `reasoning_budget` also cap the thinking phase. Only Nemotron documents it.
+#:
+#: Deliberately absent: `seed`. NVIDIA's generated snippets ship `seed: 0`,
+#: which pins the model to one deterministic answer per input — fine for a demo,
+#: wrong for a conversation, where asking twice should be able to rephrase.
+_NVIDIA_TUNING: dict[str, dict[str, Any]] = {
+    "nvidia/nemotron-3.5-lightning-30b-a3b": {
+        "params": {"temperature": 1.0, "top_p": 0.95},
+        "thinking_kwargs": {"enable_thinking": True},
+        "reasoning_budget": True,
+    },
+    "openai/gpt-oss-20b": {
+        "params": {"temperature": 1.0, "top_p": 1.0},
+    },
+    "google/gemma-4-31b-it": {
+        "params": {
+            "temperature": 0.5, "top_p": 1.0,
+            "frequency_penalty": 0.0, "presence_penalty": 0.0,
+        },
+        "thinking_kwargs": {"enable_thinking": True},
+    },
+    "google/diffusiongemma-26b-a4b-it": {
+        "params": {"temperature": 1.0, "top_p": 0.95},
+        "thinking_kwargs": {"enable_thinking": True},
+    },
+    "moonshotai/kimi-k3": {
+        "params": {"temperature": 1.0},
+        "extra": {"reasoning_effort": "max"},
+    },
+    "deepseek-ai/deepseek-v4-flash-0731": {
+        "params": {"temperature": 1.0, "top_p": 0.95},
+        "thinking_kwargs": {"thinking": True, "reasoning_effort": "high"},
+    },
+}
 
 
 # Extra guidance for voice mode — the reply is spoken aloud on a phone-style call.
@@ -83,8 +165,31 @@ def _system_prompt(
     context_pack: str = "",
     retrieved_context: str = "",
     conversation_block: str = "",
+    tools_available: bool = True,
 ) -> str:
     today = datetime.date.today().isoformat()
+
+    if not tools_available:
+        # Plain-chat mode (hermes.context_mode off): no tools are sent, so the
+        # several thousand tokens of tool instructions below are not just waste
+        # — they are actively wrong. Told to "call send_email" with no such tool
+        # available, the model narrates tool calls instead of answering. This
+        # prompt describes what Hermes can actually do in this mode, and is
+        # ~100 tokens instead of ~1,600.
+        plain = (
+            "You are Hermes, a capable AI assistant. Answer directly and "
+            "concisely from your own knowledge.\n\n"
+            "You currently have NO tools and NO access to the user's apps, "
+            "documents, saved memory or business data — business context is "
+            "switched off for speed and cost. Never claim to have looked "
+            "something up, never invent specifics about their business, and "
+            "never describe or narrate a tool call. If a request genuinely "
+            "needs their data or apps, say plainly that business context is "
+            "turned off and they can re-enable it in Settings.\n"
+            f"Today's date is {today}."
+        )
+        return plain + _VOICE_STYLE if voice else plain
+
     base = (
         "You are Hermes, a capable AI executive assistant. You help the user get "
         "real work done across their connected business apps, the web, and their "
@@ -474,6 +579,7 @@ def _anthropic_turn(
     # prefilling the partial assistant turn. Extended thinking forbids prefilling
     # an assistant turn, so continuation calls run with thinking (and effort) off;
     # the caller strips the partial's thinking blocks to match.
+    credits.check("anthropic")
     extra: dict[str, Any] = {}
     if "haiku" not in model_id.lower() and not continuation:
         extra["thinking"] = {"type": "adaptive", "display": "summarized"}
@@ -515,25 +621,82 @@ def _openai_turn(
     messages: list[dict[str, Any]],
     max_tokens: int | None = None,
     continuation: bool = False,
+    provider: str = "openai",
 ):
-    """Stream one OpenAI chat-completions call. Same event shape as
+    """Stream one OpenAI-protocol chat-completions call. Same event shape as
     `_anthropic_turn`, with the assistant content normalized into Anthropic's
     content-block shape and the finish_reason normalized via _OPENAI_STOP_MAP.
+
+    Serves both OpenAI and NVIDIA NIM (`provider="nvidia"`), which speak the
+    same wire protocol; only the client and a few per-provider knobs differ.
 
     `continuation` means this call resumes a reply the token cap cut off; its text
     is kept raw (not stripped) so the leading boundary whitespace survives the
     merge into the partial and words aren't glued together."""
+    credits.check(credits.scope_for(provider, model_id))
     openai_tools = _to_openai_tools(tools)
-    stream = _openai().chat.completions.create(
-        model=model_id,
-        max_completion_tokens=max_tokens or Config.MAX_TOKENS,
-        messages=_to_openai_messages(system, messages),
-        tools=openai_tools or openai.NOT_GIVEN,
-        stream=True,
-        stream_options={"include_usage": True},
-    )
+    kwargs: dict[str, Any] = {
+        "model": model_id,
+        "messages": _to_openai_messages(system, messages),
+        "tools": openai_tools or openai.NOT_GIVEN,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+
+    # Output length is the RESPONSE's business, not ours: no cap is sent, so the
+    # model stops when it has finished answering rather than when it hits a
+    # number we picked. Verified against NIM — an uncapped request finishes with
+    # finish_reason="stop", it does not fall back to some small server default.
+    # Config.OUTPUT_CAP is an opt-in cost guard, unset by default. (Anthropic is
+    # the exception: max_tokens is a required field there, so _anthropic_turn
+    # still sends one and grows it on truncation.)
+    cap = max_tokens or Config.OUTPUT_CAP
+
+    if provider == "nvidia":
+        client = _nvidia(model_id)
+        tuning = _NVIDIA_TUNING.get(model_id) or {
+            "params": {
+                "temperature": Config.NVIDIA_TEMPERATURE,
+                "top_p": Config.NVIDIA_TOP_P,
+            },
+        }
+        kwargs.update(tuning.get("params") or {})
+        if cap:
+            kwargs["max_tokens"] = cap  # NIM uses the classic name
+        extra: dict[str, Any] = dict(tuning.get("extra") or {})
+        if thinking_kwargs := tuning.get("thinking_kwargs"):
+            # Reasoning is switched OFF on a continuation call for the same
+            # reason it is on Claude: we're resuming a prefilled partial
+            # assistant turn, and reasoning restarted mid-sentence just burns
+            # tokens before the text we actually want. Only the BOOLEANS flip —
+            # a companion value like DeepSeek's reasoning_effort is not a toggle
+            # and stays as configured.
+            thinking = not continuation
+            extra["chat_template_kwargs"] = {
+                k: (v and thinking) if isinstance(v, bool) else v
+                for k, v in thinking_kwargs.items()
+            }
+            if tuning.get("reasoning_budget"):
+                # NIM bills reasoning against max_tokens. Uncapped (the default)
+                # the configured budget stands on its own; but whenever a cap IS
+                # in force it must stay strictly below it — a budget larger than
+                # the cap lets the model spend the whole allowance reasoning and
+                # return that reasoning as the answer, truncated at max_tokens.
+                budget = Config.NVIDIA_REASONING_BUDGET
+                if cap:
+                    budget = min(budget, max(512, cap * 3 // 4))
+                extra["reasoning_budget"] = budget if thinking else 0
+        if extra:
+            kwargs["extra_body"] = extra
+    else:
+        client = _openai()
+        if cap:
+            kwargs["max_completion_tokens"] = cap
+
+    stream = client.chat.completions.create(**kwargs)
 
     text_parts: list[str] = []
+    reasoning_parts: list[str] = []
     calls: dict[int, dict[str, str | None]] = {}
     finish_reason: str | None = None
     usage = {
@@ -552,6 +715,22 @@ def _openai_turn(
             continue
         choice = chunk.choices[0]
         delta = choice.delta
+        # Reasoning models stream their reasoning on a separate field, ahead of
+        # the answer. Surface it as the very same live "thinking" event Claude's
+        # extended thinking produces, so the UI renders both without knowing the
+        # provider. Two field names in the wild — Nemotron/gpt-oss/Kimi/DeepSeek
+        # use `reasoning_content`, DiffusionGemma uses `reasoning` — and reading
+        # only one silently drops the other's thinking. getattr: plain OpenAI
+        # deltas have neither.
+        reasoning = None
+        if delta:
+            reasoning = (
+                getattr(delta, "reasoning_content", None)
+                or getattr(delta, "reasoning", None)
+            )
+        if reasoning:
+            reasoning_parts.append(reasoning)
+            yield {"type": "thinking", "text": reasoning}
         if delta and delta.content:
             text_parts.append(delta.content)
             yield {"type": "text", "text": delta.content}
@@ -568,6 +747,13 @@ def _openai_turn(
             finish_reason = choice.finish_reason
 
     content: list[dict[str, Any]] = []
+    # Reasoning is returned OUT OF BAND, not as a content block. Anthropic
+    # requires any thinking block replayed in an assistant turn to carry the
+    # signature it was issued with; one synthesized here would have none, so
+    # storing it in the shared history would 400 the next Claude call the moment
+    # someone switches provider mid-conversation — exactly the case the shared
+    # history format exists to support.
+    reasoning_text = "".join(reasoning_parts).strip()
     text = "".join(text_parts)
     if not continuation:
         text = text.strip()
@@ -588,11 +774,43 @@ def _openai_turn(
             }
         )
 
+    # A stream that ended without ever reporting a finish_reason did NOT finish
+    # cleanly — NIM drops the connection when a reasoning phase exhausts the
+    # budget. Calling that "end_turn" strands the caller with an empty reply and
+    # a silent $0 turn; reporting "max_tokens" instead lets stream_turn grow the
+    # budget and resume, which is the recovery path that already exists.
+    stop_reason = (
+        "max_tokens" if finish_reason is None else _OPENAI_STOP_MAP.get(finish_reason, "end_turn")
+    )
+
     yield {
         "type": "_final",
         "content": content,
-        "stop_reason": _OPENAI_STOP_MAP.get(finish_reason, "end_turn"),
+        "thinking": reasoning_text,
+        "stop_reason": stop_reason,
         "usage": usage,
+    }
+
+
+def _credits_result(provider: str, model_id: str, tool_trace: list[dict[str, Any]]):
+    """The `done` event for a turn that couldn't run because the provider is out
+    of credit. Shaped exactly like a normal result — a zero-cost turn that says
+    what happened — so every caller (chat, stream, voice, scheduler) renders it
+    as an ordinary reply rather than having to learn a new error path."""
+    return {
+        "type": "done",
+        "result": {
+            "reply": credits.message(provider),
+            "thinking": None,
+            "tool_calls": tool_trace,
+            "stop_reason": "credits_exhausted",
+            "usage": {
+                "input_tokens": 0, "output_tokens": 0,
+                "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+            },
+            "cost_usd": 0.0,
+            "model_used": model_id,
+        },
     }
 
 
@@ -624,7 +842,10 @@ def stream_turn(
     """
     model_id = models.active_model()
     provider = models.provider_of(model_id)
-    tools = build_tools(active_business, allowed_apps=allowed_apps)
+    # Plain-chat mode: no tool schemas (~11k tokens of the ~20k a trivial
+    # message costs) and no retrieval blocks below. See hermes.context_mode.
+    rich_context = context_mode.enabled()
+    tools = build_tools(active_business, allowed_apps=allowed_apps) if rich_context else []
 
     if isinstance(user_content, str):
         user_content = [{"type": "text", "text": user_content}]
@@ -640,49 +861,73 @@ def stream_turn(
     messages = store.get(session_id)
     messages.append({"role": "user", "content": user_content})
 
+    # Conversational turn counter for Guardrail #1. Derived from the stored
+    # history rather than a process-local counter so it survives a restart and
+    # agrees across workers — on a serverless deploy the approval and the
+    # request that issued it are usually different processes entirely.
+    turn_index = sum(1 for m in messages if m.get("role") == "user")
+
+    # Every block below is fail-open: none of them may break a chat turn. They
+    # go through health.guarded() so that staying silent is now *recorded* —
+    # see hermes/health.py for why (a month of dead memory extraction that
+    # nothing in the system was able to notice).
+    latest_text = _text_of(user_content)
+
+    def _ctx(signal, fn, default=""):
+        """One retrieval block, skipped entirely in plain-chat mode.
+
+        Skipping is NOT recorded as a health signal: it is a deliberate setting,
+        not a degradation, and reporting it as one would train people to ignore
+        the health page (see hermes/health.py).
+        """
+        if not rich_context:
+            return default
+        return health.guarded(signal, fn, default)
+
     # Fetched once per turn (not per tool round-trip, not cached across turns —
     # next-turn recall of what was just extracted is the point of the feature).
-    try:
-        memory_block = build_memory_block(
-            active_business=active_business, latest_user_text=_text_of(user_content),
-        )
-    except Exception:  # noqa: BLE001 — a memory-retrieval failure must never break the turn
-        memory_block = ""
-    # B2: always-present per-business context pack (fail-open to "").
-    try:
+    memory_block = _ctx(
+        "memory_block",
+        lambda: build_memory_block(
+            active_business=active_business, latest_user_text=latest_text,
+        ),
+    )
+
+    # B2: always-present per-business context pack.
+    def _pack():
         from .context_packs import packs_for
-        context_pack = packs_for(active_business)
-    except Exception:  # noqa: BLE001 — a pack failure must never break the turn
-        context_pack = ""
+        return packs_for(active_business)
+
+    context_pack = _ctx("context_pack", _pack)
+
     # Always-on RAG: relevant snippets from this business's knowledge base
     # (Context-tab files via pgvector + the autopilot corpus via Pinecone),
     # federated in one embedding. Empty on small-talk / "All Businesses" / when
-    # the feature flag is off — see hermes/rag.py. Fail-open to "".
-    try:
+    # the feature flag is off — see hermes/rag.py.
+    def _rag():
         from .rag import build_context_block
-        retrieved_context = build_context_block(
-            active_business=active_business, latest_user_text=_text_of(user_content),
+        return build_context_block(
+            active_business=active_business, latest_user_text=latest_text,
         )
-    except Exception:  # noqa: BLE001 — a retrieval failure must never break the turn
-        retrieved_context = ""
+
+    retrieved_context = _ctx("rag", _rag)
+
     # Phase 2: recall of PAST conversations (verbatim turns + summaries), owner-
     # scoped, provenance-first. Empty on small-talk / when the flag is off — see
-    # hermes/conversation_retrieve.py. Fail-open to "".
-    try:
+    # hermes/conversation_retrieve.py.
+    def _recall():
         from .conversation_retrieve import build_history_block
         from .db.conversation_memory import owner_user_id
-        conversation_block = build_history_block(
-            user_id=owner_user_id(), latest_user_text=_text_of(user_content),
+        return build_history_block(
+            user_id=owner_user_id(), latest_user_text=latest_text,
             active_business=active_business,
         )
-    except Exception:  # noqa: BLE001 — a recall failure must never break the turn
-        conversation_block = ""
+
+    conversation_block = _ctx("conversation_recall", _recall)
+
     # Files shared earlier in this chat, so the model can read them on any turn
     # (see _attachments_block). Tolerate stores without the method / a failure.
-    try:
-        attachments = store.attachments(session_id)
-    except Exception:  # noqa: BLE001
-        attachments = []
+    attachments = _ctx("attachments", lambda: store.attachments(session_id), default=[])
 
     tool_trace: list[dict[str, Any]] = []
     reply = ""
@@ -703,7 +948,7 @@ def stream_turn(
     for _ in range(Config.MAX_TOOL_ITERATIONS):
         system_prompt = _system_prompt(
             voice, active_business, memory_block, attachments, context_pack,
-            retrieved_context, conversation_block,
+            retrieved_context, conversation_block, tools_available=rich_context,
         )
 
         # Produce ONE complete assistant turn, resuming in place if the token cap
@@ -712,26 +957,49 @@ def stream_turn(
         # truncated on the final allowed pass would be dropped with no output.
         continuing = False
         while True:
+            # Two wire protocols, three providers: OpenAI and NVIDIA NIM share
+            # _openai_turn and differ only by `provider`.
+            #
+            # Only Anthropic is handed turn_max_tokens. Its API requires
+            # max_tokens, so the reply really can be cut off by our number and
+            # the growth loop below matters. The OpenAI-protocol path sends no
+            # cap (None) and lets the response decide its own length.
             turn = (
                 _anthropic_turn(
                     model_id, tools, system_prompt, messages, effort, turn_max_tokens, continuing
                 )
                 if provider == "anthropic"
-                else _openai_turn(model_id, tools, system_prompt, messages, turn_max_tokens, continuing)
+                else _openai_turn(
+                    model_id, tools, system_prompt, messages, None, continuing, provider
+                )
             )
 
             assistant_content: list[dict[str, Any]] = []
-            for event in turn:
-                if event["type"] == "_final":
-                    assistant_content = event["content"]
-                    stop_reason = event["stop_reason"]
-                    # Accumulate here, inside the continuation loop, so a reply
-                    # resumed after a token-cap cutoff bills every provider call
-                    # it took — not just the last one.
-                    for k, v in (event.get("usage") or {}).items():
-                        usage_totals[k] = usage_totals.get(k, 0) + (v or 0)
-                else:
-                    yield event
+            turn_thinking = ""
+            try:
+                for event in turn:
+                    if event["type"] == "_final":
+                        assistant_content = event["content"]
+                        stop_reason = event["stop_reason"]
+                        turn_thinking = event.get("thinking") or ""
+                        # Accumulate here, inside the continuation loop, so a reply
+                        # resumed after a token-cap cutoff bills every provider call
+                        # it took — not just the last one.
+                        for k, v in (event.get("usage") or {}).items():
+                            usage_totals[k] = usage_totals.get(k, 0) + (v or 0)
+                    else:
+                        yield event
+            except credits.CreditsExhausted as exc:
+                # Already known to be out of credit — we never even called out.
+                yield _credits_result(exc.provider, model_id, tool_trace)
+                return
+            except Exception as exc:  # noqa: BLE001 — only credit failures are handled here
+                if not credits.note_failure(credits.scope_for(provider, model_id), exc):
+                    raise
+                # An out-of-credit provider is a billing fact, not a bug: answer
+                # the user in plain language instead of raising a 500 at them.
+                yield _credits_result(provider, model_id, tool_trace)
+                return
 
             if continuing:
                 # Resuming a cut-off reply: fold the continuation into the truncated
@@ -740,7 +1008,10 @@ def stream_turn(
             else:
                 messages.append({"role": "assistant", "content": assistant_content})
 
-            if t := _thinking_of(assistant_content):
+            # Claude carries its reasoning in a signed content block; the
+            # OpenAI-protocol path hands it back out of band instead (see
+            # _openai_turn) so nothing unsigned ever enters the history.
+            if t := (turn_thinking or _thinking_of(assistant_content)):
                 thinking_summary = t
 
             # Reply cut off purely by the token cap (no tool call to make): grow the
@@ -776,20 +1047,40 @@ def stream_turn(
                 # the model relays it, the user approves, and the model re-calls
                 # with the token (see hermes.guardrails). Unattended runs
                 # (interactive=False) defer to the scheduler's autonomy tiers.
+                #
+                # `turn` is what makes that structural rather than advisory: a
+                # token minted this turn is not honoured until the user has
+                # spoken again, so the model cannot satisfy its own confirmation
+                # by echoing back a string it was just handed.
                 decision = guardrails.check(
-                    session_id, name, tool_input, active_business, interactive=interactive
+                    session_id, name, tool_input, active_business,
+                    interactive=interactive, turn=turn_index,
                 )
                 if not decision.allow:
+                    if decision.reason == "awaiting":
+                        # The token is valid but was issued this turn. Retrying
+                        # cannot succeed, so say so plainly — otherwise the model
+                        # burns the whole tool-iteration budget re-trying.
+                        next_step = (
+                            "STOP. You already asked for confirmation in this turn and the "
+                            "user has not answered yet. Do NOT call this tool again now. "
+                            "Show the summary, end your reply, and wait for the user to "
+                            "respond. Their approval can only take effect on a later turn."
+                        )
+                    else:
+                        next_step = (
+                            "Show the user this summary and ask them to confirm. Then END "
+                            "your reply and wait — do not call this tool again in this turn. "
+                            f"After the user has approved, call {name} again with the SAME "
+                            f"arguments plus approval_token=\"{decision.approval_token}\". "
+                            "Do NOT change the arguments — any change requires a new "
+                            "confirmation."
+                        )
                     guard_payload = json.dumps({
                         "status": "awaiting_confirmation",
                         "summary": decision.summary,
                         "approval_token": decision.approval_token,
-                        "next_step": (
-                            "Show the user this summary and ask them to confirm. To proceed, "
-                            f"call {name} again with the SAME arguments plus "
-                            f"approval_token=\"{decision.approval_token}\". Do NOT change the "
-                            "arguments — any change requires a new confirmation."
-                        ),
+                        "next_step": next_step,
                     })
                     tool_trace.append({
                         "tool": name,

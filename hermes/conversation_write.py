@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import threading
 
+from . import health
 from .config import Config
 from .db import conversation_memory as repo
 from .llm_json import call_claude_json
@@ -66,7 +67,11 @@ def record_turn_async(
 ) -> None:
     """Fire-and-forget: spawn the background write thread and return immediately.
     Adds zero latency to the caller (same contract as extract_async)."""
+    # "Turned off" and "broken" both produce an empty table, so they are
+    # recorded as different things — conversation_memory had zero rows ever and
+    # nothing distinguished the two.
     if not Config.convo_memory_write_enabled():
+        health.record("conversation_write", "failed", "disabled by feature flag")
         return
     if not (user_text or "").strip():
         return
@@ -80,8 +85,11 @@ def record_turn_async(
 def _safe_record(session_id, active_business, user_text, reply) -> None:
     try:
         _record(session_id, active_business, user_text, reply)
-    except Exception:  # noqa: BLE001 — a write failure must never affect the conversation
+    except Exception as exc:  # noqa: BLE001 — a write failure must never affect the conversation
+        health.record("conversation_write", "failed", exc)
         log.warning("conversation write failed", exc_info=True)
+    else:
+        health.record("conversation_write", "ok")
 
 
 def _record(session_id, active_business, user_text, reply) -> None:

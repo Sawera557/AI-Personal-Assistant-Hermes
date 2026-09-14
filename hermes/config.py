@@ -134,6 +134,12 @@ class Config:
     MODEL: str = os.getenv("HERMES_MODEL", "claude-sonnet-5")
     EFFORT: str = os.getenv("HERMES_EFFORT", "low")
     MAX_TOKENS: int = int_env("HERMES_MAX_TOKENS", 8000)
+    # Optional hard cap on generated tokens for providers whose API lets the
+    # field be omitted (OpenAI, NVIDIA NIM). 0 / unset — the default — means the
+    # reply ends when the model has finished answering, not when it hits a
+    # number an operator picked. Set it only as a cost guard; Anthropic ignores
+    # it, because max_tokens is mandatory there (see MAX_TOKENS above).
+    OUTPUT_CAP: int = int_env("HERMES_OUTPUT_CAP", 0)
     # Upper bound the agent may auto-grow a single turn's output budget to when a
     # reply is cut off by the token cap (stop_reason == "max_tokens"). The turn
     # keeps continuing with a doubled budget until it finishes or hits this cap.
@@ -150,7 +156,14 @@ class Config:
     # use, in the middle of a live conversation — latency matters more than the
     # extra reasoning depth a bigger model would add. Chat keeps MODEL so
     # tool-use/agentic quality isn't affected by this.
-    GUIDANCE_MODEL: str = os.getenv("HERMES_GUIDANCE_MODEL", "claude-haiku-4-5-20251001")
+    # Background jobs run on NVIDIA NIM by policy (see models.BACKGROUND_MODELS).
+    # This is a PREFERENCE within that set, not an escape from it: name an
+    # Anthropic/OpenAI model here and models.background_model() overrides it, so
+    # an old value in a deployed .env can't drag background spend back onto a
+    # metered account.
+    GUIDANCE_MODEL: str = os.getenv(
+        "HERMES_GUIDANCE_MODEL", "deepseek-ai/deepseek-v4-flash-0731"
+    )
 
     WEB_SEARCH: bool = _bool(os.getenv("HERMES_WEB_SEARCH"), True)
 
@@ -206,6 +219,51 @@ class Config:
     GROQ_TTS_VOICES: tuple[str, ...] = (
         "autumn", "diana", "hannah", "austin", "daniel", "troy",
     )
+
+    # NVIDIA NIM — a CHAT provider, not a voice one. Its API is OpenAI-shaped
+    # (the `openai` SDK talks to it unchanged) but it needs its own key and
+    # host, so it gets its own client in hermes/agent.py rather than
+    # overloading OPENAI_BASE_URL, which would hijack embeddings and voice too.
+    NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "").strip()
+    # build.nvidia.com issues a key per model page, so a NIM model can be
+    # provisioned under its own key. Anything not listed here (or listed with a
+    # blank value) falls back to NVIDIA_API_KEY — which is usually fine, since
+    # one account key normally works across models.
+    NVIDIA_MODEL_KEYS: dict[str, str] = {
+        "openai/gpt-oss-20b": os.getenv("NVIDIA_GPT_OSS_API_KEY", "").strip(),
+        "google/gemma-4-31b-it": os.getenv("NVIDIA_GEMMA_API_KEY", "").strip(),
+        "google/diffusiongemma-26b-a4b-it": os.getenv("NVIDIA_DIFFUSIONGEMMA_API_KEY", "").strip(),
+        "moonshotai/kimi-k3": os.getenv("NVIDIA_KIMI_API_KEY", "").strip(),
+        "deepseek-ai/deepseek-v4-flash-0731": os.getenv("NVIDIA_DEEPSEEK_API_KEY", "").strip(),
+    }
+    NVIDIA_BASE_URL: str = os.getenv(
+        "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
+    ).rstrip("/")
+    # Nemotron streams its reasoning separately (`reasoning_content`) before the
+    # answer. This caps how many tokens it may spend there; it's clamped to the
+    # turn's own output budget at call time so reasoning can never eat the whole
+    # cap and leave no room for a reply.
+    NVIDIA_REASONING_BUDGET: int = int_env("NVIDIA_REASONING_BUDGET", 16384)
+    # Nemotron's recommended sampling defaults (NVIDIA's own model card).
+    NVIDIA_TEMPERATURE: float = float_env("NVIDIA_TEMPERATURE", 1.0)
+    NVIDIA_TOP_P: float = float_env("NVIDIA_TOP_P", 0.95)
+    # Seconds to wait on a NIM call before giving up. build.nvidia.com's FREE
+    # endpoints are shared capacity: a Gemma reasoning call was measured at
+    # ~145s wall clock, so this has to be generous — but the SDK's own default
+    # is 600s with retries on top, which would hang a chat turn for ten minutes.
+    NVIDIA_TIMEOUT: float = float_env("NVIDIA_TIMEOUT", 300.0)
+    # Background jobs get a much shorter leash than interactive chat. They walk
+    # a list of candidate models on timeout (see models.background_candidates),
+    # so the interactive 300s would let one memory extraction occupy a thread
+    # for 25 minutes across five attempts. Nobody is waiting on this reply —
+    # moving on to a responsive model beats waiting out a saturated one.
+    BACKGROUND_TIMEOUT: float = float_env("HERMES_BACKGROUND_TIMEOUT", 60.0)
+
+    @classmethod
+    def nvidia_key_for(cls, model_id: str) -> str:
+        """The NIM key for `model_id` — its own if one is configured, else the
+        shared account key."""
+        return cls.NVIDIA_MODEL_KEYS.get(model_id) or cls.NVIDIA_API_KEY
 
     # ---- Active-provider resolvers (used by hermes/voice.py and the UI) ----
     @classmethod
@@ -417,7 +475,11 @@ class Config:
     # Anthropic vision model used to read documents when NuExtract is unavailable
     # (billing exhausted, outage, DNS). Must be an Anthropic model — the fallback
     # calls Claude directly, independent of the switchable agent model.
-    OCR_FALLBACK_MODEL: str = os.getenv("OCR_FALLBACK_MODEL", "claude-sonnet-5")
+    # Vision fallback for OCR when NuExtract is unavailable. Also background,
+    # also NVIDIA-only — same override rule as GUIDANCE_MODEL above.
+    OCR_FALLBACK_MODEL: str = os.getenv(
+        "OCR_FALLBACK_MODEL", "google/diffusiongemma-26b-a4b-it"
+    )
 
     @classmethod
     def validate(cls) -> list[str]:

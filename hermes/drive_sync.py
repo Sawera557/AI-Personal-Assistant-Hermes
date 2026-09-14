@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Callable
 
-from . import storage
+from . import credits, storage
 from .config import Config
 from .db import drive_sync as ledger
 from .llm_json import call_claude_json
@@ -440,6 +440,14 @@ def run(config: dict[str, Any] | None = None,
                 slug, client, per_business, max_file_bytes, classify_batch,
                 concurrency, cancel_check,
             )
+        except credits.CreditsExhausted as exc:
+            # Every remaining business would fail the same way for the same
+            # reason, so stop rather than logging the identical billing error
+            # once per business.
+            log.warning("sync stopped at %s: no API credit", slug)
+            by_business[slug] = {"error": str(exc)}
+            cancelled = True
+            break
         except Exception as exc:  # noqa: BLE001 — one business failing shouldn't sink the run
             log.warning("sync for %s failed: %s", slug, exc)
             by_business[slug] = {"error": str(exc)[:300]}
