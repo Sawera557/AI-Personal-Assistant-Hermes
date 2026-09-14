@@ -68,6 +68,7 @@ from hermes import storage as s3
 from hermes import files_tree
 from hermes.db.bills import (
     _BILL_NOT_FOUND,
+    BillUpdateError,
     cleanup_old_drive_bills,
     compute_insights,
     delete_bill,
@@ -1445,16 +1446,61 @@ def api_upsert_business(body: BusinessBody):
 
 # ── Bills ───────────────────────────────────────────────────────────────────
 
+BILL_UPLOAD_MAX_BYTES = 25 * 1024 * 1024   # per file
+BILL_UPLOAD_MAX_FILES = 20                  # per request
+BILL_UPLOAD_MIMES = {
+    "application/pdf", "image/jpeg", "image/jpg", "image/png",
+    "image/heic", "image/heif", "image/webp",
+}
+_BILL_UPLOAD_EXTS = (".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp")
+
+
+def _has_bill_extension(filename: str) -> bool:
+    """Browsers (and iOS in particular) sometimes send HEIC as
+    application/octet-stream, so fall back to the filename before rejecting."""
+    return filename.lower().endswith(_BILL_UPLOAD_EXTS)
+
+
+async def _store_unreadable_bill(
+    filename: str, raw: bytes, mime: str, biz_id: str | None
+) -> dict:
+    """Persist a document we couldn't read as a bill awaiting manual entry."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    key = f"bills/{biz_id or 'unsorted'}/{uuid.uuid4()}.{ext}"
+    file_url = await run_in_threadpool(s3.put, key, raw, mime) or None
+    vendor = filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").strip() or "Unknown vendor"
+    try:
+        bill_id = await run_in_threadpool(
+            insert_bill,
+            vendor, None, None, None, None, "USD", "pending", None,
+            biz_id, 0.0, "upload", None, file_url, None, [],
+        )
+    except Exception as exc:
+        log.warning("Could not file unreadable bill %s: %s", filename, exc)
+        return {"filename": filename, "bill_id": None, "needs_review": True}
+    return {
+        "bill_id": bill_id,
+        "filename": filename,
+        "vendor": vendor,
+        "amount": None,
+        "due_date": None,
+        "confidence": 0.0,
+        "needs_confirmation": True,
+        "needs_review": True,
+    }
+
+
 @app.get("/api/bills")
 def api_list_bills(
     business_id: str | None = None,
     status: str | None = None,
     source: str | None = None,
 ):
-    return {
-        "bills": list_bills(business_id=business_id, status=status, source=source),
-        "insights": compute_insights(),
-    }
+    bills = list_bills(business_id=business_id, status=status, source=source)
+    # Insights are computed from the rows we just fetched. compute_insights()
+    # used to run its own list_bills(), so every page load queried and joined
+    # the same table twice for identical data.
+    return {"bills": bills, "insights": compute_insights(bills)}
 
 
 @app.post("/api/bills/upload")
@@ -1474,17 +1520,49 @@ async def api_upload_bills(request: Request):
     ]
     if not uploads:
         return JSONResponse({"error": "No files provided."}, status_code=400)
+    if len(uploads) > BILL_UPLOAD_MAX_FILES:
+        return JSONResponse(
+            {"error": f"Too many files — {BILL_UPLOAD_MAX_FILES} at a time, please."},
+            status_code=400,
+        )
 
     results = []
     for upload in uploads:
         raw = await upload.read()
         filename = upload.filename or "upload"
-        mime = upload.content_type or "application/octet-stream"
+        mime = (upload.content_type or "application/octet-stream").split(";")[0].strip().lower()
+
+        # Every byte of an upload is held in memory here and again by the
+        # extractor, so an unbounded file is a straightforward way to take the
+        # process down. Reject oversized and non-document uploads up front.
+        if len(raw) > BILL_UPLOAD_MAX_BYTES:
+            results.append({
+                "filename": filename,
+                "error": f"File is {len(raw) // 1_048_576} MB — the limit is "
+                         f"{BILL_UPLOAD_MAX_BYTES // 1_048_576} MB.",
+            })
+            continue
+        if not raw:
+            results.append({"filename": filename, "error": "File is empty."})
+            continue
+        if mime not in BILL_UPLOAD_MIMES and not _has_bill_extension(filename):
+            results.append({
+                "filename": filename,
+                "error": "Unsupported file type — upload a PDF, JPG, PNG or HEIC.",
+            })
+            continue
 
         try:
             extracted = await run_in_threadpool(extract_bill, filename, raw, mime)
         except Exception as exc:
-            results.append({"filename": filename, "error": str(exc)})
+            # Extraction failed even after the OCR fallback. Keep the document
+            # rather than discarding the user's upload: store it, file a bill
+            # that needs review, and say so. Dropping it left the user with an
+            # error toast and nothing to correct.
+            log.warning("Bill extraction failed for %s: %s", filename, exc)
+            fallback = await _store_unreadable_bill(filename, raw, mime, manual_biz_id)
+            fallback["error"] = str(exc)
+            results.append(fallback)
             continue
 
         if manual_biz_id:
@@ -1535,19 +1613,39 @@ class BillPatch(BaseModel):
     status: str | None = None
     vendor: str | None = None
     amount: float | None = None
+    # A Gmail or Drive stub arrives with neither of these, and they are what
+    # the due-soon/overdue derivation and every total are computed from, so the
+    # bill viewer has to be able to write them.
+    currency: str | None = None
     invoice_number: str | None = None
     due_date: str | None = None
+    issue_date: str | None = None
     category: str | None = None
     notes: str | None = None
 
 
 @app.patch("/api/bills/{bill_id}")
 def api_patch_bill(bill_id: str, body: BillPatch):
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    # model_fields_set distinguishes "field omitted" from "field explicitly set
+    # to null". Filtering on `is not None` made it impossible to clear a value —
+    # unassigning a business or removing a wrong due date silently did nothing.
+    updates = {k: v for k, v in body.model_dump().items() if k in body.model_fields_set}
+    if not updates:
+        return JSONResponse({"error": "No fields to update."}, status_code=400)
     if body.business_id:
         updates["confidence"] = 1.0   # user manually assigned = full confidence
-    if not update_bill(bill_id, **updates):
-        return JSONResponse({"error": "Bill not found."}, status_code=404)
+
+    try:
+        updated = update_bill(bill_id, **updates)
+    except BillUpdateError as exc:
+        # Invalid input is a 400. This used to fall through update_bill's
+        # blanket except, come back as False, and be reported as "Bill not
+        # found" — sending the client hunting for a row that was there.
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if not updated:
+        if get_bill(bill_id) is None:
+            return JSONResponse({"error": "Bill not found."}, status_code=404)
+        return JSONResponse({"error": "Could not update this bill."}, status_code=500)
     return {"bill_id": bill_id, "updated": updates}
 
 
@@ -1674,18 +1772,24 @@ async def api_scan_bills(body: ScanRequest):
         )
 
     created_gmail, created_drive = [], []
+    # A swallowed scan error used to be indistinguishable from a clean scan:
+    # the caller got scanned=0 and the UI cheerfully reported "no new bills".
+    # Report what actually broke so the user knows to retry or reconnect.
+    errors: list[dict] = []
 
     if "gmail" in sources:
         try:
             created_gmail = await run_in_threadpool(scan_gmail, business, businesses, days)
         except Exception as exc:
             log.warning("Gmail scan error (%s): %s", slug, exc)
+            errors.append({"source": "gmail", "error": str(exc)})
 
     if "google-drive" in sources:
         try:
             created_drive = await run_in_threadpool(scan_drive, business, businesses, days)
         except Exception as exc:
             log.warning("Drive scan error (%s): %s", slug, exc)
+            errors.append({"source": "google-drive", "error": str(exc)})
 
     total = created_gmail + created_drive
     return {
@@ -1694,6 +1798,8 @@ async def api_scan_bills(body: ScanRequest):
         "gmail": len(created_gmail),
         "google_drive": len(created_drive),
         "bills": total,
+        "errors": errors,
+        "ok": not errors,
     }
 
 

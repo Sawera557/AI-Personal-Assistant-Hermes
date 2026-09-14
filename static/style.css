@@ -1142,6 +1142,38 @@ body {
 .bv-paid-btn[disabled] { opacity: .4; cursor: default; }
 .bv-delete-btn { color: #f87171; border-color: rgba(248,113,113,.25); }
 .bv-delete-btn:hover { background: rgba(248,113,113,.1); }
+/* Armed state for the two-step delete confirm — a class rather than inline
+   styles, so disarming can't wipe the button's other inline styling. */
+.bv-delete-btn.bv-delete-armed {
+  background: rgba(248,113,113,.15);
+  border-color: rgba(248,113,113,.4);
+  color: #f87171;
+}
+.bstat-note { line-height: 1.2; }
+
+/* Inline bill-detail editor in the document viewer. */
+.bv-edit {
+  display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.bv-field { display: flex; flex-direction: column; gap: 3px; flex: 1 1 120px; min-width: 92px; }
+.bv-field.bv-field-sm { flex: 0 0 74px; min-width: 74px; }
+.bv-field > span { font-size: 10px; color: var(--muted); letter-spacing: .2px; }
+.bv-field > input {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font-size: 12.5px; padding: 6px 8px; width: 100%;
+  font-family: inherit;
+}
+.bv-field > input:focus { outline: none; border-color: var(--accent); }
+.bv-save-btn { flex: 0 0 auto; }
+.bv-save-btn[disabled] { opacity: .5; cursor: default; }
+.bv-edit-status { font-size: 11px; color: var(--muted); flex: 0 0 auto; }
+
+@media (max-width: 640px) {
+  .bv-edit { gap: 8px; padding: 8px 12px; }
+  .bv-field { flex: 1 1 46%; }
+}
 
 .bv-close-btn {
   width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border);

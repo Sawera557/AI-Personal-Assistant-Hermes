@@ -37,3 +37,4 @@ instance/
 # banks) — keep local only, like .env. Load into the DB with load_packs.py.
 HERMES_CONTEXT_PACKS.md
 HERMES_PLAYBOOKS.md
+blank_bills_backup_*.json

@@ -50,7 +50,9 @@ def list_businesses() -> list[dict]:
     global _businesses_cache, _businesses_cache_at
     now = time.monotonic()
     if _businesses_cache is not None and (now - _businesses_cache_at) < _BUSINESSES_CACHE_TTL:
-        return _businesses_cache
+        # Hand out a copy: callers that mutate rows (e.g. tagging `connected`)
+        # must not poison the shared cache for every other request.
+        return [dict(b) for b in _businesses_cache]
     try:
         with cursor(commit=False) as cur:
             cur.execute(
@@ -62,10 +64,10 @@ def list_businesses() -> list[dict]:
             ])]
     except Exception as exc:
         log.warning("list_businesses failed: %s", exc)
-        return _businesses_cache or []
+        return [dict(b) for b in (_businesses_cache or [])]
     _businesses_cache = result
     _businesses_cache_at = now
-    return result
+    return [dict(b) for b in result]
 
 
 def upsert_business(
@@ -114,6 +116,68 @@ _BILL_COLS = [
     "confidence", "source", "source_ref", "file_url", "notes", "created_at", "updated_at",
 ]
 
+# ── Status ───────────────────────────────────────────────────────────────────
+#
+# `bills.status` in Postgres only ever holds a state a human or the system
+# explicitly chose: pending / paid / processing. 'overdue' and 'due-soon' are
+# NOT stored — nothing in the codebase ever wrote them, which is why the
+# Overdue and Due Soon tiles, the Overdue filter and the overdue insight group
+# were permanently empty. They are a pure function of due_date and today, so we
+# derive them on read instead of needing a cron to sweep the table nightly.
+
+DUE_SOON_DAYS = 7          # "Due This Week" tile
+TERMINAL_STATUSES = frozenset({"paid", "processing"})
+STORED_STATUSES = frozenset({"pending", "paid", "processing"})
+DERIVED_STATUSES = frozenset({"overdue", "due-soon"})
+ALL_STATUSES = STORED_STATUSES | DERIVED_STATUSES
+
+# Read-side ordering: most urgent first.
+_STATUS_RANK = {"overdue": 0, "due-soon": 1, "processing": 2, "pending": 3, "paid": 4}
+
+# Upper bound on rows pulled from Postgres before status derivation. The status
+# filter can no longer run in SQL (the value being filtered on may not exist in
+# the table), so filtering and LIMIT both happen in Python and the SQL side
+# needs enough headroom to make that faithful.
+_FETCH_CAP = 2000
+
+
+def _as_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def derive_status(stored: str | None, due_date: Any, today: date | None = None) -> str:
+    """Effective status of a bill = stored state, refined by its due date."""
+    stored = (stored or "pending").strip()
+    if stored in TERMINAL_STATUSES:
+        return stored
+    dd = _as_date(due_date)
+    if dd is None:
+        # A legacy row may still carry a stale 'overdue'/'due-soon' with no
+        # due_date to justify it; fall back to the only defensible state.
+        return "pending" if stored in DERIVED_STATUSES else stored
+    days = (dd - (today or date.today())).days
+    if days < 0:
+        return "overdue"
+    if days <= DUE_SOON_DAYS:
+        return "due-soon"
+    return "pending"
+
+
+def _apply_derived_status(bills: list[dict], today: date | None = None) -> None:
+    today = today or date.today()
+    for b in bills:
+        b["stored_status"] = b.get("status")
+        b["status"] = derive_status(b.get("status"), b.get("due_date"), today)
+
 
 def list_bills(
     business_id: str | None = None,
@@ -126,8 +190,6 @@ def list_bills(
             where, params = ["1=1"], []
             if business_id:
                 where.append("b.business_id = %s"); params.append(business_id)
-            if status:
-                where.append("b.status = %s"); params.append(status)
             if source:
                 where.append("b.source = %s"); params.append(source)
             cur.execute(
@@ -137,15 +199,21 @@ def list_bills(
                     FROM bills b
                     LEFT JOIN businesses bz USING (business_id)
                     WHERE {' AND '.join(where)}
-                    ORDER BY
-                      CASE b.status WHEN 'overdue' THEN 0 WHEN 'due-soon' THEN 1
-                        WHEN 'processing' THEN 2 WHEN 'pending' THEN 3 ELSE 4 END,
-                      b.due_date ASC NULLS LAST
+                    ORDER BY b.due_date ASC NULLS LAST, b.created_at DESC
                     LIMIT %s;""",
-                params + [limit],
+                params + [_FETCH_CAP],
             )
             cols = _BILL_COLS + ["business_name", "business_emoji", "business_color"]
             bills = [_clean(r) for r in _row(cur, cols)]
+
+            _apply_derived_status(bills)
+            if status:
+                bills = [b for b in bills if b["status"] == status]
+            bills.sort(key=lambda b: (
+                _STATUS_RANK.get(b["status"], 5),
+                _as_date(b.get("due_date")) or date.max,
+            ))
+            bills = bills[: max(1, limit)]
 
             # Attach line items
             if bills:
@@ -189,7 +257,9 @@ def get_bill(bill_id: str) -> dict | None:
             if not row:
                 return None
             cols = _BILL_COLS + ["business_name", "business_emoji", "business_color"]
-            return _clean(dict(zip(cols, row)))
+            bill = _clean(dict(zip(cols, row)))
+            _apply_derived_status([bill])
+            return bill
     except Exception as exc:
         log.warning("get_bill failed: %s", exc)
         return None
@@ -215,12 +285,20 @@ def insert_bill(
     bill_id = str(uuid.uuid4())
     try:
         with cursor() as cur:
+            # ON CONFLICT DO NOTHING closes the check-then-insert race in
+            # source_ref_exists(): two scans of the same mailbox running
+            # concurrently both saw "not imported yet" and both inserted, so a
+            # bill could land twice. Backed by the partial unique index in
+            # migrations/002_bills_hardening.sql; untargeted so it stays valid
+            # on a database where that migration has not been applied yet.
             cur.execute(
                 """INSERT INTO bills
                    (bill_id, business_id, vendor, amount, invoice_number,
                     due_date, issue_date, currency, status, category,
                     confidence, source, source_ref, file_url, raw_extracted)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT DO NOTHING
+                   RETURNING bill_id;""",
                 (
                     bill_id, business_id, vendor, amount, invoice_number,
                     due_date, issue_date, currency, status, category,
@@ -228,6 +306,18 @@ def insert_bill(
                     json.dumps(raw_extracted) if raw_extracted else None,
                 ),
             )
+            if cur.fetchone() is None:
+                # Lost the race — the other writer's row is the canonical one.
+                cur.execute(
+                    "SELECT bill_id FROM bills WHERE source=%s AND source_ref=%s LIMIT 1;",
+                    (source, source_ref),
+                )
+                existing = cur.fetchone()
+                if existing:
+                    log.info("insert_bill: %s/%s already imported, reusing %s",
+                             source, source_ref, existing[0])
+                    return str(existing[0])
+                raise RuntimeError("bill insert was rejected and no existing row matched")
             if line_items:
                 for item in line_items:
                     cur.execute(
@@ -247,19 +337,45 @@ def insert_bill(
     return bill_id
 
 
+_UPDATABLE = {
+    "business_id", "vendor", "amount", "invoice_number", "due_date", "issue_date",
+    "currency", "status", "category", "confidence", "notes", "file_url",
+}
+
+
+class BillUpdateError(ValueError):
+    """A caller-supplied field is invalid — surface as 400, not 404."""
+
+
 def update_bill(bill_id: str, **fields) -> bool:
-    allowed = {
-        "business_id", "vendor", "amount", "invoice_number", "due_date",
-        "status", "category", "confidence", "notes", "file_url",
-    }
-    updates = {k: v for k, v in fields.items() if k in allowed}
+    """Patch a bill. Raises BillUpdateError for bad input so the API layer can
+    tell "you sent nonsense" apart from "no such bill"."""
+    updates = {k: v for k, v in fields.items() if k in _UPDATABLE}
     if not updates:
         return False
-    updates["updated_at"] = "now()"
-    cols = ", ".join(
-        f"{k} = now()" if v == "now()" else f"{k} = %s" for k, v in updates.items()
-    )
-    vals = [v for v in updates.values() if v != "now()"]
+
+    if "status" in updates:
+        wanted = (updates["status"] or "").strip()
+        if wanted not in ALL_STATUSES:
+            raise BillUpdateError(
+                f"status must be one of {sorted(ALL_STATUSES)}, got {updates['status']!r}"
+            )
+        # 'overdue'/'due-soon' are computed from due_date on read; storing them
+        # would just go stale. Collapse them back to the state they refine.
+        updates["status"] = "pending" if wanted in DERIVED_STATUSES else wanted
+
+    for key in ("due_date", "issue_date"):
+        if key in updates and updates[key] is not None:
+            if _as_date(updates[key]) is None:
+                raise BillUpdateError(f"{key} must be an ISO date (YYYY-MM-DD)")
+
+    # updated_at is a SQL expression, not a bound value. It used to be smuggled
+    # through as the literal string "now()" and filtered back out by comparing
+    # every value against that string — which meant a bill whose notes were
+    # exactly "now()" had those notes turned into a SQL call. Keep the
+    # expression out of the value dict entirely.
+    cols = ", ".join(f"{k} = %s" for k in updates) + ", updated_at = now()"
+    vals = list(updates.values())
     try:
         with cursor() as cur:
             cur.execute(
@@ -333,54 +449,86 @@ def source_ref_exists(source: str, source_ref: str) -> bool:
 
 # ── Insights (computed on-the-fly) ───────────────────────────────────────────
 
-def compute_insights() -> dict:
-    bills = list_bills()
-    if not bills:
-        return {"overdue": [], "upcoming": [], "cashflow": [], "suggestions": []}
+UPCOMING_WINDOW_DAYS = 14
 
-    from datetime import date as d
-    today = d.today()
+_EMPTY_INSIGHTS = {"overdue": [], "upcoming": [], "cashflow": [], "suggestions": []}
+
+
+def compute_insights(bills: list[dict] | None = None) -> dict:
+    """Summarise the bill list for the insights column.
+
+    Returns STRUCTURED rows, never HTML. This function used to interpolate the
+    vendor and business name into a markup string that the frontend dropped
+    straight into innerHTML — and `vendor` is derived from an email's From
+    header or a Drive filename, i.e. from outside our trust boundary. Rendering
+    (and escaping) is the frontend's job; this layer only reports facts.
+
+    `bills` may be passed in by a caller that has already listed them, so a
+    single page load does not query the same table twice.
+    """
+    if bills is None:
+        bills = list_bills()
+    if not bills:
+        return dict(_EMPTY_INSIGHTS)
+
+    today = date.today()
 
     overdue, upcoming, cashflow_map = [], [], {}
     for b in bills:
         amt = float(b["amount"] or 0)
-        biz = b.get("business_name") or "Unknown"
+        biz = b.get("business_name") or "Unassigned"
         bid = b.get("business_id")
+        currency = b.get("currency") or "USD"
+        dd = _as_date(b.get("due_date"))
+        days = (dd - today).days if dd else None
 
         if b["status"] == "overdue":
             overdue.append({
                 "bill_id": b["bill_id"],
-                "text": f"{biz}: {b['vendor']} invoice of <strong>${amt:,.2f}</strong> is overdue.",
+                "business": biz,
+                "vendor": b.get("vendor") or "Unknown vendor",
+                "amount": amt,
+                "currency": currency,
+                "days_overdue": -days if days is not None else None,
                 "dot": "#f87171",
                 "action": "Pay Now",
             })
 
-        elif b["status"] in ("pending", "due-soon") and b.get("due_date"):
-            try:
-                dd = date.fromisoformat(b["due_date"]) if isinstance(b["due_date"], str) else b["due_date"]
-                days = (dd - today).days
-                if 0 <= days <= 14:
-                    upcoming.append({
-                        "bill_id": b["bill_id"],
-                        "text": f"{biz}: {b['vendor']} (${amt:,.0f}) due in <strong>{days} day{'s' if days!=1 else ''}</strong>.",
-                        "dot": "#f59e0b" if days <= 3 else "#34d399",
-                        "action": "Set Reminder",
-                    })
-            except (ValueError, TypeError):
-                pass
+        elif b["status"] in ("pending", "due-soon") and days is not None:
+            if 0 <= days <= UPCOMING_WINDOW_DAYS:
+                upcoming.append({
+                    "bill_id": b["bill_id"],
+                    "business": biz,
+                    "vendor": b.get("vendor") or "Unknown vendor",
+                    "amount": amt,
+                    "currency": currency,
+                    "days_until_due": days,
+                    "dot": "#f59e0b" if days <= 3 else "#34d399",
+                    "action": "Set Reminder",
+                })
 
         if bid and b["status"] != "paid":
-            cashflow_map[bid] = cashflow_map.get(bid, {
-                "label": (biz or "")[:10],
+            entry = cashflow_map.setdefault(bid, {
+                "business_id": bid,
+                "label": biz,
                 "color": b.get("business_color") or "#9aa3b2",
-                "amount": 0,
+                "amount": 0.0,
+                "currencies": set(),
             })
-            cashflow_map[bid]["amount"] += amt
+            entry["amount"] += amt
+            entry["currencies"].add(currency)
 
     cashflow = sorted(cashflow_map.values(), key=lambda x: -x["amount"])
-    max_amt = max((c["amount"] for c in cashflow), default=1) or 1
+    max_amt = max((c["amount"] for c in cashflow), default=0) or 1
     for c in cashflow:
         c["pct"] = round(c["amount"] / max_amt * 100)
+        # A single bar can only honestly carry one currency symbol; report the
+        # set so the UI can flag a mixed-currency total rather than imply "$".
+        c["currencies"] = sorted(c.pop("currencies"))
+        c["currency"] = c["currencies"][0] if len(c["currencies"]) == 1 else None
+
+    overdue.sort(key=lambda r: -(r["days_overdue"] or 0))
+    upcoming.sort(key=lambda r: r["days_until_due"])
 
     return {
         "overdue": overdue[:5],

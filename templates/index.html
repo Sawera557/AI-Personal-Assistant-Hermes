@@ -543,6 +543,30 @@
               <button class="bv-close-btn" onclick="closeBillViewer()" title="Close">✕</button>
             </div>
           </div>
+          <!-- Editable bill details. Gmail and Drive bills arrive as stubs
+               with no amount and no due date, and nothing in the UI could set
+               them — so those bills could never age into Due Soon or Overdue
+               and never counted toward a total. -->
+          <form class="bv-edit" id="bv-edit" onsubmit="return saveBillDetails(event)">
+            <label class="bv-field">
+              <span>Amount</span>
+              <input type="number" step="0.01" id="bv-edit-amount" placeholder="—" />
+            </label>
+            <label class="bv-field bv-field-sm">
+              <span>Currency</span>
+              <input type="text" id="bv-edit-currency" maxlength="3" placeholder="USD" />
+            </label>
+            <label class="bv-field">
+              <span>Due date</span>
+              <input type="date" id="bv-edit-due" />
+            </label>
+            <label class="bv-field">
+              <span>Invoice #</span>
+              <input type="text" id="bv-edit-invoice" placeholder="—" />
+            </label>
+            <button type="submit" class="bv-action-btn bv-save-btn" id="bv-save-btn">Save</button>
+            <span class="bv-edit-status" id="bv-edit-status"></span>
+          </form>
           <div class="bv-body">
             <div class="bv-doc" id="bv-doc">
               <div class="bv-doc-loading" id="bv-doc-loading">
