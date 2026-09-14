@@ -18,6 +18,12 @@ reasoning. Deletions are matched on (task_id, name): if the name on the row no
 longer matches what this file expects, the delete is skipped and reported, so a
 stale ID can never take out the wrong task.
 
+DELETING A TASK DESTROYS ITS RUN HISTORY. scheduled_task_runs.task_id is
+`REFERENCES scheduled_tasks (task_id) ON DELETE CASCADE`, so every past run goes
+with the task — `reply` (the generated report text) and `tool_calls` (the trace)
+included, with no undo. `--apply` therefore writes a full JSON export via
+scripts/backup_scheduled_tasks.py before the first delete. Do not remove that.
+
 Scheduler constraints this file works within (hermes/scheduler.py):
   frequency ∈ {daily, weekdays, weekly, hourly} — there is NO monthly. Anything
   date-specific (rent window, month close) is a frequent task with a date gate
@@ -801,6 +807,13 @@ def main() -> int:
           f"-> {len(KEEP) + len(NEW)} tasks\n")
 
     verb = "" if args.apply else "[dry run] "
+
+    # scheduled_task_runs.task_id is ON DELETE CASCADE, so deleting a task takes
+    # its whole run history with it — including `reply`, the generated report
+    # text. There is no undo, so never delete without an export on disk first.
+    if args.apply and DELETE:
+        from backup_scheduled_tasks import export
+        export()
 
     print("--- DELETE ---")
     for task_id, expected_name, why in DELETE:
