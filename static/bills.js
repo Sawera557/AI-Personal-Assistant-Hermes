@@ -160,41 +160,20 @@ function renderSkeleton() {
 }
 
 /* ── Stats row ───────────────────────────────────────────────────────────── */
-/* Documents mode is Hermes' evidence vault, not a register. Money lives in the
-   Google Sheet, which is the source of truth for what is owed — so this view
-   showed "$0.00 Overdue / $0.00 Due This Week / $0.00 Total Outstanding"
-   forever, because these rows carry documents, not amounts. Three zeroes and a
-   count is not a dashboard; it is three wrong answers to questions this view
-   cannot answer. Report coverage instead, which is what it does know. */
+/* There is no stats row in documents mode. This view holds documents; the
+   register holds money, so the money tiles here could only ever read
+   "$0.00 Overdue / $0.00 Due This Week / $0.00 Total Outstanding" — three wrong
+   answers to questions this view cannot answer. Counting documents instead was
+   no better: the tab label already says how many there are, and the one figure
+   worth surfacing (documents no register line claims) is in the Coverage panel
+   beside the list, where it comes with the actual list of them.
+
+   So the row is hidden rather than filled. The register owns this space. */
 function renderStats() {
   const row = document.getElementById("bills-stats-row");
   if (!row) return;
-  const bizId = currentBusinessId();
-  const scoped = HermesBiz.current === "all" ? bills : bills.filter(b => b.business_id === bizId);
-
-  const withDoc = scoped.filter(b => b.file_url);
-
-  // Which captured documents the register already points at. Anything left over
-  // is the interesting part: a bill we hold evidence for that no register line
-  // claims — i.e. a candidate the fortnightly sweep may not have picked up.
-  const linkedIds = new Set();
-  const lines = (typeof registerLines !== "undefined" && registerLines) || [];
-  for (const l of lines) for (const d of (l.documents || [])) linkedIds.add(d.bill_id);
-  const linked = withDoc.filter(b => linkedIds.has(b.bill_id)).length;
-  const unlinked = withDoc.length - linked;
-
-  const tile = (value, label, color, note) => `
-    <div class="bstat">
-      <div class="bstat-val"${color ? ` style="color:${color}"` : ""}>${esc(String(value))}</div>
-      <div class="bstat-label">${esc(label)}</div>
-      ${note ? `<div class="bstat-note" style="font-size:10px;color:var(--muted)">${esc(note)}</div>` : ""}
-    </div>`;
-
-  row.innerHTML =
-    tile(scoped.length, "Captured", "") +
-    tile(withDoc.length, "With a document", "var(--ok)", "readable evidence") +
-    tile(linked, "Linked to the register", "var(--accent)") +
-    tile(unlinked, "Not in the register", unlinked ? "#f87171" : "", "possible missing lines");
+  row.innerHTML = "";
+  row.hidden = true;
 }
 
 /* ── Dropzone ────────────────────────────────────────────────────────────── */

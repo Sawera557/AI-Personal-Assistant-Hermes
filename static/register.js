@@ -84,6 +84,8 @@ function showRegisterError(msg) {
 function renderRegisterStats() {
   const row = document.getElementById("bills-stats-row");
   if (!row) return;
+  // Shared with documents mode, which hides it — take it back on the way in.
+  row.hidden = false;
   const s = registerSummary;
   const atRisk = registerLines.filter((l) => RISK_STATUSES.has((l.status || "").toUpperCase())).length;
 
@@ -322,5 +324,11 @@ async function initRegister() {
   const ok = await loadRegister();
   const dc = document.getElementById("reg-count-docs");
   if (dc) dc.textContent = bills.length || "";
-  if (ok) { renderRegisterStats(); renderRegister(); }
+  if (ok) {
+    renderRegisterStats();
+    renderRegister();
+    // The documents view counts how many of its files the register claims, so
+    // it needs the register loaded before its own tiles mean anything.
+    if (typeof renderStats === "function" && billingMode === "documents") renderStats();
+  }
 }
