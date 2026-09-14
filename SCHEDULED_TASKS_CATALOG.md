@@ -47,6 +47,21 @@ So in practice the scheduler was sending six copies of one report into a black h
 
 Underneath that: a dozen duplicates, four test rows, a completed one-off backfill, and thirteen genuine business tasks whose prompts were one or two lines each — none of which carried the hard rules (entity separation, QuickBooks-only money, never invent, related-party tagging, never send), so an unattended run had nothing stopping it from blending entities or quoting a rent figure out of an old document.
 
+### Why there were twelve copies — the duplicates were being generated
+
+This was not sloppy clicking. `app.py`'s lifespan calls `notify.ensure_digest_task()` on **every process boot**. That function looks the task up **by exact name** (`notify._DIGEST_TASK_NAME = "Daily attention report"`) and creates a fresh one if the lookup misses. It is idempotent for one sequential boot — but not against concurrent cold starts, and Vercel has many. The original twelve rows were created in bursts roughly twenty seconds apart, which is what repeated boots racing each other looks like.
+
+Two consequences:
+
+1. **The task's name is load-bearing.** Renaming it — which this catalog originally did, to "Daily attention report (all entities)" — breaks the lookup and guarantees a brand-new duplicate on *every* cold start. Caught when a fresh copy appeared minutes after the first cleanup. The name is now pinned byte-identical to `_DIGEST_TASK_NAME`, with a comment in the script saying why.
+2. **A backstop was added:** `hermes/db/migrations/0021_unique_digest_task.sql` creates a partial unique index on `(user_id) WHERE name = 'Daily attention report'`. The losing INSERT in a race now fails at the storage layer; `create_task` already catches that and returns `None`, and `ensure_digest_task`'s caller is already wrapped in try/except. Scoped to this one name so ordinary user-created tasks may still share names.
+
+Verified after the fix: calling `ensure_digest_task()` returns the existing curated task and the count stays at 25.
+
+### And why the email went nowhere
+
+`owner@hermes.local` is not a misconfiguration of the tasks — it is `Config.owner_email()`'s fallback when the **`OWNER_EMAIL` environment variable is unset**. Setting `OWNER_EMAIL` in `.env` and in the Vercel project fixes delivery for the attention report in one move, without touching any task's `notify_to`. That is the correct lever; per-task `notify_to` is for routing a specific task somewhere else.
+
 ---
 
 ## 3. Decisions
@@ -55,7 +70,7 @@ Underneath that: a dozen duplicates, four test rows, a completed one-off backfil
 
 | Task | Why |
 |---|---|
-| `Daily attention report` ×11 | Eleven duplicates of one task. One copy kept (`8153a4b5`, the most recently run). |
+| `Daily attention report` ×11 | Eleven duplicates, machine-generated on boot (see above). One copy kept (`8153a4b5`, the most recently run), under its load-bearing original name. |
 | `Daily Todo Report` | Same job as the attention report, and notified a third-party address. |
 | `Urgent email triage & draft replies` | Unscoped **and hourly** — an all-businesses inbox sweep is exactly the cross-entity blending the hard rules forbid. Replaced by per-business triage (GAK, GIF, personal). |
 | `Check Recent Calendar Events` | Test row. |
@@ -113,9 +128,38 @@ Every prompt is built as `body + RULES + FORMAT` in the script, so the guardrail
 
 ---
 
-## 5. Open items
+---
 
-1. **`notify_to` is unset by default.** The six previously-enabled tasks pointed at `owner@hermes.local` (undeliverable); the two pointing at a third-party address are being deleted. The script leaves `notify_to` alone unless you pass `--notify-to`. The canonical primary lane is `gandikediye@gmail.com`, but that is a choice about where mail lands, so it is a flag rather than a default.
-2. **Comfort PCA cannot be scheduled yet** — needs a slug in `BUSINESS_TO_ENTITY_SLUG` and a Maton key. See §1.
-3. **The A Caring Living countdown is designed to be retired.** When both leases resolve it says so on its first line. Delete it then.
-4. **Notice periods are unverified across the board.** Several prompts instruct the agent to search the indexed lease for the actual notice period and mark it `UNVERIFIED` when it cannot find one. Expect that to be the common answer until the lease PDFs are fully ingested and extractable.
+## 5. The other automation layer — and the boundary between them
+
+Hermes is **not** the only automation running against these businesses. A separate layer on the Claude Artifact / Cowork surface maintains Google Sheets workbooks as the operational register for most of the portfolio, on a **Verifier / Updater** pattern:
+
+| Business | Register | Automations |
+|---|---|---|
+| GAK Properties | 15-tab workbook | Weekly Verifier (Fridays, mails numbered findings from `gak-maintainer@agentmail.to`) + Updater driven by YES / CORRECT / OK replies |
+| GIF Properties | own workbook | Weekly Verifier + Updater |
+| Nour Hammam | 6-tab workbook (`05 REGISTER`, `06 PEOPLE`, `02 DECISIONS`, `03 GATES`, `08 MONEY`, `12 CHANGE LOG`) | Daily registrar; unsupported changes held as `NEEDS RULING` |
+| Afro Farm | sheet fed by the **MCP AFK OS** system | Daily dashboard update — the sheet is a data sink, not hand-maintained |
+| Bills & subscriptions | ~71 recurring bills across six entities, with a `DEADLINES` tab | Fortnightly sweep of five mailboxes + urgent alerts from `urgent-billing@agentmail.to` |
+
+That layer's design principles — source-backed writes, verification separated from updating, change logs with before/after and evidence, deduplication, entity isolation, no guessing — are the same ones the Hermes prompts enforce. The risk was never a clash of philosophy; it was **two systems reporting on the same facts from different sources without knowing about each other**, which produces two arrears numbers and no way to tell which is right.
+
+So 18 of the 25 tasks now carry a `REGISTERS` block that sets the boundary explicitly:
+
+- **Never write to those workbooks, and never propose a cell edit.** The Updater owns every write; writing around it breaks the audit chain. (All 25 tasks are `readonly` or `draft`-to-Gmail, so this is belt and braces — but an unattended run should be told, not trusted to infer it.)
+- **Read the relevant register before reporting, and name the register and tab you read.**
+- **When the live figure disagrees with the register, report both with their sources and flag it.** Never silently pick one, never average them — the disagreement *is* the finding, and it is worth more than either number alone.
+- **The register holds operational state; live QuickBooks remains the only source for a money figure.** This resolves what would otherwise be a contradiction between the two systems' rules.
+- **Don't restate what the register's own Verifier already reports.** Add the live cross-check and the decision, not a second copy of the audit.
+
+Those 18 tasks also get `google-sheets` in `allowed_apps` so they can actually read the workbooks. The seven that don't — personal brief, personal triage, week-ahead, GAKC, GLOBALG.A.P., and the two Gmail triage tasks — have no corresponding register.
+
+---
+
+## 6. Open items
+
+1. **Set `OWNER_EMAIL`.** This is the one-line fix for the undeliverable `owner@hermes.local` (see §2). Per-task `notify_to` is left unset by default and is available via `--notify-to`.
+2. **Sheet IDs are described, not linked.** The `REGISTERS` block identifies each workbook by name, owner and tab structure, so the agent has to find it via Drive/Sheets search. Pasting the actual spreadsheet IDs into that block would make the lookup deterministic and cheaper.
+3. **Comfort PCA cannot be scheduled yet** — needs a slug in `BUSINESS_TO_ENTITY_SLUG` and a Maton key. See §1. It is one of the six entities in the billing register and carries real spend, so it is a live gap, not a theoretical one.
+4. **The A Caring Living countdown is designed to be retired.** When both leases resolve it says so on its first line. Delete it then.
+5. **Notice periods are unverified across the board.** Several prompts instruct the agent to search the indexed lease for the actual notice period and mark it `UNVERIFIED` when it cannot find one. Expect that to be the common answer until the lease PDFs are fully ingested and extractable.

@@ -72,8 +72,70 @@ OUTPUT FORMAT (Gandi is partially colorblind and reads scannable text; this is e
 """.strip()
 
 
+REGISTERS = """
+OPERATIONAL REGISTERS — READ THEM, NEVER WRITE THEM
+A separate automation layer maintains Google Sheets workbooks as the operational register for several of these businesses, on a Verifier/Updater pattern: a Verifier audits the workbook without changing anything, and an Updater applies only source-backed changes, logging each write with its previous value, new value and supporting evidence.
+
+- GAK Properties — a 15-tab workbook. Its Verifier runs Fridays and mails numbered findings (proposals, conflicts, notices) from gak-maintainer@agentmail.to; replies of YES / CORRECT / OK drive the Updater's writes.
+- GIF Properties — its own workbook, with a weekly Verifier and Updater.
+- Nour Hammam — a 6-tab operations workbook (05 REGISTER, 06 PEOPLE, 02 DECISIONS, 03 GATES, 08 MONEY, 12 CHANGE LOG), updated daily; unsupported changes are held as NEEDS RULING rather than guessed.
+- Afro Farm — dashboard data is supplied by the MCP AFK OS system. Its connected sheet is a data sink, NOT a hand-maintained document.
+- Bills & subscriptions — a register of roughly 71 recurring bills across six entities, refreshed fortnightly from five mailboxes, with its own DEADLINES tab. Urgent items go out separately from urgent-billing@agentmail.to.
+
+How to treat them:
+- NEVER write to these workbooks and never propose a specific cell edit. The Updater owns every write; writing around it breaks the audit chain.
+- Read the register relevant to this task before reporting, and name which register and which tab you read.
+- When your live figure disagrees with the register, report BOTH with their sources and flag the disagreement plainly. Do not silently pick one, and never average them — the disagreement IS the finding, and it is more useful to Gandi than either number alone.
+- The register holds operational state. Live QuickBooks remains the only source for a money figure. If the register carries a money figure that QuickBooks does not support, say so.
+- Do not repeat what the register's own Verifier already reports. Add the live cross-check and the decision, not a second copy of the audit.
+""".strip()
+
+
+# Tasks whose subject matter is also tracked in a Sheets register maintained by
+# the separate Verifier/Updater automation layer. These get the REGISTERS block
+# so they cross-check against it instead of quietly competing with it.
+REGISTER_TASKS = {
+    "Daily attention report",
+    "Kenya Window morning brief (AFK)",
+    "Rent arrears sweep (GAK)",
+    "Nour Hammam pre-launch tracker",
+    "Tax & compliance deadline monitor (all entities)",
+    "AFK payroll cash check",
+    "AFK Friday Commander Brief",
+    "30-day cash & obligations look-ahead (all entities)",
+    "Friday Commander's Review (all entities)",
+    "Lease, COI & renewal watch (GIF)",
+    "A Caring Living renewal countdown (GAK)",
+    "Rent posting & late-fee window (GAK)",
+    "Lease, COI & renewal watch (GAK)",
+    "2609 15th Ave S vacancy & leasing pipeline (GIF)",
+    "Clear Channel billboard & signage income (GIF)",
+    "Daily field-report verification (AFK)",
+    "NH formation & related-party lease status",
+    "Month-close prep (all entities)",
+}
+
+
 def body(text: str) -> str:
-    return f"{text.strip()}\n\n{RULES}\n\n{FORMAT}\n"
+    """The task-specific half of a prompt. Guardrails are appended at write time."""
+    return text.strip()
+
+
+def compose(spec: dict[str, Any]) -> str:
+    """Task body + the shared guardrails, assembled in reading order."""
+    blocks = [spec["prompt"], RULES]
+    if spec["name"] in REGISTER_TASKS:
+        blocks.append(REGISTERS)
+    blocks.append(FORMAT)
+    return "\n\n".join(blocks) + "\n"
+
+
+def apps_for(spec: dict[str, Any]) -> list[str]:
+    """A register task needs Sheets access to read the workbook it cross-checks."""
+    apps = list(spec["apps"])
+    if spec["name"] in REGISTER_TASKS and "google-sheets" not in apps:
+        apps.append("google-sheets")
+    return apps
 
 
 def sched(frequency: str, times: list[str], days: list[int] | None = None) -> dict[str, Any]:
@@ -114,7 +176,12 @@ DELETE: list[tuple[str, str, str]] = [
 KEEP: list[dict[str, Any]] = [
     {
         "task_id": "8153a4b5-9f59-44e4-b5d4-ff9823123d67",
-        "name": "Daily attention report (all entities)",
+        # LOAD-BEARING NAME — must stay byte-identical to notify._DIGEST_TASK_NAME.
+        # app.py calls notify.ensure_digest_task() on every boot, which finds this
+        # task *by name* and creates a fresh one if the lookup misses. Rename it and
+        # every cold start mints another duplicate. Migration 0021 adds a partial
+        # unique index as a backstop, but the name is the first line of defence.
+        "name": "Daily attention report",
         "business": None,
         "apps": ["google-mail", "google-calendar", "quickbooks"],
         "autonomy": "readonly",
@@ -757,10 +824,19 @@ def main() -> int:
         enabled = True if args.enable_all else bool(spec.get("rollout"))
         _write(spec, task_id, enabled, args, verb, existing=True)
 
+    # Re-running must converge, not accumulate: a task this catalog already
+    # created is updated in place rather than created a second time.
+    by_name = {t["name"]: t["task_id"] for t in live.values()}
+
     print("\n--- CREATE ---")
     for spec in NEW:
         enabled = True if args.enable_all else bool(spec.get("rollout"))
-        _write(spec, None, enabled, args, verb, existing=False)
+        existing_id = by_name.get(spec["name"])
+        if existing_id:
+            print(f"  (already exists — updating in place)")
+            _write(spec, existing_id, enabled, args, verb, existing=True)
+        else:
+            _write(spec, None, enabled, args, verb, existing=False)
 
     if not args.apply:
         print("\nNothing was written. Re-run with --apply to commit this plan.")
@@ -788,10 +864,10 @@ def _write(spec: dict[str, Any], task_id: str | None, enabled: bool,
         ok = repo.update_task(
             task_id,
             name=spec["name"],
-            prompt=spec["prompt"],
+            prompt=compose(spec),
             schedule=spec["schedule"],
             timezone_name=tz,
-            allowed_apps=spec["apps"],
+            allowed_apps=apps_for(spec),
             autonomy=spec["autonomy"],
             enabled=enabled,
             entity_slug=entity,
@@ -807,10 +883,10 @@ def _write(spec: dict[str, Any], task_id: str | None, enabled: bool,
         new_id = repo.create_task(
             entity_slug=entity,
             name=spec["name"],
-            prompt=spec["prompt"],
+            prompt=compose(spec),
             schedule=spec["schedule"],
             timezone_name=tz,
-            allowed_apps=spec["apps"],
+            allowed_apps=apps_for(spec),
             autonomy=spec["autonomy"],
             enabled=enabled,
             next_run_at=nxt,
