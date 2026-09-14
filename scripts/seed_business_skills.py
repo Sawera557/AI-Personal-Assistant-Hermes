@@ -54,7 +54,19 @@ def upload(base_url: str, scope: str, title: str, body: str) -> dict:
     r = requests.post(f"{base_url}/api/documents", data=data, files=files, timeout=300)
     if not r.ok:
         raise RuntimeError(f"{r.status_code}: {r.text[:300]}")
-    return r.json()
+    result = r.json()
+
+    # Drop the ".md" the filename left on the title — a skill reads as a named
+    # playbook, not a file. A title-only PATCH doesn't re-embed (see
+    # hermes/ingest.py:update_document), so this costs nothing.
+    doc_id = (result.get("documents") or [{}])[0].get("document_id")
+    if doc_id:
+        requests.patch(
+            f"{base_url}/api/documents/{doc_id}",
+            json={"title": title},
+            timeout=60,
+        ).raise_for_status()
+    return result
 
 
 def main() -> int:
