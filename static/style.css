@@ -1176,8 +1176,18 @@ body {
 .reg-sheet-link { margin-left: auto; font-size: 11.5px; color: var(--muted); text-decoration: none; }
 .reg-sheet-link:hover { color: var(--accent); }
 
-.reg-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
-.reg-list { display: flex; flex-direction: column; gap: 7px; }
+/* .bills-page is a flex column with overflow:hidden, so a pane inside it has to
+   claim its share of the height and scroll its own content. Without this the
+   register rendered at full natural height inside a clipped parent — every line
+   past the fold was simply unreachable, with no scrollbar to reveal it. */
+#register-pane {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px;
+}
+.reg-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
+.reg-list {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 7px; padding-bottom: 22px;
+}
 
 .reg-row {
   display: grid; grid-template-columns: 44px 1fr auto; gap: 11px; align-items: start;
@@ -1354,7 +1364,12 @@ body {
   .bills-right-col { width: 100%; flex-shrink: 0; }
   .bills-left-col { overflow: visible; }
   .bills-list { overflow: visible; padding-bottom: 0; }
-  .bills-stats-row { gap: 8px; }
+  /* On narrow screens the pane itself scrolls rather than the inner list, so
+     the stats and toolbar scroll away instead of eating the short viewport. */
+  #register-pane { overflow-y: auto; }
+  .reg-list { overflow: visible; padding-bottom: 0; }
+  .bills-stats-row { gap: 8px; flex-wrap: wrap; }
+  .bstat { flex: 1 1 45%; }
   .bstat-val { font-size: 17px; }
   .bills-pg-header { align-items: center; }
   .context-page { padding: 16px 14px 24px; }

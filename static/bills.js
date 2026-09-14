@@ -84,7 +84,10 @@ async function initBilling() {
     document.getElementById("hermes-biz-badge-bills")
   );
   HermesBiz.onChange(() => {
-    renderStats();
+    // The stats row is shared by both modes, so only the active one may paint
+    // it — otherwise switching business while reading the register replaces its
+    // figures with the document counts.
+    renderActiveStats();
     renderToolbar();
     renderBillsList();
   });
@@ -112,16 +115,26 @@ async function loadBills() {
   }
 }
 
+/* Paint whichever mode's figures are actually on screen. */
+function renderActiveStats() {
+  if (typeof billingMode !== "undefined" && billingMode === "register"
+      && typeof renderRegisterStats === "function") {
+    renderRegisterStats();
+  } else {
+    renderStats();
+  }
+}
+
 async function reload() {
   await loadBills();
-  renderStats();
+  renderActiveStats();
   renderBillsList();
   renderInsights();
 }
 
 /* ── Full render pass ────────────────────────────────────────────────────── */
 function renderAll() {
-  renderStats();
+  renderActiveStats();
   renderDropzone();
   renderToolbar();
   renderBillsList();
@@ -147,59 +160,41 @@ function renderSkeleton() {
 }
 
 /* ── Stats row ───────────────────────────────────────────────────────────── */
-/* Sum `amount` per currency. Adding a €900 bill to a $900 bill and printing
-   "$1,800.00" is a wrong number, not a rounding quirk — these tiles are what
-   the owner reads to decide what to pay. Report the dominant currency and say
-   plainly when other currencies are excluded. */
-function sumByCurrency(rows) {
-  const totals = new Map();
-  for (const b of rows) {
-    const cur = (b.currency || "USD").toUpperCase();
-    totals.set(cur, (totals.get(cur) || 0) + (Number(b.amount) || 0));
-  }
-  const sorted = [...totals.entries()].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-  return {
-    currency: sorted.length ? sorted[0][0] : "USD",
-    amount:   sorted.length ? sorted[0][1] : 0,
-    others:   sorted.slice(1),
-  };
-}
-
-function statTile(rows, label, color) {
-  const { currency, amount, others } = sumByCurrency(rows);
-  const note = others.length
-    ? `<div class="bstat-note" title="${escAttr(others.map(([c, v]) => `${c} ${v.toFixed(2)}`).join(", "))}"
-            style="font-size:10px;color:var(--muted)">+ ${others.length} other ${others.length === 1 ? "currency" : "currencies"}</div>`
-    : "";
-  return `
-    <div class="bstat">
-      <div class="bstat-val"${color ? ` style="color:${color}"` : ""}>${esc(fmt(amount, currency))}</div>
-      <div class="bstat-label">${esc(label)}</div>
-      ${note}
-    </div>`;
-}
-
+/* Documents mode is Hermes' evidence vault, not a register. Money lives in the
+   Google Sheet, which is the source of truth for what is owed — so this view
+   showed "$0.00 Overdue / $0.00 Due This Week / $0.00 Total Outstanding"
+   forever, because these rows carry documents, not amounts. Three zeroes and a
+   count is not a dashboard; it is three wrong answers to questions this view
+   cannot answer. Report coverage instead, which is what it does know. */
 function renderStats() {
   const row = document.getElementById("bills-stats-row");
   if (!row) return;
   const bizId = currentBusinessId();
-  const filtered = HermesBiz.current === "all" ? bills : bills.filter(b => b.business_id === bizId);
-  const paidCount = filtered.filter(b => b.status === "paid").length;
+  const scoped = HermesBiz.current === "all" ? bills : bills.filter(b => b.business_id === bizId);
 
-  // "Total This Month" was neither a month nor scoped to anything — it summed
-  // every bill ever loaded, paid ones included, so it only ever grew. What the
-  // tile next to Overdue and Due This Week should answer is "what do I still
-  // owe", which is the unpaid total.
-  const outstanding = filtered.filter(b => b.status !== "paid");
+  const withDoc = scoped.filter(b => b.file_url);
+
+  // Which captured documents the register already points at. Anything left over
+  // is the interesting part: a bill we hold evidence for that no register line
+  // claims — i.e. a candidate the fortnightly sweep may not have picked up.
+  const linkedIds = new Set();
+  const lines = (typeof registerLines !== "undefined" && registerLines) || [];
+  for (const l of lines) for (const d of (l.documents || [])) linkedIds.add(d.bill_id);
+  const linked = withDoc.filter(b => linkedIds.has(b.bill_id)).length;
+  const unlinked = withDoc.length - linked;
+
+  const tile = (value, label, color, note) => `
+    <div class="bstat">
+      <div class="bstat-val"${color ? ` style="color:${color}"` : ""}>${esc(String(value))}</div>
+      <div class="bstat-label">${esc(label)}</div>
+      ${note ? `<div class="bstat-note" style="font-size:10px;color:var(--muted)">${esc(note)}</div>` : ""}
+    </div>`;
 
   row.innerHTML =
-    statTile(filtered.filter(b => b.status === "overdue"),  "Overdue",       "#f87171") +
-    statTile(filtered.filter(b => b.status === "due-soon"), "Due This Week", "var(--accent)") +
-    statTile(outstanding, "Total Outstanding", "") + `
-    <div class="bstat">
-      <div class="bstat-val" style="color:var(--ok)">${paidCount}</div>
-      <div class="bstat-label">Paid</div>
-    </div>`;
+    tile(scoped.length, "Captured", "") +
+    tile(withDoc.length, "With a document", "var(--ok)", "readable evidence") +
+    tile(linked, "Linked to the register", "var(--accent)") +
+    tile(unlinked, "Not in the register", unlinked ? "#f87171" : "", "possible missing lines");
 }
 
 /* ── Dropzone ────────────────────────────────────────────────────────────── */
@@ -624,111 +619,76 @@ async function _autoScan() {
   }
 }
 
-/* ── AI Insights ─────────────────────────────────────────────────────────── */
+/* ── Insights ────────────────────────────────────────────────────────────── */
+/* The money insights below (overdue, upcoming, cash flow) are computed from the
+   bills table, which holds documents rather than amounts — so they rendered as
+   empty groups and a row of $0 bars sitting next to real figures. The register
+   owns money now. What this column can say that nothing else does is which
+   captured documents the register has NOT claimed: evidence for a bill that may
+   be missing from it entirely. */
+function renderUnclaimedDocuments(el, header) {
+  const lines = (typeof registerLines !== "undefined" && registerLines) || [];
+  const linked = new Set();
+  for (const l of lines) for (const d of (l.documents || [])) linked.add(d.bill_id);
+
+  const unclaimed = bills.filter(b => b.file_url && !linked.has(b.bill_id));
+  if (!lines.length) {
+    el.innerHTML = header + `
+      <div class="insight-group" style="padding:16px 14px;text-align:center;color:var(--muted);font-size:12px">
+        Load the register to see which documents it is missing.
+      </div>`;
+    return;
+  }
+  if (!unclaimed.length) {
+    el.innerHTML = header + `
+      <div class="insight-group" style="padding:16px 14px;text-align:center;color:var(--muted);font-size:12px">
+        ✓ Every stored document is accounted for in the register.
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = header + `
+    <div class="insight-group">
+      <div class="insight-group-head">
+        <span class="ig-emoji">🔎</span>
+        <div>
+          <div class="ig-title">Not in the register</div>
+          <div class="ig-sub">Documents no register line claims</div>
+        </div>
+        <span class="ig-count" style="color:#f87171">${unclaimed.length}</span>
+      </div>
+      ${unclaimed.slice(0, 12).map(b => `
+        <div class="insight-row">
+          <div class="ir-dot" style="background:#f87171"></div>
+          <div class="ir-body">
+            <div class="ir-text">${esc(b.vendor || "Unknown vendor")}</div>
+            <button class="ir-action" onclick="openBillViewer('${escAttr(b.bill_id)}')">Open the document →</button>
+          </div>
+        </div>`).join("")}
+      ${unclaimed.length > 12
+        ? `<div style="padding:6px 12px 10px;font-size:11px;color:var(--muted)">+ ${unclaimed.length - 12} more</div>`
+        : ""}
+    </div>`;
+}
+
 function renderInsights() {
   const el = document.getElementById("bills-insights");
   if (!el) return;
 
   const header = `
     <div class="insights-col-header">
-      🧠 AI Insights <span class="insights-live-badge">Live</span>
+      🔎 Coverage <span class="insights-live-badge">Live</span>
     </div>`;
 
   if (!bills.length) {
     el.innerHTML = header + `
       <div class="insight-group" style="padding:20px 14px;text-align:center;color:var(--muted);font-size:12px">
-        Upload bills or scan connected apps to see insights
+        Upload bills or scan connected apps to capture documents
       </div>`;
     return;
   }
 
-  // The API returns structured rows, not markup. It used to hand back a `text`
-  // field with the vendor already interpolated into <strong> tags, which meant
-  // the server was composing HTML out of email From headers and this line was
-  // executing it.
-  const overdueItems = (insights.overdue || []);
-  const overdueGroup = overdueItems.length ? `
-    <div class="insight-group">
-      <div class="insight-group-head">
-        <span class="ig-emoji">🚨</span>
-        <div><div class="ig-title">Overdue Alerts</div><div class="ig-sub">Needs action</div></div>
-        <span class="ig-count" style="color:#f87171">${overdueItems.length}</span>
-      </div>
-      ${overdueItems.map(r => `
-        <div class="insight-row">
-          <div class="ir-dot" style="background:${safeColor(r.dot, "#f87171")}"></div>
-          <div class="ir-body"><div class="ir-text">${overdueText(r)}</div>
-            <button class="ir-action" onclick="markPaid('${escAttr(r.bill_id)}')">Mark Paid →</button>
-          </div>
-        </div>`).join("")}
-    </div>` : "";
-
-  const cfItems = (insights.cashflow || []);
-  const cashFlowGroup = cfItems.length ? `
-    <div class="insight-group">
-      <div class="insight-group-head">
-        <span class="ig-emoji">📊</span>
-        <div><div class="ig-title">Cash Flow by Business</div><div class="ig-sub">Pending outflows</div></div>
-      </div>
-      <div class="cf-bars">
-        ${cfItems.map(c => {
-          const color = safeColor(c.color);
-          const pct = Math.max(0, Math.min(100, Number(c.pct) || 0));
-          const mixed = !c.currency;
-          const title = mixed
-            ? `${c.label} — mixed currencies (${(c.currencies || []).join(", ")})`
-            : c.label;
-          return `
-          <div class="cf-row">
-            <span class="cf-label" title="${escAttr(title)}">${esc(c.label)}</span>
-            <div class="cf-track"><div class="cf-bar" style="width:${pct}%;background:${color}"></div></div>
-            <span class="cf-val" style="color:${color}">${esc(fmtShort(c.amount, c.currency))}${mixed ? "*" : ""}</span>
-          </div>`;
-        }).join("")}
-      </div>
-      ${cfItems.some(c => !c.currency)
-        ? `<div class="cf-note" style="font-size:10px;color:var(--muted);padding:2px 12px 6px">* mixed currencies, shown unconverted</div>` : ""}
-    </div>` : "";
-
-  const upItems = (insights.upcoming || []);
-  const upcomingGroup = upItems.length ? `
-    <div class="insight-group">
-      <div class="insight-group-head">
-        <span class="ig-emoji">📅</span>
-        <div><div class="ig-title">Upcoming (14 days)</div><div class="ig-sub">Plan your payments</div></div>
-        <span class="ig-count">${upItems.length}</span>
-      </div>
-      ${upItems.map(r => `
-        <div class="insight-row">
-          <div class="ir-dot" style="background:${safeColor(r.dot, "#34d399")}"></div>
-          <div class="ir-body">
-            <div class="ir-text">${upcomingText(r)}</div>
-            ${r.action ? `<button class="ir-action">${esc(r.action)} →</button>` : ""}
-          </div>
-        </div>`).join("")}
-    </div>` : "";
-
-  const emptyInsight = !overdueGroup && !cashFlowGroup && !upcomingGroup
-    ? `<div class="insight-group" style="padding:16px 14px;text-align:center;color:var(--muted);font-size:12px">
-         ✓ No urgent items right now
-       </div>` : "";
-
-  el.innerHTML = header + overdueGroup + cashFlowGroup + upcomingGroup + emptyInsight;
-}
-
-/* Insight sentences are built here, from escaped parts. */
-function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
-
-function overdueText(r) {
-  const age = r.days_overdue > 0 ? ` — ${plural(r.days_overdue, "day")} late` : "";
-  return `${esc(r.business)}: ${esc(r.vendor)} invoice of `
-       + `<strong>${esc(fmt(r.amount, r.currency))}</strong> is overdue${esc(age)}.`;
-}
-
-function upcomingText(r) {
-  const when = r.days_until_due === 0 ? "today" : `in ${plural(r.days_until_due, "day")}`;
-  return `${esc(r.business)}: ${esc(r.vendor)} (${esc(fmt(r.amount, r.currency))}) `
-       + `due <strong>${esc(when)}</strong>.`;
+  renderUnclaimedDocuments(el, header);
 }
 
 /* ── Mark paid ───────────────────────────────────────────────────────────── */
@@ -886,17 +846,6 @@ function fmt(n, currency) {
   }
 }
 
-const _CURRENCY_SYMBOLS = { USD:"$", EUR:"€", GBP:"£", JPY:"¥", INR:"₹", CAD:"CA$", AUD:"A$" };
-function fmtShort(n, currency) {
-  const cur = String(currency || "USD").toUpperCase();
-  const sym = _CURRENCY_SYMBOLS[cur] || (cur + " ");
-  const v = Number(n) || 0;
-  const sign = v < 0 ? "-" : "";
-  const a = Math.abs(v);
-  if (a >= 1000000) return sign + sym + (a/1000000).toFixed(1) + "M";
-  if (a >= 1000)    return sign + sym + (a/1000).toFixed(0) + "k";
-  return sign + sym + Math.round(a);
-}
 
 /* ── Bill document viewer ────────────────────────────────────────────────── */
 let viewerBill = null;
