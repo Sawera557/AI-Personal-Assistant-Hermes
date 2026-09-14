@@ -1111,7 +1111,16 @@ body {
 .bv-modal {
   background: #131820; border: 1px solid var(--border-strong);
   border-radius: 20px; width: 100%; max-width: 960px;
-  max-height: calc(100vh - 48px); display: flex; flex-direction: column;
+  /* A real height, not just a max. The document pane, the email preview and
+     the image view are all `height: 100%` of .bv-doc, which sits in a chain of
+     flex children. With only a max-height the modal was content-sized, so
+     .bv-doc had no resolved height to be a percentage OF — the chain collapsed
+     and the <iframe> fell back to its intrinsic default of 150px. That is why
+     documents, pictures and email snapshots all showed as a thin sliver. */
+  height: 100%;
+  max-height: calc(100vh - 48px);
+  min-height: 320px;
+  display: flex; flex-direction: column;
   overflow: hidden; box-shadow: 0 24px 64px rgba(0,0,0,.6);
 }
 
@@ -1142,6 +1151,137 @@ body {
 .bv-paid-btn[disabled] { opacity: .4; cursor: default; }
 .bv-delete-btn { color: #f87171; border-color: rgba(248,113,113,.25); }
 .bv-delete-btn:hover { background: rgba(248,113,113,.1); }
+/* Armed state for the two-step delete confirm — a class rather than inline
+   styles, so disarming can't wipe the button's other inline styling. */
+.bv-delete-btn.bv-delete-armed {
+  background: rgba(248,113,113,.15);
+  border-color: rgba(248,113,113,.4);
+  color: #f87171;
+}
+.bstat-note { line-height: 1.2; }
+
+/* ── Register view (the Google Sheet, rendered in-app) ─────────────────── */
+/* An author `display` rule beats the UA stylesheet's [hidden] { display:none },
+   so the documents grid stayed visible underneath the register until this. */
+[hidden] { display: none !important; }
+
+.reg-tabs { display: flex; align-items: center; gap: 6px; margin: 0 0 14px; }
+.reg-tab {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  padding: 6px 13px; border-radius: 9px; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+}
+.reg-tab.is-active { color: var(--text); border-color: var(--accent); background: rgba(245,166,35,.08); }
+.reg-tab-count { opacity: .55; font-weight: 500; margin-left: 3px; }
+.reg-sheet-link { margin-left: auto; font-size: 11.5px; color: var(--muted); text-decoration: none; }
+.reg-sheet-link:hover { color: var(--accent); }
+
+/* .bills-page is a flex column with overflow:hidden, so a pane inside it has to
+   claim its share of the height and scroll its own content. Without this the
+   register rendered at full natural height inside a clipped parent — every line
+   past the fold was simply unreachable, with no scrollbar to reveal it. */
+#register-pane {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px;
+}
+.reg-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
+.reg-list {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 7px; padding-bottom: 22px;
+}
+
+.reg-row {
+  display: grid; grid-template-columns: 44px 1fr auto; gap: 11px; align-items: start;
+  padding: 11px 13px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); border-left-width: 3px;
+}
+.reg-row.ok     { border-left-color: #34d399; }
+.reg-row.watch  { border-left-color: #f59e0b; }
+.reg-row.risk   { border-left-color: #f87171; }
+.reg-row.closed { border-left-color: var(--border-strong); opacity: .62; }
+
+.reg-ref { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.reg-main { min-width: 0; }
+.reg-vendor { font-size: 13.5px; font-weight: 650; }
+.reg-what { font-size: 11.5px; color: var(--muted); margin-top: 2px; word-break: break-word; }
+.reg-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; font-size: 10.5px; color: var(--muted); }
+.reg-meta > span { border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+.reg-entity { color: var(--text); }
+
+.reg-right { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.reg-amount { font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.reg-billed { display: block; font-size: 10.5px; font-weight: 500; color: var(--muted); }
+.reg-unverified { font-size: 11.5px; font-weight: 600; color: var(--accent); }
+.reg-status { font-size: 10px; letter-spacing: .3px; border-radius: 6px; padding: 2px 7px; border: 1px solid var(--border); }
+.reg-status.ok    { color: #34d399; border-color: rgba(52,211,153,.3); }
+.reg-status.watch { color: #f59e0b; border-color: rgba(245,158,11,.3); }
+.reg-status.risk  { color: #f87171; border-color: rgba(248,113,113,.35); }
+.reg-doc-btn {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 7px; padding: 2px 7px; font-size: 10.5px; cursor: pointer; font-family: inherit;
+}
+.reg-doc-btn:hover { color: var(--accent); border-color: rgba(245,166,35,.35); }
+
+/* A proposed amount, shown with the evidence and reasoning behind it. */
+.reg-proposal {
+  grid-column: 1 / -1; margin-top: 9px; padding: 10px 12px;
+  border: 1px dashed rgba(245,166,35,.4); border-radius: 10px; background: rgba(245,166,35,.05);
+}
+.reg-prop-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.reg-prop-tag {
+  font-size: 9.5px; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--accent); border: 1px solid rgba(245,166,35,.4); border-radius: 5px; padding: 1px 5px;
+}
+.reg-prop-amount { font-size: 15px; font-variant-numeric: tabular-nums; }
+.reg-prop-inv, .reg-prop-conf { font-size: 10.5px; color: var(--muted); }
+.reg-prop-why { font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.45; }
+.reg-prop-items { font-size: 10.5px; color: var(--muted); margin-top: 5px; opacity: .85; }
+.reg-prop-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.reg-approve { color: #34d399; border-color: rgba(52,211,153,.35); }
+.reg-reject  { color: var(--muted); }
+
+.reg-empty { text-align: center; padding: 38px 16px; color: var(--muted); }
+.reg-empty-icon { font-size: 30px; margin-bottom: 10px; }
+.reg-empty-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
+.reg-empty-sub { font-size: 12px; }
+
+@media (max-width: 720px) {
+  .reg-row { grid-template-columns: 34px 1fr; }
+  .reg-right { grid-column: 2; flex-direction: row; align-items: center; flex-wrap: wrap; }
+}
+
+/* Embedded Google Drive preview, with the open-in-Drive escape hatch beneath. */
+.bv-drive-wrap { width: 100%; height: 100%; display: flex; flex-direction: column; }
+.bv-drive-iframe { flex: 1; min-height: 0; width: 100%; border: none; display: block; background: #fff; }
+.bv-drive-link {
+  flex-shrink: 0; text-align: center; padding: 7px 10px; font-size: 11.5px;
+  color: var(--muted); text-decoration: none; border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.bv-drive-link:hover { color: var(--accent); }
+
+/* Inline bill-detail editor in the document viewer. */
+.bv-edit {
+  display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.bv-field { display: flex; flex-direction: column; gap: 3px; flex: 1 1 120px; min-width: 92px; }
+.bv-field.bv-field-sm { flex: 0 0 74px; min-width: 74px; }
+.bv-field > span { font-size: 10px; color: var(--muted); letter-spacing: .2px; }
+.bv-field > input {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font-size: 12.5px; padding: 6px 8px; width: 100%;
+  font-family: inherit;
+}
+.bv-field > input:focus { outline: none; border-color: var(--accent); }
+.bv-save-btn { flex: 0 0 auto; }
+.bv-save-btn[disabled] { opacity: .5; cursor: default; }
+.bv-edit-status { font-size: 11px; color: var(--muted); flex: 0 0 auto; }
+
+@media (max-width: 640px) {
+  .bv-edit { gap: 8px; padding: 8px 12px; }
+  .bv-field { flex: 1 1 46%; }
+}
 
 .bv-close-btn {
   width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border);
@@ -1156,7 +1296,10 @@ body {
   background: rgba(0,0,0,.2);
 }
 .bv-doc {
-  flex: 1; display: flex; align-items: center; justify-content: center;
+  /* min-height:0 lets this flex child actually shrink-to-fit its parent; without
+     it a tall document would push the modal past its max-height instead of
+     scrolling inside. */
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
   position: relative;
 }
 .bv-doc iframe {
@@ -1221,7 +1364,12 @@ body {
   .bills-right-col { width: 100%; flex-shrink: 0; }
   .bills-left-col { overflow: visible; }
   .bills-list { overflow: visible; padding-bottom: 0; }
-  .bills-stats-row { gap: 8px; }
+  /* On narrow screens the pane itself scrolls rather than the inner list, so
+     the stats and toolbar scroll away instead of eating the short viewport. */
+  #register-pane { overflow-y: auto; }
+  .reg-list { overflow: visible; padding-bottom: 0; }
+  .bills-stats-row { gap: 8px; flex-wrap: wrap; }
+  .bstat { flex: 1 1 45%; }
   .bstat-val { font-size: 17px; }
   .bills-pg-header { align-items: center; }
   .context-page { padding: 16px 14px 24px; }

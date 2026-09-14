@@ -39,6 +39,7 @@ import logging
 import os
 import re
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -65,9 +66,12 @@ from hermes import calendar as hermes_calendar
 from hermes.config import Config
 from hermes.fathom import find_recording_link as find_fathom_link
 from hermes import storage as s3
+from hermes import register
+from hermes import verify_amounts
 from hermes import files_tree
 from hermes.db.bills import (
     _BILL_NOT_FOUND,
+    BillUpdateError,
     cleanup_old_drive_bills,
     compute_insights,
     delete_bill,
@@ -261,7 +265,7 @@ def _asset_version() -> int:
     """A version stamp that changes whenever a static asset changes, so browsers
     fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
     latest = 0.0
-    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "business.js", "tasks.js", "context.js", "model.js", "files.js", "jobs.js", "artefacts.js", "library.js"):
+    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "register.js", "business.js", "tasks.js", "context.js", "model.js", "files.js", "jobs.js", "artefacts.js", "library.js"):
         try:
             latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
         except OSError:
@@ -281,6 +285,7 @@ def index(request: Request):
             "active_model": hermes_models.active_model(),
             "active_effort": Config.EFFORT,
             "context_enabled": _context_enabled_for_template(),
+            "apps_enabled": _apps_enabled_for_template(),
             "web_search": Config.WEB_SEARCH,
             "voice_enabled": Config.voice_enabled(),
             "voices": Config.voice_voices(),
@@ -298,6 +303,18 @@ def _context_enabled_for_template() -> bool:
         from hermes import context_mode
 
         return context_mode.enabled()
+    except Exception:  # noqa: BLE001 — rendering the page must not depend on it
+        return True
+
+
+def _apps_enabled_for_template() -> bool:
+    """Apps-access state for the settings panel. Fails OPEN for the same reason
+    as context above: a toggle rendered off when the backend is actually on is
+    worse than no toggle at all."""
+    try:
+        from hermes import apps_access
+
+        return apps_access.enabled()
     except Exception:  # noqa: BLE001 — rendering the page must not depend on it
         return True
 
@@ -352,7 +369,8 @@ def set_model_setting(body: ModelUpdate):
 
 @app.get("/api/settings/context")
 def get_context_setting():
-    """Whether turns carry full business context + tools, or run as plain chat."""
+    """Whether turns carry the user's business knowledge (memory, context pack,
+    documents, past-conversation recall). Independent of apps access below."""
     from hermes import context_mode
 
     return {"enabled": context_mode.enabled()}
@@ -364,12 +382,36 @@ class ContextUpdate(BaseModel):
 
 @app.post("/api/settings/context")
 def set_context_setting(body: ContextUpdate):
-    """Switch full context on/off platform-wide. Off = no memory, no business
-    knowledge, no tool schemas — a plain assistant at a fraction of the tokens.
-    Takes effect on the next turn of every conversation."""
+    """Switch business context on/off platform-wide. Off = no memory, no
+    business knowledge, no retrieved documents — but the apps stay reachable
+    (that is `/api/settings/apps`). Takes effect on the next turn of every
+    conversation."""
     from hermes import context_mode
 
     return {"enabled": context_mode.set_enabled(body.enabled)}
+
+
+@app.get("/api/settings/apps")
+def get_apps_setting():
+    """Whether turns carry the tool schemas and can act on connected apps."""
+    from hermes import apps_access
+
+    return {"enabled": apps_access.enabled()}
+
+
+class AppsUpdate(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/settings/apps")
+def set_apps_setting(body: AppsUpdate):
+    """Switch apps access on/off platform-wide. Off = no tool schemas sent, so
+    Hermes cannot email, reach Drive/Jira/WhatsApp, search the web or read
+    files — it still keeps whatever business context is switched on. This is the
+    big token line (~11k of ~20k). Takes effect on the next turn."""
+    from hermes import apps_access
+
+    return {"enabled": apps_access.set_enabled(body.enabled)}
 
 
 @app.get("/api/settings/guardrails")
@@ -1445,16 +1487,61 @@ def api_upsert_business(body: BusinessBody):
 
 # ── Bills ───────────────────────────────────────────────────────────────────
 
+BILL_UPLOAD_MAX_BYTES = 25 * 1024 * 1024   # per file
+BILL_UPLOAD_MAX_FILES = 20                  # per request
+BILL_UPLOAD_MIMES = {
+    "application/pdf", "image/jpeg", "image/jpg", "image/png",
+    "image/heic", "image/heif", "image/webp",
+}
+_BILL_UPLOAD_EXTS = (".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp")
+
+
+def _has_bill_extension(filename: str) -> bool:
+    """Browsers (and iOS in particular) sometimes send HEIC as
+    application/octet-stream, so fall back to the filename before rejecting."""
+    return filename.lower().endswith(_BILL_UPLOAD_EXTS)
+
+
+async def _store_unreadable_bill(
+    filename: str, raw: bytes, mime: str, biz_id: str | None
+) -> dict:
+    """Persist a document we couldn't read as a bill awaiting manual entry."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    key = f"bills/{biz_id or 'unsorted'}/{uuid.uuid4()}.{ext}"
+    file_url = await run_in_threadpool(s3.put, key, raw, mime) or None
+    vendor = filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").strip() or "Unknown vendor"
+    try:
+        bill_id = await run_in_threadpool(
+            insert_bill,
+            vendor, None, None, None, None, "USD", "pending", None,
+            biz_id, 0.0, "upload", None, file_url, None, [],
+        )
+    except Exception as exc:
+        log.warning("Could not file unreadable bill %s: %s", filename, exc)
+        return {"filename": filename, "bill_id": None, "needs_review": True}
+    return {
+        "bill_id": bill_id,
+        "filename": filename,
+        "vendor": vendor,
+        "amount": None,
+        "due_date": None,
+        "confidence": 0.0,
+        "needs_confirmation": True,
+        "needs_review": True,
+    }
+
+
 @app.get("/api/bills")
 def api_list_bills(
     business_id: str | None = None,
     status: str | None = None,
     source: str | None = None,
 ):
-    return {
-        "bills": list_bills(business_id=business_id, status=status, source=source),
-        "insights": compute_insights(),
-    }
+    bills = list_bills(business_id=business_id, status=status, source=source)
+    # Insights are computed from the rows we just fetched. compute_insights()
+    # used to run its own list_bills(), so every page load queried and joined
+    # the same table twice for identical data.
+    return {"bills": bills, "insights": compute_insights(bills)}
 
 
 @app.post("/api/bills/upload")
@@ -1474,17 +1561,49 @@ async def api_upload_bills(request: Request):
     ]
     if not uploads:
         return JSONResponse({"error": "No files provided."}, status_code=400)
+    if len(uploads) > BILL_UPLOAD_MAX_FILES:
+        return JSONResponse(
+            {"error": f"Too many files — {BILL_UPLOAD_MAX_FILES} at a time, please."},
+            status_code=400,
+        )
 
     results = []
     for upload in uploads:
         raw = await upload.read()
         filename = upload.filename or "upload"
-        mime = upload.content_type or "application/octet-stream"
+        mime = (upload.content_type or "application/octet-stream").split(";")[0].strip().lower()
+
+        # Every byte of an upload is held in memory here and again by the
+        # extractor, so an unbounded file is a straightforward way to take the
+        # process down. Reject oversized and non-document uploads up front.
+        if len(raw) > BILL_UPLOAD_MAX_BYTES:
+            results.append({
+                "filename": filename,
+                "error": f"File is {len(raw) // 1_048_576} MB — the limit is "
+                         f"{BILL_UPLOAD_MAX_BYTES // 1_048_576} MB.",
+            })
+            continue
+        if not raw:
+            results.append({"filename": filename, "error": "File is empty."})
+            continue
+        if mime not in BILL_UPLOAD_MIMES and not _has_bill_extension(filename):
+            results.append({
+                "filename": filename,
+                "error": "Unsupported file type — upload a PDF, JPG, PNG or HEIC.",
+            })
+            continue
 
         try:
             extracted = await run_in_threadpool(extract_bill, filename, raw, mime)
         except Exception as exc:
-            results.append({"filename": filename, "error": str(exc)})
+            # Extraction failed even after the OCR fallback. Keep the document
+            # rather than discarding the user's upload: store it, file a bill
+            # that needs review, and say so. Dropping it left the user with an
+            # error toast and nothing to correct.
+            log.warning("Bill extraction failed for %s: %s", filename, exc)
+            fallback = await _store_unreadable_bill(filename, raw, mime, manual_biz_id)
+            fallback["error"] = str(exc)
+            results.append(fallback)
             continue
 
         if manual_biz_id:
@@ -1535,19 +1654,39 @@ class BillPatch(BaseModel):
     status: str | None = None
     vendor: str | None = None
     amount: float | None = None
+    # A Gmail or Drive stub arrives with neither of these, and they are what
+    # the due-soon/overdue derivation and every total are computed from, so the
+    # bill viewer has to be able to write them.
+    currency: str | None = None
     invoice_number: str | None = None
     due_date: str | None = None
+    issue_date: str | None = None
     category: str | None = None
     notes: str | None = None
 
 
 @app.patch("/api/bills/{bill_id}")
 def api_patch_bill(bill_id: str, body: BillPatch):
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    # model_fields_set distinguishes "field omitted" from "field explicitly set
+    # to null". Filtering on `is not None` made it impossible to clear a value —
+    # unassigning a business or removing a wrong due date silently did nothing.
+    updates = {k: v for k, v in body.model_dump().items() if k in body.model_fields_set}
+    if not updates:
+        return JSONResponse({"error": "No fields to update."}, status_code=400)
     if body.business_id:
         updates["confidence"] = 1.0   # user manually assigned = full confidence
-    if not update_bill(bill_id, **updates):
-        return JSONResponse({"error": "Bill not found."}, status_code=404)
+
+    try:
+        updated = update_bill(bill_id, **updates)
+    except BillUpdateError as exc:
+        # Invalid input is a 400. This used to fall through update_bill's
+        # blanket except, come back as False, and be reported as "Bill not
+        # found" — sending the client hunting for a row that was there.
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if not updated:
+        if get_bill(bill_id) is None:
+            return JSONResponse({"error": "Bill not found."}, status_code=404)
+        return JSONResponse({"error": "Could not update this bill."}, status_code=500)
     return {"bill_id": bill_id, "updated": updates}
 
 
@@ -1606,10 +1745,31 @@ def api_bill_view(bill_id: str):
         url = s3.presign(file_url, expires=900)
         if not url:
             return JSONResponse({"error": "Could not generate document URL."}, status_code=500)
-        return {"url": url, "type": "pdf", "expires_in": 900}
+        return {
+            "url": url,
+            # Every S3 object used to be announced as "pdf", so the frontend put
+            # the 3 stored PNG/JPG bills inside a PDF iframe and its <img>
+            # branch was unreachable. Report what the file actually is.
+            "type": _doc_type_for(file_url),
+            "expires_in": 900,
+        }
 
     # Drive webViewLink or other web URL
     return {"url": file_url, "type": "web"}
+
+
+# Browsers render PDFs and these image types inline; HEIC/HEIF they cannot, so
+# it is offered as a download instead of a preview that would silently stay blank.
+_INLINE_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+
+def _doc_type_for(file_url: str) -> str:
+    path = file_url.split("?", 1)[0].lower()
+    if path.endswith(".pdf"):
+        return "pdf"
+    if path.endswith(_INLINE_IMAGE_EXTS):
+        return "image"
+    return "download"
 
 
 @app.get("/api/bills/{bill_id}/email-body")
@@ -1628,15 +1788,150 @@ async def api_bill_email_body(bill_id: str):
     if not source_ref:
         return JSONResponse({"error": "No message ID for this bill."}, status_code=404)
 
+    # Read the mailbox this bill actually came from. Passing no business made
+    # every preview use the default Maton key, which for most bills is simply
+    # the wrong account — the message isn't there, so the snapshot 404s.
+    businesses = await run_in_threadpool(list_businesses)
+    business = next(
+        (b for b in businesses if str(b.get("business_id")) == str(bill.get("business_id"))),
+        None,
+    )
+
     try:
-        body = await run_in_threadpool(fetch_gmail_body, source_ref)
+        body = await run_in_threadpool(fetch_gmail_body, source_ref, business)
     except Exception as exc:
         log.warning("email-body fetch error for bill %s: %s", bill_id, exc)
         return JSONResponse({"error": str(exc)}, status_code=502)
 
     if not body:
-        return JSONResponse({"error": "Could not retrieve email body."}, status_code=404)
+        return JSONResponse(
+            {
+                "error": "This email is no longer in the mailbox it was imported from.",
+                "business": (business or {}).get("slug"),
+            },
+            status_code=404,
+        )
     return body
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Subscriptions & bills register — the Google Sheet is the source of truth
+# ══════════════════════════════════════════════════════════════════════════
+# Hermes reads the register and never authors a line. What it contributes is
+# the thing the Sheet cannot do for itself: it holds the original PDFs and can
+# read them, so the lines recorded as "AMOUNT IN PDF - UNVERIFIED" can be
+# resolved against real evidence. Every result is a PROPOSAL awaiting a human —
+# see hermes/verify_amounts.py.
+
+# The register changes on a fortnightly cadence, so a short cache keeps the tab
+# responsive without hammering the Sheets API on every render.
+_register_cache: dict | None = None
+_register_cache_at: float = 0.0
+_REGISTER_TTL = 120.0
+
+
+def _load_register(force: bool = False) -> dict:
+    global _register_cache, _register_cache_at
+    now = time.monotonic()
+    if not force and _register_cache and (now - _register_cache_at) < _REGISTER_TTL:
+        return _register_cache
+    lines = register.fetch_register()
+    payload = {
+        "lines": lines,
+        "deadlines": register.fetch_deadlines(),
+        "summary": register.summarise(lines),
+    }
+    _register_cache, _register_cache_at = payload, now
+    return payload
+
+
+@app.get("/api/register")
+async def api_register(refresh: bool = False):
+    """The register as the Sheet holds it, plus any documents Hermes can attach."""
+    try:
+        payload = await run_in_threadpool(_load_register, refresh)
+    except register.RegisterError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+    proposals = await run_in_threadpool(verify_amounts.list_proposals, "pending")
+    by_ref: dict[str, dict] = {str(p["register_ref"]): p for p in proposals}
+
+    # Attach the evidence Hermes already holds, so a line can open its document.
+    docs = await run_in_threadpool(verify_amounts._candidate_documents)
+    lines = []
+    for line in payload["lines"]:
+        matches = verify_amounts.find_documents_for(line, docs)
+        lines.append({
+            **line,
+            "proposal": by_ref.get(str(line["ref"])),
+            "documents": [
+                {"bill_id": str(d["bill_id"]), "vendor": d["vendor"],
+                 "score": d["score"], "source": d["source"]}
+                for d in matches[:3]
+            ],
+        })
+    return {
+        "lines": lines,
+        "deadlines": payload["deadlines"],
+        "summary": {**payload["summary"], "pending_proposals": len(proposals)},
+        "sheet_url": f"https://docs.google.com/spreadsheets/d/{Config.REGISTER_SHEET_ID}/edit",
+    }
+
+
+class VerifyRequest(BaseModel):
+    ref: str | None = None      # one register line, or None to sweep
+    limit: int = 10
+
+
+@app.post("/api/register/verify")
+async def api_register_verify(body: VerifyRequest):
+    """Read stored documents and file proposals for unverified amounts.
+
+    Each line can cost an OCR call and an LLM call, so `limit` bounds a sweep.
+    """
+    try:
+        result = await run_in_threadpool(
+            verify_amounts.verify_unverified, max(1, min(body.limit, 40)), body.ref,
+        )
+    except register.RegisterError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    except Exception as exc:
+        log.warning("register verify failed: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return result
+
+
+@app.get("/api/register/proposals")
+async def api_register_proposals(status: str = "pending"):
+    return {"proposals": await run_in_threadpool(
+        verify_amounts.list_proposals, None if status == "all" else status
+    )}
+
+
+class DecideRequest(BaseModel):
+    approve: bool
+    note: str | None = None
+
+
+@app.post("/api/register/proposals/{proposal_id}")
+async def api_register_decide(proposal_id: str, body: DecideRequest):
+    """Approve or reject a proposed amount.
+
+    Approving is the only path that writes to the Sheet, and it writes the
+    Amount cell together with a CHANGE LOG row carrying the evidence — so the
+    register's audit trail stays complete regardless of who made the edit.
+    """
+    global _register_cache
+    try:
+        decided = await run_in_threadpool(
+            verify_amounts.decide, proposal_id, body.approve, body.note,
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except register.RegisterError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    _register_cache = None      # the Sheet changed; don't serve a stale copy
+    return {"proposal": decided}
 
 
 # ── Connected-app scan ───────────────────────────────────────────────────────
@@ -1674,18 +1969,24 @@ async def api_scan_bills(body: ScanRequest):
         )
 
     created_gmail, created_drive = [], []
+    # A swallowed scan error used to be indistinguishable from a clean scan:
+    # the caller got scanned=0 and the UI cheerfully reported "no new bills".
+    # Report what actually broke so the user knows to retry or reconnect.
+    errors: list[dict] = []
 
     if "gmail" in sources:
         try:
             created_gmail = await run_in_threadpool(scan_gmail, business, businesses, days)
         except Exception as exc:
             log.warning("Gmail scan error (%s): %s", slug, exc)
+            errors.append({"source": "gmail", "error": str(exc)})
 
     if "google-drive" in sources:
         try:
             created_drive = await run_in_threadpool(scan_drive, business, businesses, days)
         except Exception as exc:
             log.warning("Drive scan error (%s): %s", slug, exc)
+            errors.append({"source": "google-drive", "error": str(exc)})
 
     total = created_gmail + created_drive
     return {
@@ -1694,6 +1995,8 @@ async def api_scan_bills(body: ScanRequest):
         "gmail": len(created_gmail),
         "google_drive": len(created_drive),
         "bills": total,
+        "errors": errors,
+        "ok": not errors,
     }
 
 

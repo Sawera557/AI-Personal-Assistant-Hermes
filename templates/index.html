@@ -166,10 +166,29 @@
               </label>
             </div>
             <p class="hint">
-              Off, Hermes replies as a plain assistant — far cheaper, but no
-              apps, memory or documents.
+              Off, Hermes stops carrying your memory, context pack and documents
+              into each message — cheaper, and it looks things up with an app
+              instead. Your apps stay connected.
             </p>
             <p class="hint" id="context-select-status" hidden></p>
+          </div>
+
+          <div class="panel">
+            <h2>Apps access</h2>
+            <div class="context-toggle-row">
+              <span class="context-toggle-state" id="apps-toggle-label">{% if apps_enabled %}On{% else %}Off{% endif %}</span>
+              <label class="tk-toggle" id="apps-toggle" title="{% if apps_enabled %}On{% else %}Off{% endif %}">
+                <input type="checkbox" id="apps-toggle-input"
+                       aria-label="Apps access"
+                       {% if apps_enabled %}checked{% endif %}>
+                <span class="tk-toggle-track"></span>
+              </label>
+            </div>
+            <p class="hint">
+              Off, Hermes can't email, reach Drive/Calendar/Jira/WhatsApp,
+              search the web or read files. Biggest saving of the two.
+            </p>
+            <p class="hint" id="apps-select-status" hidden></p>
           </div>
 
           <div class="panel">
@@ -491,11 +510,31 @@
           <input type="file" id="bill-file-input" multiple accept=".pdf,.jpg,.jpeg,.png,.heic" hidden />
         </div>
 
+        <!-- Two modes. "Register" is the Google Sheet — the source of truth for
+             recurring bills, which Hermes reads and never authors. "Documents"
+             is Hermes' own store of the original PDFs and emails, which is what
+             lets it resolve the register's unverified amounts. -->
+        <div class="reg-tabs" id="reg-tabs">
+          <button class="reg-tab is-active" data-mode="register" onclick="setBillingMode('register')">
+            Register <span class="reg-tab-count" id="reg-count-lines"></span>
+          </button>
+          <button class="reg-tab" data-mode="documents" onclick="setBillingMode('documents')">
+            Documents <span class="reg-tab-count" id="reg-count-docs"></span>
+          </button>
+          <a class="reg-sheet-link" id="reg-sheet-link" target="_blank" rel="noopener noreferrer">Open the Sheet →</a>
+        </div>
+
         <!-- Stats row — rendered by bills.js -->
         <div class="bills-stats-row" id="bills-stats-row"></div>
 
-        <!-- Main two-column grid -->
-        <div class="bills-main-grid">
+        <!-- Register mode -->
+        <div id="register-pane">
+          <div class="reg-toolbar" id="reg-toolbar"></div>
+          <div class="reg-list" id="reg-list"></div>
+        </div>
+
+        <!-- Documents mode: Hermes' own captured files -->
+        <div class="bills-main-grid" id="documents-pane" hidden>
 
           <!-- Left: dropzone + toolbar + list -->
           <div class="bills-left-col">
@@ -543,6 +582,30 @@
               <button class="bv-close-btn" onclick="closeBillViewer()" title="Close">✕</button>
             </div>
           </div>
+          <!-- Editable bill details. Gmail and Drive bills arrive as stubs
+               with no amount and no due date, and nothing in the UI could set
+               them — so those bills could never age into Due Soon or Overdue
+               and never counted toward a total. -->
+          <form class="bv-edit" id="bv-edit" onsubmit="return saveBillDetails(event)">
+            <label class="bv-field">
+              <span>Amount</span>
+              <input type="number" step="0.01" id="bv-edit-amount" placeholder="—" />
+            </label>
+            <label class="bv-field bv-field-sm">
+              <span>Currency</span>
+              <input type="text" id="bv-edit-currency" maxlength="3" placeholder="USD" />
+            </label>
+            <label class="bv-field">
+              <span>Due date</span>
+              <input type="date" id="bv-edit-due" />
+            </label>
+            <label class="bv-field">
+              <span>Invoice #</span>
+              <input type="text" id="bv-edit-invoice" placeholder="—" />
+            </label>
+            <button type="submit" class="bv-action-btn bv-save-btn" id="bv-save-btn">Save</button>
+            <span class="bv-edit-status" id="bv-edit-status"></span>
+          </form>
           <div class="bv-body">
             <div class="bv-doc" id="bv-doc">
               <div class="bv-doc-loading" id="bv-doc-loading">
@@ -1199,6 +1262,7 @@
   <script src="/static/app.js?v={{ v }}"></script>
   <script src="/static/settings.js?v={{ v }}"></script>
   <script src="/static/bills.js?v={{ v }}"></script>
+  <script src="/static/register.js?v={{ v }}"></script>
   <script src="/static/meeting.js?v={{ v }}"></script>
   <script src="/static/tasks.js?v={{ v }}"></script>
   <script src="/static/files.js?v={{ v }}"></script>

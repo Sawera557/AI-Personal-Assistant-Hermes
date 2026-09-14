@@ -95,15 +95,26 @@ def guarded(signal: str, fn: Callable[[], Any], default: Any = "") -> Any:
     return value
 
 
+#: Signals that exist only to write to Postgres. When the database is
+#: deliberately switched off they cannot succeed, and saying so on the health
+#: page is crying wolf about a choice the operator made — the same reasoning
+#: `_memory_write_times` already applies by returning {} in that mode.
+DB_WRITE_SIGNALS = frozenset({"conversation_write", "memory_extract"})
+
+
+def _db_deliberately_off() -> bool:
+    import os
+
+    if os.getenv("HERMES_DISABLE_DB", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    return not os.getenv("DBRDS_HOST", "").strip()
+
+
 def _memory_write_times() -> dict[str, Any]:
     """When the memory tables were last actually written. This is the number
     that would have exposed the outage: chat active daily, memories a month
     stale."""
-    import os
-
-    if os.getenv("HERMES_DISABLE_DB", "").strip().lower() in {"1", "true", "yes", "on"}:
-        return {}
-    if not os.getenv("DBRDS_HOST", "").strip():
+    if _db_deliberately_off():
         return {}
     out: dict[str, Any] = {}
     try:
@@ -134,6 +145,8 @@ def snapshot(include_db: bool = True) -> dict[str, Any]:
         counts = {k: dict(v) for k, v in _counts.items()}
         last = {k: dict(v) for k, v in _last.items()}
 
+    db_off = _db_deliberately_off()
+
     signals: dict[str, Any] = {}
     for key, label in SIGNALS.items():
         c = counts.get(key) or {_OK: 0, _EMPTY: 0, _FAILED: 0}
@@ -145,6 +158,14 @@ def snapshot(include_db: bool = True) -> dict[str, Any]:
         # has never run this process is "unknown", not "healthy".
         if total == 0:
             entry["state"] = "unused"
+        elif db_off and key in DB_WRITE_SIGNALS and c.get(_FAILED):
+            # FAILED writes to a database that was switched off on purpose.
+            # Reporting these as degradation made /api/health answer "degraded"
+            # for every run of the offline test suite — exactly the cry-wolf
+            # this module sets out to avoid. Scoped to failures only: a write
+            # signal that merely returns nothing is a different question, and
+            # still reaches the always-empty check below.
+            entry["state"] = "db-disabled"
         elif c.get(_FAILED):
             entry["state"] = "degraded"
         elif (

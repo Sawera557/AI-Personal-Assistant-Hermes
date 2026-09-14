@@ -7,6 +7,16 @@ promised the guarantee "holds regardless of what the model decides".
 
 Offline: no network, no database.
 """
+import sys
+from pathlib import Path
+
+# CI runs each test file as a script (`python tests/foo.py`), which puts tests/
+# on sys.path rather than the repo root — so a bare `from hermes import ...`
+# raises ModuleNotFoundError there while passing under pytest.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import pytest
 
 from hermes import guardrails as g

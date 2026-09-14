@@ -1,5 +1,40 @@
 /* ── Billing & Invoices — real API, no mock data ── */
 
+/* ── HTML escaping ───────────────────────────────────────────────────────
+   Every string this file interpolates into innerHTML originates outside our
+   trust boundary: `vendor` is parsed from an email's From header or a Drive
+   filename, `invoice_number` and `category` come out of a model reading an
+   attacker-supplied document, and business names are free text. None of it
+   was escaped, so a bill titled `<img src=x onerror=…>` executed as soon as
+   the Billing tab rendered. app.js has escapeHtml() but throws on non-strings;
+   esc() coerces first so a null vendor or a numeric amount can't break a
+   render. Use esc() for text and escAttr() inside a quoted attribute. */
+function esc(v) {
+  if (v === null || v === undefined) return "";
+  return String(v).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+const escAttr = esc;
+
+/* Colours land in `style="…"` where escaping alone wouldn't stop a value like
+   `red;background:url(…)` from injecting extra declarations. Only allow the
+   hex/rgb/hsl forms the API actually produces. */
+const _COLOR_RE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|hsla?\([\d\s.,%]+\))$/i;
+function safeColor(v, fallback = "#9aa3b2") {
+  const s = String(v ?? "").trim();
+  return _COLOR_RE.test(s) ? s : fallback;
+}
+
+/* Only ever put http(s) URLs in an href/src — never a javascript: or data:
+   URL that reached us through an API payload. */
+function safeUrl(v) {
+  try {
+    const u = new URL(String(v), window.location.origin);
+    return (u.protocol === "http:" || u.protocol === "https:") ? u.href : "";
+  } catch { return ""; }
+}
+
 /* ── State ─────────────────────────────────────────────────────────────── */
 // Business scope (which business's bills are shown, "all" or a slug) lives in
 // the shared HermesBiz module (static/business.js) — bills.js just reads
@@ -31,6 +66,16 @@ async function initBilling() {
   renderSkeleton();
   await loadBills();
   renderAll();
+  // The register (the Google Sheet) is the default view: it is the source of
+  // truth for recurring bills. This tab's own bill list is the document store
+  // behind it, not a second register. Guarded so a register failure can never
+  // take the document view down with it.
+  try {
+    if (typeof initRegister === "function") await initRegister();
+    if (typeof setBillingMode === "function") setBillingMode("register");
+  } catch (e) {
+    console.error("register init:", e);
+  }
   bindDropzone();
   bindConfirmOverlay();
   bindBillViewer();
@@ -39,7 +84,10 @@ async function initBilling() {
     document.getElementById("hermes-biz-badge-bills")
   );
   HermesBiz.onChange(() => {
-    renderStats();
+    // The stats row is shared by both modes, so only the active one may paint
+    // it — otherwise switching business while reading the register replaces its
+    // figures with the document counts.
+    renderActiveStats();
     renderToolbar();
     renderBillsList();
   });
@@ -67,16 +115,26 @@ async function loadBills() {
   }
 }
 
+/* Paint whichever mode's figures are actually on screen. */
+function renderActiveStats() {
+  if (typeof billingMode !== "undefined" && billingMode === "register"
+      && typeof renderRegisterStats === "function") {
+    renderRegisterStats();
+  } else {
+    renderStats();
+  }
+}
+
 async function reload() {
   await loadBills();
-  renderStats();
+  renderActiveStats();
   renderBillsList();
   renderInsights();
 }
 
 /* ── Full render pass ────────────────────────────────────────────────────── */
 function renderAll() {
-  renderStats();
+  renderActiveStats();
   renderDropzone();
   renderToolbar();
   renderBillsList();
@@ -102,33 +160,20 @@ function renderSkeleton() {
 }
 
 /* ── Stats row ───────────────────────────────────────────────────────────── */
+/* There is no stats row in documents mode. This view holds documents; the
+   register holds money, so the money tiles here could only ever read
+   "$0.00 Overdue / $0.00 Due This Week / $0.00 Total Outstanding" — three wrong
+   answers to questions this view cannot answer. Counting documents instead was
+   no better: the tab label already says how many there are, and the one figure
+   worth surfacing (documents no register line claims) is in the Coverage panel
+   beside the list, where it comes with the actual list of them.
+
+   So the row is hidden rather than filled. The register owns this space. */
 function renderStats() {
   const row = document.getElementById("bills-stats-row");
   if (!row) return;
-  const bizId = currentBusinessId();
-  const filtered = HermesBiz.current === "all" ? bills : bills.filter(b => b.business_id === bizId);
-  const overdue   = filtered.filter(b => b.status === "overdue").reduce((s,b) => s + (b.amount||0), 0);
-  const dueSoon   = filtered.filter(b => b.status === "due-soon").reduce((s,b) => s + (b.amount||0), 0);
-  const total     = filtered.reduce((s,b) => s + (b.amount||0), 0);
-  const paidCount = filtered.filter(b => b.status === "paid").length;
-
-  row.innerHTML = `
-    <div class="bstat">
-      <div class="bstat-val" style="color:#f87171">${fmt(overdue)}</div>
-      <div class="bstat-label">Overdue</div>
-    </div>
-    <div class="bstat">
-      <div class="bstat-val" style="color:var(--accent)">${fmt(dueSoon)}</div>
-      <div class="bstat-label">Due This Week</div>
-    </div>
-    <div class="bstat">
-      <div class="bstat-val">${fmt(total)}</div>
-      <div class="bstat-label">Total This Month</div>
-    </div>
-    <div class="bstat">
-      <div class="bstat-val" style="color:var(--ok)">${paidCount}</div>
-      <div class="bstat-label">Paid</div>
-    </div>`;
+  row.innerHTML = "";
+  row.hidden = true;
 }
 
 /* ── Dropzone ────────────────────────────────────────────────────────────── */
@@ -203,7 +248,7 @@ function renderToolbar() {
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
       </svg>
-      <input type="text" placeholder="Search vendors, invoices…" id="bills-search-input" value="${searchQuery}"/>
+      <input type="text" placeholder="Search vendors, invoices…" id="bills-search-input" value="${escAttr(searchQuery)}"/>
     </div>
     <select class="bills-filter-sel" id="bills-status-filter">
       <option value="all">All Status</option>
@@ -271,50 +316,77 @@ function renderBillsList() {
   if (dz) dz.classList.add("dz-compact");
 }
 
+/* Status is used as a CSS class and an onclick argument, so keep it to the
+   known set rather than trusting whatever the API sent. */
+const STATUS_LABELS = { overdue:"Overdue", "due-soon":"Due Soon", pending:"Pending",
+  paid:"Paid", processing:"Scanning…" };
+function safeStatus(s) {
+  return Object.prototype.hasOwnProperty.call(STATUS_LABELS, s) ? s : "pending";
+}
+
 function billCardHTML(bill) {
   const biz = realBusinesses().find(b => b.business_id === bill.business_id);
-  const bizColor  = bill.business_color  || biz?.color  || "#9aa3b2";
-  const bizEmoji  = bill.business_emoji  || biz?.emoji  || "🏢";
+  const bizColor  = safeColor(bill.business_color || biz?.color);
   const bizName   = bill.business_name   || biz?.name   || "Unassigned";
 
   const vendorEmoji = vendorIcon(bill.vendor);
-  const dueDateStr = bill.due_date
-    ? new Date(bill.due_date + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" })
-    : "";
-  const statusLabel = { overdue:"Overdue", "due-soon":"Due Soon", pending:"Pending",
-    paid:"Paid", processing:"Scanning…" }[bill.status] || bill.status;
+  const dueDateStr = formatDueDate(bill.due_date, { month:"short", day:"numeric" });
+  const status = safeStatus(bill.status);
+  const statusLabel = STATUS_LABELS[status];
 
-  const needsConfirm = (bill.confidence || 1) < 0.75 && bill.status !== "paid" && bill.status !== "processing";
+  const needsConfirm = (bill.confidence ?? 1) < 0.75 && status !== "paid" && status !== "processing";
   const confBadge = needsConfirm
-    ? `<button class="bill-confidence" onclick="event.stopPropagation();showConfirmFor('${bill.bill_id}')">🤔 Confirm business</button>` : "";
+    ? `<button class="bill-confidence" onclick="event.stopPropagation();showConfirmFor('${escAttr(bill.bill_id)}')">🤔 Confirm business</button>` : "";
 
-  const metaRow = bill.status === "processing"
+  const metaRow = status === "processing"
     ? `<div class="bill-meta"><span style="color:var(--blue);font-size:12px">Scanning <span class="scan-dots"><span></span><span></span><span></span></span></span></div>`
     : `<div class="bill-meta">
-         ${bill.invoice_number ? `<span class="bill-inv">${bill.invoice_number}</span>` : ""}
+         ${bill.invoice_number ? `<span class="bill-inv">${esc(bill.invoice_number)}</span>` : ""}
          <span class="bill-biz-tag" style="background:${bizColor}18;border-color:${bizColor}33;color:${bizColor}">
-           <span class="bill-biz-dot" style="background:${bizColor}"></span>${bizName}
+           <span class="bill-biz-dot" style="background:${bizColor}"></span>${esc(bizName)}
          </span>
-         ${bill.category ? `<span class="bill-inv">· ${bill.category}</span>` : ""}
+         ${bill.category ? `<span class="bill-inv">· ${esc(bill.category)}</span>` : ""}
          ${bill.source && bill.source !== "upload"
-           ? `<span class="bill-inv" title="from ${bill.source}">· ${bill.source === "gmail" ? "📧" : "📁"}</span>` : ""}
+           ? `<span class="bill-inv" title="from ${escAttr(bill.source)}">· ${bill.source === "gmail" ? "📧" : "📁"}</span>` : ""}
        </div>
        ${confBadge}`;
 
   return `
-    <div class="bill-item ${bill.status}" data-id="${bill.bill_id}"
-         onclick="openBillViewer('${bill.bill_id}')">
+    <div class="bill-item ${status}" data-id="${escAttr(bill.bill_id)}"
+         onclick="openBillViewer('${escAttr(bill.bill_id)}')">
       <div class="bill-avatar">${vendorEmoji}</div>
       <div class="bill-info">
-        <div class="bill-vendor">${bill.vendor}</div>
+        <div class="bill-vendor">${esc(bill.vendor)}</div>
         ${metaRow}
       </div>
       <div class="bill-right">
-        ${bill.status !== "processing" && bill.amount ? `<div class="bill-amount">${fmt(bill.amount)}</div>` : ""}
-        ${dueDateStr ? `<div class="bill-due">${bill.status === "overdue" ? `<span style="color:var(--err)">` : ""}Due ${dueDateStr}${bill.status === "overdue" ? "</span>" : ""}</div>` : ""}
-        <div class="bill-status ${bill.status}">${statusLabel}</div>
+        ${status !== "processing" && bill.amount ? `<div class="bill-amount">${esc(fmt(bill.amount, bill.currency))}</div>` : ""}
+        ${dueDateStr ? `<div class="bill-due">${status === "overdue" ? `<span style="color:var(--err)">` : ""}Due ${esc(dueDateStr)}${status === "overdue" ? "</span>" : ""}</div>` : ""}
+        <div class="bill-status ${status}">${statusLabel}</div>
       </div>
     </div>`;
+}
+
+/* Turn a Drive share link into its embeddable /preview form.
+   https://drive.google.com/file/d/<id>/view?usp=… -> …/file/d/<id>/preview
+   Returns "" for anything that isn't a recognised Drive file link. */
+function drivePreviewUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!/(^|\.)drive\.google\.com$/.test(u.hostname)) return "";
+    const m = u.pathname.match(/^\/file\/d\/([^/]+)/);
+    if (m) return `https://drive.google.com/file/d/${m[1]}/preview`;
+    const id = u.searchParams.get("id");
+    return id ? `https://drive.google.com/file/d/${id}/preview` : "";
+  } catch { return ""; }
+}
+
+/* `new Date("2026-13-45T00:00:00")` is Invalid Date, and toLocaleDateString
+   then renders the literal string "Invalid Date" in the due column. */
+function formatDueDate(value, opts) {
+  if (!value) return "";
+  const d = new Date(String(value).slice(0, 10) + "T00:00:00");
+  return isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-US", opts);
 }
 
 function vendorIcon(vendor) {
@@ -375,18 +447,39 @@ async function handleFilesSelected(files) {
   if (bizId) form.append("business_id", bizId);
 
   let created = [];
+  let requestFailed = false;
   try {
     const resp = await fetch("/api/bills/upload", { method: "POST", body: form });
-    const json = await resp.json();
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      requestFailed = true;
+      showToast("Upload failed: " + (json.error || resp.status));
+    }
     created = json.created || [];
   } catch (e) {
     console.error("Upload failed:", e);
+    requestFailed = true;
+    showToast("Upload failed — check your connection");
   }
 
   // Remove placeholders, reload from API
-  bills = bills.filter(b => !b.bill_id.startsWith("proc_"));
+  bills = bills.filter(b => !String(b.bill_id || "").startsWith("proc_"));
   await loadBills();
   renderAll();
+
+  // Per-file failures came back inside `created` and were never looked at, so
+  // a rejected file just made its placeholder vanish with no explanation.
+  const failed = created.filter(c => c.error);
+  if (failed.length && !requestFailed) {
+    const first = failed[0];
+    const more = failed.length > 1 ? ` (+${failed.length - 1} more)` : "";
+    showToast(
+      first.bill_id
+        ? `⚠ Couldn't read "${first.filename}" — saved for manual entry${more}`
+        : `⚠ ${first.filename}: ${first.error}${more}`
+    );
+    console.warn("Bill upload problems:", failed);
+  }
 
   // If any need business confirmation, show dialog for first one
   const needsConfirm = created.find(c => c.needs_confirmation && c.bill_id);
@@ -408,7 +501,9 @@ async function _scanOne(slug, days) {
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({ business: slug, sources: ["gmail", "google-drive"], days }),
   });
-  return resp.json();
+  const json = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(json.error || `scan failed (${resp.status})`);
+  return json;
 }
 
 async function triggerScan() {
@@ -433,21 +528,38 @@ async function triggerScan() {
   renderToolbar();
 
   let total = 0;
+  let failures = 0;
   try {
     for (const biz of targets) {
       if (targets.length > 1) showToast(`⚡ Scanning ${biz.name}…`);
       try {
         const json = await _scanOne(biz.slug, days);
         total += json.scanned || 0;
+        // The endpoint now reports per-source failures instead of quietly
+        // returning scanned:0, so a Gmail outage no longer reads as "all clear".
+        if (json.errors && json.errors.length) {
+          failures++;
+          console.warn(`Scan problems for ${biz.slug}:`, json.errors);
+        }
       } catch (e) {
+        failures++;
         console.error(`Scan failed for ${biz.slug}:`, e);
       }
     }
-    localStorage.setItem("billsFirstScanDone", "1");
+    // Only retire the 45-day backfill once a scan has actually succeeded.
+    // Marking it done unconditionally meant one failed first scan permanently
+    // downgraded the user to a 7-day window and their history was never imported.
+    if (failures < targets.length) localStorage.setItem("billsFirstScanDone", "1");
     localStorage.setItem("lastBillScan", Date.now().toString());
+
     if (total > 0) {
       await reload();
-      showToast(`⚡ Found ${total} new bill${total !== 1 ? "s" : ""} from your connected apps`);
+      showToast(`⚡ Found ${total} new bill${total !== 1 ? "s" : ""} from your connected apps`
+                + (failures ? ` · ${failures} account${failures !== 1 ? "s" : ""} had errors` : ""));
+    } else if (failures === targets.length) {
+      showToast(`⚠ Scan failed for ${failures === 1 ? "that account" : "all accounts"} — see console`);
+    } else if (failures) {
+      showToast(`⚠ Scan partly failed — no new bills from the accounts that responded`);
     } else {
       showToast(`✓ Scan complete — no new bills (checked last ${days} days)`);
     }
@@ -459,18 +571,25 @@ async function triggerScan() {
 
 async function _autoScan() {
   // Silent background scan — no spinner, just reloads if new bills found.
+  if (scanning) return;   // don't race a scan the user started
   const targets = HermesBiz.current === "all"
     ? realBusinesses().filter(b => b.connected)
     : [HermesBiz.find(HermesBiz.current)].filter(b => b && b.connected);
+  if (!targets.length) return;
 
+  scanning = true;
   let total = 0;
-  for (const biz of targets) {
-    try {
-      const json = await _scanOne(biz.slug, 7);
-      total += json.scanned || 0;
-    } catch (e) {
-      console.debug(`Auto-scan error (${biz.slug}):`, e);
+  try {
+    for (const biz of targets) {
+      try {
+        const json = await _scanOne(biz.slug, 7);
+        total += json.scanned || 0;
+      } catch (e) {
+        console.debug(`Auto-scan error (${biz.slug}):`, e);
+      }
     }
+  } finally {
+    scanning = false;
   }
   localStorage.setItem("lastBillScan", Date.now().toString());
   if (total > 0) {
@@ -479,94 +598,101 @@ async function _autoScan() {
   }
 }
 
-/* ── AI Insights ─────────────────────────────────────────────────────────── */
+/* ── Insights ────────────────────────────────────────────────────────────── */
+/* The money insights below (overdue, upcoming, cash flow) are computed from the
+   bills table, which holds documents rather than amounts — so they rendered as
+   empty groups and a row of $0 bars sitting next to real figures. The register
+   owns money now. What this column can say that nothing else does is which
+   captured documents the register has NOT claimed: evidence for a bill that may
+   be missing from it entirely. */
+function renderUnclaimedDocuments(el, header) {
+  const lines = (typeof registerLines !== "undefined" && registerLines) || [];
+  const linked = new Set();
+  for (const l of lines) for (const d of (l.documents || [])) linked.add(d.bill_id);
+
+  const unclaimed = bills.filter(b => b.file_url && !linked.has(b.bill_id));
+  if (!lines.length) {
+    el.innerHTML = header + `
+      <div class="insight-group" style="padding:16px 14px;text-align:center;color:var(--muted);font-size:12px">
+        Load the register to see which documents it is missing.
+      </div>`;
+    return;
+  }
+  if (!unclaimed.length) {
+    el.innerHTML = header + `
+      <div class="insight-group" style="padding:16px 14px;text-align:center;color:var(--muted);font-size:12px">
+        ✓ Every stored document is accounted for in the register.
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = header + `
+    <div class="insight-group">
+      <div class="insight-group-head">
+        <span class="ig-emoji">🔎</span>
+        <div>
+          <div class="ig-title">Not in the register</div>
+          <div class="ig-sub">Documents no register line claims</div>
+        </div>
+        <span class="ig-count" style="color:#f87171">${unclaimed.length}</span>
+      </div>
+      ${unclaimed.slice(0, 12).map(b => `
+        <div class="insight-row">
+          <div class="ir-dot" style="background:#f87171"></div>
+          <div class="ir-body">
+            <div class="ir-text">${esc(b.vendor || "Unknown vendor")}</div>
+            <button class="ir-action" onclick="openBillViewer('${escAttr(b.bill_id)}')">Open the document →</button>
+          </div>
+        </div>`).join("")}
+      ${unclaimed.length > 12
+        ? `<div style="padding:6px 12px 10px;font-size:11px;color:var(--muted)">+ ${unclaimed.length - 12} more</div>`
+        : ""}
+    </div>`;
+}
+
 function renderInsights() {
   const el = document.getElementById("bills-insights");
   if (!el) return;
 
   const header = `
     <div class="insights-col-header">
-      🧠 AI Insights <span class="insights-live-badge">Live</span>
+      🔎 Coverage <span class="insights-live-badge">Live</span>
     </div>`;
 
   if (!bills.length) {
     el.innerHTML = header + `
       <div class="insight-group" style="padding:20px 14px;text-align:center;color:var(--muted);font-size:12px">
-        Upload bills or scan connected apps to see insights
+        Upload bills or scan connected apps to capture documents
       </div>`;
     return;
   }
 
-  const overdueItems = (insights.overdue || []);
-  const overdueGroup = overdueItems.length ? `
-    <div class="insight-group">
-      <div class="insight-group-head">
-        <span class="ig-emoji">🚨</span>
-        <div><div class="ig-title">Overdue Alerts</div><div class="ig-sub">Needs action</div></div>
-        <span class="ig-count" style="color:#f87171">${overdueItems.length}</span>
-      </div>
-      ${overdueItems.map(r => `
-        <div class="insight-row">
-          <div class="ir-dot" style="background:${r.dot}"></div>
-          <div class="ir-body"><div class="ir-text">${r.text}</div>
-            <button class="ir-action" onclick="markPaid('${r.bill_id}')">Mark Paid →</button>
-          </div>
-        </div>`).join("")}
-    </div>` : "";
-
-  const cfItems = (insights.cashflow || []);
-  const cashFlowGroup = cfItems.length ? `
-    <div class="insight-group">
-      <div class="insight-group-head">
-        <span class="ig-emoji">📊</span>
-        <div><div class="ig-title">Cash Flow by Business</div><div class="ig-sub">Pending outflows</div></div>
-      </div>
-      <div class="cf-bars">
-        ${cfItems.map(c => `
-          <div class="cf-row">
-            <span class="cf-label" title="${c.label}">${c.label}</span>
-            <div class="cf-track"><div class="cf-bar" style="width:${c.pct}%;background:${c.color}"></div></div>
-            <span class="cf-val" style="color:${c.color}">${fmtShort(c.amount)}</span>
-          </div>`).join("")}
-      </div>
-    </div>` : "";
-
-  const upItems = (insights.upcoming || []);
-  const upcomingGroup = upItems.length ? `
-    <div class="insight-group">
-      <div class="insight-group-head">
-        <span class="ig-emoji">📅</span>
-        <div><div class="ig-title">Upcoming (14 days)</div><div class="ig-sub">Plan your payments</div></div>
-        <span class="ig-count">${upItems.length}</span>
-      </div>
-      ${upItems.map(r => `
-        <div class="insight-row">
-          <div class="ir-dot" style="background:${r.dot}"></div>
-          <div class="ir-body">
-            <div class="ir-text">${r.text}</div>
-            ${r.action ? `<button class="ir-action">${r.action} →</button>` : ""}
-          </div>
-        </div>`).join("")}
-    </div>` : "";
-
-  const emptyInsight = !overdueGroup && !cashFlowGroup && !upcomingGroup
-    ? `<div class="insight-group" style="padding:16px 14px;text-align:center;color:var(--muted);font-size:12px">
-         ✓ No urgent items right now
-       </div>` : "";
-
-  el.innerHTML = header + overdueGroup + cashFlowGroup + upcomingGroup + emptyInsight;
+  renderUnclaimedDocuments(el, header);
 }
 
 /* ── Mark paid ───────────────────────────────────────────────────────────── */
 async function markPaid(billId) {
   try {
-    await fetch(`/api/bills/${billId}`, {
+    const resp = await fetch(`/api/bills/${billId}`, {
       method: "PATCH",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ status: "paid" }),
     });
+    // A failed PATCH used to be indistinguishable from a successful one: the
+    // response was never inspected, so the row silently reverted on reload and
+    // the user assumed the click hadn't registered.
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      showToast("Couldn't mark as paid: " + (err.error || resp.status));
+      return false;
+    }
     await reload();
-  } catch (e) { console.error("markPaid:", e); }
+    return true;
+  } catch (e) {
+    console.error("markPaid:", e);
+    showToast("Couldn't mark as paid — check your connection");
+    return false;
+  }
 }
 
 /* ── Business confirmation overlay ──────────────────────────────────────── */
@@ -595,14 +721,18 @@ function showConfirmOverlay(bill) {
 
   const bizList = realBusinesses();
   if (grid && bizList.length) {
-    grid.innerHTML = bizList.map(biz => `
-      <button class="ai-biz-btn" onclick="assignBill('${biz.business_id}')"
-              style="${bill.business_id === biz.business_id ? `border-color:${biz.color};box-shadow:0 0 0 1px ${biz.color}44` : ""}">
-        <span class="ai-biz-icon">${biz.emoji}</span>
-        <span class="ai-biz-name">${biz.name}</span>
-        <span class="ai-biz-industry">${biz.industry || ""}</span>
-        ${bill.business_id === biz.business_id ? `<span class="ai-suggested-badge">AI Guess</span>` : ""}
-      </button>`).join("");
+    grid.innerHTML = bizList.map(biz => {
+      const color = safeColor(biz.color);
+      const isGuess = bill.business_id === biz.business_id;
+      return `
+      <button class="ai-biz-btn" onclick="assignBill('${escAttr(biz.business_id)}')"
+              style="${isGuess ? `border-color:${color};box-shadow:0 0 0 1px ${color}44` : ""}">
+        <span class="ai-biz-icon">${esc(biz.emoji)}</span>
+        <span class="ai-biz-name">${esc(biz.name)}</span>
+        <span class="ai-biz-industry">${esc(biz.industry || "")}</span>
+        ${isGuess ? `<span class="ai-suggested-badge">AI Guess</span>` : ""}
+      </button>`;
+    }).join("");
   } else if (grid) {
     grid.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:8px;grid-column:1/-1">
       No businesses set up yet. <a href="#" onclick="showBusinessSetup()" style="color:var(--accent)">Add businesses →</a>
@@ -615,12 +745,21 @@ function showConfirmOverlay(bill) {
 async function assignBill(bizId) {
   if (!pendingBillId) return;
   try {
-    await fetch(`/api/bills/${pendingBillId}`, {
+    const resp = await fetch(`/api/bills/${pendingBillId}`, {
       method: "PATCH",
       headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ business_id: bizId }),
     });
-  } catch (e) { console.error("assignBill:", e); }
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      showToast("Couldn't file that bill: " + (err.error || resp.status));
+      return;   // keep the overlay open so the choice isn't silently lost
+    }
+  } catch (e) {
+    console.error("assignBill:", e);
+    showToast("Couldn't file that bill — check your connection");
+    return;
+  }
   hideConfirmOverlay();
   await reload();
 }
@@ -668,15 +807,24 @@ function showToast(msg) {
 }
 
 /* ── Formatters ──────────────────────────────────────────────────────────── */
-function fmt(n) {
-  if (!n && n !== 0) return "";
-  return "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 });
+/* Format in the bill's own currency. Hard-coding "$" mislabelled every
+   non-USD bill — and the extractor reads the currency off the document, so
+   EUR and GBP invoices really do come through. */
+function fmt(n, currency) {
+  if (n === null || n === undefined || n === "" || isNaN(Number(n))) return "";
+  const cur = String(currency || "USD").toUpperCase();
+  try {
+    return Number(n).toLocaleString("en-US", {
+      style: "currency", currency: cur,
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+  } catch {
+    // Not a valid ISO 4217 code (the extractor can return junk) — show the
+    // number with the code beside it rather than throwing mid-render.
+    return Number(n).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }) + " " + cur;
+  }
 }
-function fmtShort(n) {
-  if (n >= 1000000) return "$" + (n/1000000).toFixed(1) + "M";
-  if (n >= 1000)    return "$" + (n/1000).toFixed(0) + "k";
-  return "$" + Math.round(n);
-}
+
 
 /* ── Bill document viewer ────────────────────────────────────────────────── */
 let viewerBill = null;
@@ -694,12 +842,10 @@ async function openBillViewer(billId) {
   const bizEmoji = viewerBill.business_emoji || biz?.emoji || "🏢";
   document.getElementById("bv-vendor").textContent =
     `${vendorIcon(viewerBill.vendor)} ${viewerBill.vendor}`;
+  const dueLong = formatDueDate(viewerBill.due_date, { month:"short", day:"numeric", year:"numeric" });
   document.getElementById("bv-meta").textContent = [
-    viewerBill.amount ? fmt(viewerBill.amount) : null,
-    viewerBill.due_date
-      ? "Due " + new Date(viewerBill.due_date + "T00:00:00")
-          .toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" })
-      : null,
+    viewerBill.amount ? fmt(viewerBill.amount, viewerBill.currency) : null,
+    dueLong ? "Due " + dueLong : null,
     `${bizEmoji} ${bizName}`,
   ].filter(Boolean).join("  ·  ");
 
@@ -714,13 +860,14 @@ async function openBillViewer(billId) {
   ].filter(Boolean).join("  ·  ");
 
   const statusEl = document.getElementById("bv-status");
-  const statusLabel = { overdue:"Overdue", "due-soon":"Due Soon", pending:"Pending",
-    paid:"Paid", processing:"Processing" }[viewerBill.status] || viewerBill.status;
-  statusEl.textContent = statusLabel;
-  statusEl.className = `bv-status-badge ${viewerBill.status}`;
+  const vStatus = safeStatus(viewerBill.status);
+  statusEl.textContent = STATUS_LABELS[vStatus];
+  statusEl.className = `bv-status-badge ${vStatus}`;
 
   const paidBtn = document.getElementById("bv-paid-btn");
   if (paidBtn) paidBtn.disabled = viewerBill.status === "paid";
+
+  fillBillEditor(viewerBill);
 
   // Show loading
   document.getElementById("bv-doc").innerHTML = `
@@ -738,22 +885,58 @@ async function openBillViewer(billId) {
 
     if (resp.ok) {
       const json = await resp.json();
-      if (json.type === "pdf") {
-        docEl.innerHTML = `<iframe src="${json.url}" title="Bill document"></iframe>`;
-      } else if (json.type === "web") {
+      // file_url can be a Drive webViewLink stored from an API response, so
+      // pin it to http(s) before it becomes an href or an iframe src.
+      const url = safeUrl(json.url);
+      if (!url) {
         docEl.innerHTML = `
           <div class="bv-no-doc">
-            <div class="bv-no-doc-icon">📁</div>
-            <div class="bv-no-doc-text">Stored in Google Drive</div>
-            <div class="bv-no-doc-sub">Tap to open in Drive — embedded preview requires authentication.</div>
-            <a class="bv-open-link" href="${json.url}" target="_blank" rel="noopener">
-              Open in Google Drive →
+            <div class="bv-no-doc-icon">⚠️</div>
+            <div class="bv-no-doc-text">Document link looks invalid</div>
+            <div class="bv-no-doc-sub">This bill's stored link isn't a usable web address.</div>
+          </div>`;
+      } else if (json.type === "pdf") {
+        docEl.innerHTML = `<iframe src="${escAttr(url)}" title="Bill document"></iframe>`;
+      } else if (json.type === "image") {
+        docEl.innerHTML = `<img src="${escAttr(url)}" alt="Bill document" />`;
+      } else if (json.type === "download") {
+        // HEIC and friends: no browser renders them inline, so offer the file
+        // rather than an <img> that stays permanently blank.
+        docEl.innerHTML = `
+          <div class="bv-no-doc">
+            <div class="bv-no-doc-icon">📎</div>
+            <div class="bv-no-doc-text">Preview not supported</div>
+            <div class="bv-no-doc-sub">This file type can't be shown in the browser.</div>
+            <a class="bv-open-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer">
+              Open the file →
             </a>
           </div>`;
+      } else if (json.type === "web") {
+        // Drive's /view page refuses to be framed, but its /preview endpoint is
+        // built for embedding. Try that first so Drive bills actually show
+        // their document instead of only ever offering a link; the link stays
+        // underneath for when the browser isn't signed in to that account.
+        const embed = drivePreviewUrl(url);
+        docEl.innerHTML = embed
+          ? `<div class="bv-drive-wrap">
+               <iframe class="bv-drive-iframe" src="${escAttr(embed)}" title="Bill document"
+                       referrerpolicy="no-referrer-when-downgrade"></iframe>
+               <a class="bv-drive-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer">
+                 Not showing? Open in Google Drive →
+               </a>
+             </div>`
+          : `<div class="bv-no-doc">
+               <div class="bv-no-doc-icon">📁</div>
+               <div class="bv-no-doc-text">Stored in Google Drive</div>
+               <div class="bv-no-doc-sub">Tap to open in Drive.</div>
+               <a class="bv-open-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer">
+                 Open in Google Drive →
+               </a>
+             </div>`;
       } else if (json.type === "gmail") {
-        await _loadGmailBody(billId, json.url, docEl);
+        await _loadGmailBody(billId, url, docEl);
       } else {
-        docEl.innerHTML = `<img src="${json.url}" alt="Bill document" />`;
+        docEl.innerHTML = `<img src="${escAttr(url)}" alt="Bill document" />`;
       }
     } else {
       const src = viewerBill.source;
@@ -781,23 +964,128 @@ async function openBillViewer(billId) {
   }
 }
 
+/* ── Editable bill details ───────────────────────────────────────────────
+   Most bills reach us as stubs: a Drive scan only ever knows a filename, and a
+   Gmail scan only what the subject line happens to say. Without a way to fill
+   in the amount and due date by hand, those bills sat at "pending" forever,
+   contributed nothing to any total, and could never surface as due or overdue.
+   Values are written via the same PATCH the rest of the UI uses. */
+function fillBillEditor(bill) {
+  const amount   = document.getElementById("bv-edit-amount");
+  const currency = document.getElementById("bv-edit-currency");
+  const due      = document.getElementById("bv-edit-due");
+  const invoice  = document.getElementById("bv-edit-invoice");
+  const status   = document.getElementById("bv-edit-status");
+  if (!amount) return;
+  amount.value   = bill.amount ?? "";
+  currency.value = bill.currency || "USD";
+  // A date input only accepts yyyy-mm-dd; anything else must clear it rather
+  // than silently keeping the previous bill's value.
+  due.value      = /^\d{4}-\d{2}-\d{2}$/.test(String(bill.due_date || "")) ? bill.due_date : "";
+  invoice.value  = bill.invoice_number || "";
+  if (status) status.textContent = "";
+}
+
+async function saveBillDetails(event) {
+  event.preventDefault();
+  if (!viewerBill) return false;
+
+  const statusEl = document.getElementById("bv-edit-status");
+  const saveBtn  = document.getElementById("bv-save-btn");
+  const rawAmount = document.getElementById("bv-edit-amount").value.trim();
+  const rawCur    = document.getElementById("bv-edit-currency").value.trim().toUpperCase();
+  const rawDue    = document.getElementById("bv-edit-due").value;
+  const rawInv    = document.getElementById("bv-edit-invoice").value.trim();
+
+  if (rawAmount !== "" && !isFinite(Number(rawAmount))) {
+    if (statusEl) statusEl.textContent = "Amount must be a number";
+    return false;
+  }
+  if (rawCur && !/^[A-Z]{3}$/.test(rawCur)) {
+    if (statusEl) statusEl.textContent = "Currency must be a 3-letter code";
+    return false;
+  }
+
+  // Send nulls explicitly — that is how a wrong value gets cleared.
+  const payload = {
+    amount:         rawAmount === "" ? null : Number(rawAmount),
+    currency:       rawCur || "USD",
+    due_date:       rawDue || null,
+    invoice_number: rawInv || null,
+  };
+
+  const billId = viewerBill.bill_id;
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
+  if (statusEl) statusEl.textContent = "";
+  try {
+    const resp = await fetch(`/api/bills/${billId}`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      if (statusEl) statusEl.textContent = json.error || `Save failed (${resp.status})`;
+      return false;
+    }
+  } catch (e) {
+    console.error("saveBillDetails:", e);
+    if (statusEl) statusEl.textContent = "Save failed — check your connection";
+    return false;
+  } finally {
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save"; }
+  }
+
+  await reload();
+  // Re-read the saved bill so the header, status badge and editor all reflect
+  // the derived status the server just recomputed from the new due date.
+  const fresh = bills.find(b => b.bill_id === billId);
+  if (fresh) {
+    viewerBill = fresh;
+    const dueLong = formatDueDate(fresh.due_date, { month:"short", day:"numeric", year:"numeric" });
+    const bizName = fresh.business_name || "Unassigned";
+    const bizEmoji = fresh.business_emoji || "🏢";
+    document.getElementById("bv-meta").textContent = [
+      fresh.amount ? fmt(fresh.amount, fresh.currency) : null,
+      dueLong ? "Due " + dueLong : null,
+      `${bizEmoji} ${bizName}`,
+    ].filter(Boolean).join("  ·  ");
+    const badge = document.getElementById("bv-status");
+    if (badge) {
+      const s = safeStatus(fresh.status);
+      badge.textContent = STATUS_LABELS[s];
+      badge.className = `bv-status-badge ${s}`;
+    }
+    fillBillEditor(fresh);
+  }
+  if (statusEl) statusEl.textContent = "Saved ✓";
+  return false;
+}
+
 function closeBillViewer() {
   document.getElementById("bv-overlay")?.setAttribute("hidden", "");
   // Remove transient Gmail link from footer
   document.getElementById("bv-gmail-link")?.remove();
+  // Leave the delete button disarmed, or reopening the viewer on a different
+  // bill shows a primed "Confirm delete?" that deletes on a single click.
+  _disarmDelete(document.getElementById("bv-delete-btn"));
+  // Stop an in-flight document/email load from painting into the next bill.
+  const docEl = document.getElementById("bv-doc");
+  if (docEl) docEl.innerHTML = "";
   viewerBill = null;
 }
 
 async function _loadGmailBody(billId, gmailUrl, docEl) {
+  gmailUrl = safeUrl(gmailUrl);
   // Show Gmail link in footer immediately
   const footerEl = document.getElementById("bv-source");
-  if (footerEl && !document.getElementById("bv-gmail-link")) {
+  if (footerEl && gmailUrl && !document.getElementById("bv-gmail-link")) {
     const link = document.createElement("a");
     link.id = "bv-gmail-link";
     link.className = "bv-gmail-link";
     link.href = gmailUrl;
     link.target = "_blank";
-    link.rel = "noopener";
+    link.rel = "noopener noreferrer";
     link.textContent = "Open in Gmail →";
     footerEl.insertAdjacentElement("afterend", link);
   }
@@ -809,37 +1097,62 @@ async function _loadGmailBody(billId, gmailUrl, docEl) {
       <div style="margin-top:10px;font-size:12px;color:var(--muted)">Loading email…</div>
     </div>`;
 
+  let reason = "";
   try {
     const bodyResp = await fetch(`/api/bills/${billId}/email-body`);
-    if (!bodyResp.ok) throw new Error("no body");
+    if (!bodyResp.ok) {
+      const err = await bodyResp.json().catch(() => ({}));
+      reason = err.error || "";
+      throw new Error("no body");
+    }
     const body = await bodyResp.json();
 
     if (body.type === "html") {
-      docEl.innerHTML = `<div class="bv-email-wrap"><iframe class="bv-email-iframe" id="bv-email-iframe" sandbox="allow-same-origin allow-popups" title="Email body"></iframe></div>`;
+      // `allow-same-origin` put untrusted vendor email HTML into OUR origin —
+      // only the absence of `allow-scripts` was keeping it inert, one careless
+      // edit away from full same-origin script execution. A fully sandboxed
+      // frame renders the email just as well. The CSP additionally blocks the
+      // remote image loads that make marketing invoices into tracking pixels.
+      docEl.innerHTML = `<div class="bv-email-wrap"><iframe class="bv-email-iframe" id="bv-email-iframe" sandbox="" referrerpolicy="no-referrer" title="Email body"></iframe></div>`;
+      // Deny-list the dangerous capabilities rather than starting from
+      // `default-src 'none'`: inside sandbox="" the document has an opaque
+      // origin, and a blanket default-src blocks the srcdoc's own styles and
+      // images too — the email rendered as a blank white page. This keeps the
+      // protection that matters (no script execution, no plugins, no nested
+      // frames, no form posts to a phishing endpoint) while the email still
+      // displays. sandbox="" independently blocks scripts, forms and popups.
+      // Remote images do load, so a tracking pixel can fire; referrerpolicy
+      // keeps our URL out of that request.
+      const csp = `<meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">`;
       // Set srcdoc via property to avoid attribute-encoding issues
-      document.getElementById("bv-email-iframe").srcdoc = body.content;
+      document.getElementById("bv-email-iframe").srcdoc = csp + body.content;
     } else if (body.type === "text") {
-      const escaped = body.content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-      docEl.innerHTML = `<div class="bv-email-text-wrap"><pre class="bv-email-text">${escaped}</pre></div>`;
+      docEl.innerHTML = `<div class="bv-email-text-wrap"><pre class="bv-email-text">${esc(body.content)}</pre></div>`;
     } else {
       throw new Error("empty");
     }
   } catch (_) {
-    // Body unavailable — fall back to the Gmail link only
+    // Body unavailable — say why. "No attachment in this email" was wrong and
+    // unhelpful: the usual cause is that the message has since been deleted
+    // from the mailbox, or that mailbox's connection has dropped.
     docEl.innerHTML = `
       <div class="bv-no-doc">
         <div class="bv-no-doc-icon">📧</div>
-        <div class="bv-no-doc-text">No attachment in this email</div>
-        <div class="bv-no-doc-sub">Open the original email in Gmail to view its contents.</div>
-        <a class="bv-open-link" href="${gmailUrl}" target="_blank" rel="noopener">Open in Gmail →</a>
+        <div class="bv-no-doc-text">Email preview unavailable</div>
+        <div class="bv-no-doc-sub">${esc(reason || "Couldn't load this email's contents.")}</div>
+        ${gmailUrl ? `<a class="bv-open-link" href="${escAttr(gmailUrl)}" target="_blank" rel="noopener noreferrer">Open in Gmail →</a>` : ""}
       </div>`;
   }
 }
 
 async function markPaidFromViewer() {
   if (!viewerBill) return;
-  await markPaid(viewerBill.bill_id);
-  // Update viewer state without closing
+  const billId = viewerBill.bill_id;
+  const ok = await markPaid(billId);
+  // Only claim "Paid" in the viewer if the server agreed. reload() replaces
+  // the `bills` array, so re-resolve rather than mutating a detached object.
+  if (!ok) return;
+  viewerBill = bills.find(b => b.bill_id === billId) || viewerBill;
   viewerBill.status = "paid";
   const statusEl = document.getElementById("bv-status");
   if (statusEl) { statusEl.textContent = "Paid"; statusEl.className = "bv-status-badge paid"; }
@@ -854,6 +1167,14 @@ function assignFromViewer() {
   showConfirmOverlay(bill);
 }
 
+function _disarmDelete(btn) {
+  if (!btn) return;
+  clearTimeout(btn._disarm);
+  delete btn.dataset.armed;
+  btn.textContent = "🗑 Delete";
+  btn.classList.remove("bv-delete-armed");
+}
+
 async function deleteFromViewer() {
   if (!viewerBill) return;
   const btn = document.getElementById("bv-delete-btn");
@@ -862,35 +1183,29 @@ async function deleteFromViewer() {
   if (btn && !btn.dataset.armed) {
     btn.dataset.armed = "1";
     btn.textContent = "Confirm delete?";
-    btn.style.background = "rgba(248,113,113,.15)";
-    btn.style.borderColor = "rgba(248,113,113,.4)";
-    btn.style.color = "#f87171";
-    // Auto-disarm after 4 seconds if not confirmed
-    setTimeout(() => {
-      if (btn.dataset.armed) {
-        delete btn.dataset.armed;
-        btn.textContent = "🗑 Delete";
-        btn.style.cssText = "";
-      }
-    }, 4000);
+    btn.classList.add("bv-delete-armed");
+    // Auto-disarm after 4 seconds if not confirmed. Clearing cssText wiped
+    // every inline style the button had, not just the three set here.
+    clearTimeout(btn._disarm);
+    btn._disarm = setTimeout(() => _disarmDelete(btn), 4000);
     return;
   }
 
   // Second click: confirmed — delete
   const billId = viewerBill.bill_id;
-  if (btn) { btn.disabled = true; btn.textContent = "Deleting…"; }
+  if (btn) { clearTimeout(btn._disarm); btn.disabled = true; btn.textContent = "Deleting…"; }
   try {
     const resp = await fetch(`/api/bills/${billId}`, { method: "DELETE" });
     if (!resp.ok) {
-      const err = await resp.json();
+      const err = await resp.json().catch(() => ({}));
       showToast("Delete failed: " + (err.error || resp.status));
-      if (btn) { btn.disabled = false; btn.textContent = "🗑 Delete"; delete btn.dataset.armed; }
+      if (btn) { btn.disabled = false; _disarmDelete(btn); }
       return;
     }
   } catch (e) {
     console.error("deleteFromViewer:", e);
     showToast("Delete failed — check console");
-    if (btn) { btn.disabled = false; btn.textContent = "🗑 Delete"; delete btn.dataset.armed; }
+    if (btn) { btn.disabled = false; _disarmDelete(btn); }
     return;
   }
 
