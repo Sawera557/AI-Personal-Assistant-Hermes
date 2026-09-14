@@ -65,9 +65,29 @@ def _kinds(content):
 # --- health / voices -------------------------------------------------------
 
 def test_health():
+    """/api/health answers, and no fail-open step is quietly broken.
+
+    It deliberately does NOT assert status == "ok". `status` is "degraded"
+    whenever Config.validate() reports anything, and this suite runs offline
+    with no API keys — so a correct health endpoint MUST say "degraded" here.
+    Demanding "ok" made the check impossible to satisfy in CI, which is why the
+    verify job was red on every commit including main's own.
+
+    What has to hold in every environment is the part that can regress silently:
+    `degraded` lists fail-open steps that stopped working while chat kept
+    answering, and that is the condition which once hid a month of dead memory
+    extraction. Missing credentials are reported through `problems` instead,
+    where they belong.
+    """
     r = client.get("/api/health")
     assert r.status_code == 200, r.text
-    assert r.json()["status"] == "ok"
+    body = r.json()
+
+    assert body["degraded"] == [], body["degraded"]
+    assert body["signals"], "health must report the fail-open signals it tracks"
+    # status is the summary of the other two fields, so it must agree with them.
+    expected = "ok" if not (body["problems"] or body["degraded"]) else "degraded"
+    assert body["status"] == expected, body
 
 
 def test_voices():
