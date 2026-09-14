@@ -23,7 +23,7 @@ from typing import Any
 import anthropic
 import openai
 
-from . import apps_access, context_mode, credits, guardrails, health, models
+from . import context_mode, credits, guardrails, health, models
 from .attachments import ATTACHMENT_TEXT_PREFIX
 from .config import Config
 from .memory import store
@@ -157,46 +157,6 @@ def _attachments_block(attachments: list[dict[str, Any]] | None) -> str:
     return "\n".join(lines)
 
 
-def _with_context_blocks(
-    base: str,
-    voice: bool,
-    context_pack: str,
-    memory_block: str,
-    conversation_block: str,
-    retrieved_context: str,
-    attachments: list[dict[str, Any]] | None,
-) -> str:
-    """Append whatever context blocks this turn actually carries, then the voice
-    style. Shared by both prompt shapes (with tools and without) so that turning
-    apps access off never silently drops the user's business context with it —
-    the bug this split exists to prevent.
-
-    Each block is already empty when hermes.context_mode is off, so this is a
-    no-op in plain-chat mode rather than a second place to keep the rule.
-    """
-    if context_pack:
-        base += (
-            "\n\nBUSINESS CONTEXT PACK (authoritative standing facts and rules — "
-            "trust these over memory or retrieval; if a tool result contradicts "
-            "them, say so explicitly):\n" + context_pack
-        )
-    if memory_block:
-        base += (
-            "\n\nMEMORY — saved facts from PAST conversations (preferences, business "
-            "rules, standing decisions). Preferences and standing decisions are "
-            "reliable. But anything here that can change over time — contact numbers, "
-            "balances, message contents, current status, who said what — may be STALE: "
-            "treat it as background, NOT as a live retrieval, and confirm it with a tool "
-            "call before stating it as a current fact.\n" + memory_block
-        )
-    if conversation_block:
-        base += f"\n\n{conversation_block}"
-    if retrieved_context:
-        base += f"\n\n{retrieved_context}"
-    base += _attachments_block(attachments)
-    return base + _VOICE_STYLE if voice else base
-
-
 def _system_prompt(
     voice: bool = False,
     active_business: str | None = None,
@@ -206,71 +166,29 @@ def _system_prompt(
     retrieved_context: str = "",
     conversation_block: str = "",
     tools_available: bool = True,
-    rich_context: bool = True,
 ) -> str:
-    """The system prompt for one turn, shaped by two INDEPENDENT switches.
-
-    `tools_available` (hermes.apps_access) decides whether the model is told it
-    can act; `rich_context` (hermes.context_mode) decides whether it is handed
-    the user's memory/documents. All four combinations are valid and each gets
-    a prompt that is true about what this turn can actually do — a prompt that
-    over-promises is how you get a model narrating tool calls it cannot make.
-    """
     today = datetime.date.today().isoformat()
 
     if not tools_available:
-        # No tool schemas are sent this turn, so the several thousand tokens of
-        # tool instructions below are not just waste — they are actively wrong.
-        # Told to "call send_email" with no such tool available, the model
-        # narrates tool calls instead of answering. This prompt describes what
-        # Hermes can actually do here, in ~100 tokens instead of ~1,600.
-        base = (
+        # Plain-chat mode (hermes.context_mode off): no tools are sent, so the
+        # several thousand tokens of tool instructions below are not just waste
+        # — they are actively wrong. Told to "call send_email" with no such tool
+        # available, the model narrates tool calls instead of answering. This
+        # prompt describes what Hermes can actually do in this mode, and is
+        # ~100 tokens instead of ~1,600.
+        plain = (
             "You are Hermes, a capable AI assistant. Answer directly and "
-            "concisely.\n\n"
-            "You currently have NO tools and NO access to the user's connected "
-            "apps — apps access is switched off in Settings. You cannot send "
-            "email, reach Drive/Calendar/Zoom/Jira/WhatsApp/QuickBooks, search "
-            "the web, or read and create files. Never claim to have looked "
-            "something up, and never describe or narrate a tool call. If a "
-            "request genuinely needs an app, say plainly that apps access is "
+            "concisely from your own knowledge.\n\n"
+            "You currently have NO tools and NO access to the user's apps, "
+            "documents, saved memory or business data — business context is "
+            "switched off for speed and cost. Never claim to have looked "
+            "something up, never invent specifics about their business, and "
+            "never describe or narrate a tool call. If a request genuinely "
+            "needs their data or apps, say plainly that business context is "
             "turned off and they can re-enable it in Settings.\n"
+            f"Today's date is {today}."
         )
-        if rich_context:
-            # Context is still ON: the blocks appended at the end of this
-            # function are real, so the grounding rules that govern them have to
-            # come along. Without tools there is no "confirm it with a tool"
-            # escape hatch, which makes the stale-memory warning MORE important.
-            base += (
-                "\nYou DO still have the user's business context below (context "
-                "pack, memory, earlier conversations, retrieved documents). Use "
-                "it, and attribute each part correctly — never blur them:\n"
-                "    - BUSINESS CONTEXT PACK = standing configured facts. Refer to "
-                "these as standing context, NEVER as something the user just told you.\n"
-                "    - MEMORY = durable saved facts; may be stale. Say so when it "
-                "matters — you cannot verify it with a tool in this mode.\n"
-                "    - EARLIER CONVERSATIONS = what was actually said in past chats. "
-                "ONLY this block (or the current message) lets you say 'you told me' "
-                "or 'we discussed' — cite its date when you do.\n"
-                "    - RETRIEVED CONTEXT = documents; refer to them as retrieved, "
-                "never as memory or as something the user said.\n"
-                "  Do NOT state any specific — a name, address, amount, date, ID or "
-                "count — unless it appears in one of these blocks or the user's "
-                "message. If you have only part of a detail, give exactly that part "
-                "and stop; never fill in the rest from assumption.\n"
-            )
-        else:
-            base += (
-                "\nYou also have NO saved memory, documents or business data — "
-                "business context is switched off too. Answer from your own "
-                "general knowledge and never invent specifics about their "
-                "business.\n"
-            )
-        base += f"Today's date is {today}."
-        # Context blocks (empty unless rich_context) still get appended below.
-        return _with_context_blocks(
-            base, voice, context_pack, memory_block, conversation_block,
-            retrieved_context, attachments=None,
-        )
+        return plain + _VOICE_STYLE if voice else plain
 
     base = (
         "You are Hermes, a capable AI executive assistant. You help the user get "
@@ -368,10 +286,27 @@ def _system_prompt(
             "view. If a memory or retrieved snippet from a DIFFERENT business surfaces, say it "
             f"belongs to that other business — never fold it into '{active_business}'."
         )
-    return _with_context_blocks(
-        base, voice, context_pack, memory_block, conversation_block,
-        retrieved_context, attachments,
-    )
+    if context_pack:
+        base += (
+            "\n\nBUSINESS CONTEXT PACK (authoritative standing facts and rules — "
+            "trust these over memory or retrieval; if a tool result contradicts "
+            "them, say so explicitly):\n" + context_pack
+        )
+    if memory_block:
+        base += (
+            "\n\nMEMORY — saved facts from PAST conversations (preferences, business "
+            "rules, standing decisions). Preferences and standing decisions are "
+            "reliable. But anything here that can change over time — contact numbers, "
+            "balances, message contents, current status, who said what — may be STALE: "
+            "treat it as background, NOT as a live retrieval, and confirm it with a tool "
+            "call before stating it as a current fact.\n" + memory_block
+        )
+    if conversation_block:
+        base += f"\n\n{conversation_block}"
+    if retrieved_context:
+        base += f"\n\n{retrieved_context}"
+    base += _attachments_block(attachments)
+    return base + _VOICE_STYLE if voice else base
 
 
 def _dump(content: Any) -> list[dict[str, Any]]:
@@ -908,17 +843,10 @@ def stream_turn(
     """
     model_id = models.active_model()
     provider = models.provider_of(model_id)
-    # Two INDEPENDENT switches, because they buy different things and turning
-    # one off must never take the other with it:
-    #   rich_context (hermes.context_mode) — the retrieval blocks below, ~4.4k
-    #     tokens of memory / context pack / RAG / past-conversation recall.
-    #   apps_on (hermes.apps_access) — the tool schemas, ~11k of the ~20k a
-    #     trivial message costs, and the only thing that lets Hermes ACT.
-    # Business context off still leaves every app reachable; it just means the
-    # agent looks things up with a tool instead of being handed them up front.
+    # Plain-chat mode: no tool schemas (~11k tokens of the ~20k a trivial
+    # message costs) and no retrieval blocks below. See hermes.context_mode.
     rich_context = context_mode.enabled()
-    apps_on = apps_access.enabled()
-    tools = build_tools(active_business, allowed_apps=allowed_apps, autonomy=autonomy) if apps_on else []
+    tools = build_tools(active_business, allowed_apps=allowed_apps, autonomy=autonomy) if rich_context else []
 
     if isinstance(user_content, str):
         user_content = [{"type": "text", "text": user_content}]
@@ -1000,15 +928,7 @@ def stream_turn(
 
     # Files shared earlier in this chat, so the model can read them on any turn
     # (see _attachments_block). Tolerate stores without the method / a failure.
-    # Gated on APPS, not context: the ledger is a list of s3_uris that are only
-    # usable through the `read_document` tool, so it is dead weight (and an
-    # invitation to narrate a call it can't make) with apps access off — but it
-    # must survive business context being switched off, since a file the user
-    # just dropped into this chat is the one thing they plainly expect to work.
-    attachments = (
-        health.guarded("attachments", lambda: store.attachments(session_id), [])
-        if apps_on else []
-    )
+    attachments = _ctx("attachments", lambda: store.attachments(session_id), default=[])
 
     tool_trace: list[dict[str, Any]] = []
     reply = ""
@@ -1029,8 +949,7 @@ def stream_turn(
     for _ in range(Config.MAX_TOOL_ITERATIONS):
         system_prompt = _system_prompt(
             voice, active_business, memory_block, attachments, context_pack,
-            retrieved_context, conversation_block,
-            tools_available=apps_on, rich_context=rich_context,
+            retrieved_context, conversation_block, tools_available=rich_context,
         )
 
         # Produce ONE complete assistant turn, resuming in place if the token cap
