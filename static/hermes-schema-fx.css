@@ -1,0 +1,117 @@
+/* Hermes v2 · System tab motion layer */
+html.pro .schema-view { --fx-solid: #050c13; }
+html.pro:not(.holo) .schema-view { --fx-solid: #11141b; }
+html.pro .schema-view .sx-pkt { display: none; }
+
+/* header */
+html.pro .schema-view .ax-head { padding-top: 34px; }
+html.pro .schema-view .vx-eyebrow { display: inline-flex; align-items: center; gap: 8px; }
+html.pro .schema-view .vx-eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #5be49b; box-shadow: 0 0 0 0 rgba(91, 228, 155, .6); animation: fx-live 2s ease-out infinite; }
+html.pro .schema-view .vx-h1 { font-size: clamp(28px, 3.4vw, 46px) !important; line-height: 1.05 !important; letter-spacing: -0.01em; }
+html.pro .schema-view .fx-w { display: inline-block; animation: fx-word .9s cubic-bezier(.16, 1, .3, 1) backwards; }
+html.pro .schema-view .vx-lede { animation: fx-fade .9s .35s ease backwards; }
+
+html.pro .schema-view .fx-trace-btn {
+  display: inline-flex; align-items: center; gap: 9px; height: 34px; padding: 0 14px; cursor: pointer;
+  font: 600 10.5px/1 "IBM Plex Mono", monospace; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ax-ink); background: rgba(var(--ax), .1); border: 1px solid rgba(var(--ax), .5); border-radius: 3px;
+  position: relative; overflow: hidden; transition: background .2s, border-color .2s, transform .15s;
+}
+html.pro .schema-view .fx-trace-btn b { font-weight: 600; }
+html.pro .schema-view .fx-trace-btn svg { color: rgb(var(--ax)); }
+html.pro .schema-view .fx-trace-btn::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, rgba(var(--ax), .35) 50%, transparent 70%); transform: translateX(-100%); animation: fx-sheen 3.2s 1.2s ease-in-out infinite; }
+html.pro .schema-view .fx-trace-btn:hover { background: rgba(var(--ax), .18); border-color: rgb(var(--ax)); }
+html.pro .schema-view .fx-trace-btn:active { transform: scale(.97); }
+html.pro .schema-view .fx-trace-btn.run svg { animation: fx-blink .6s steps(2) infinite; }
+html.pro:not(.holo) .schema-view .fx-trace-btn { border-radius: 8px; }
+
+html.pro .schema-view .fx-cap {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) 160px; align-items: center; gap: 16px;
+  margin: 18px 32px 0; padding: 0 16px; height: 44px; flex: none; box-sizing: border-box; display: none;
+  border: 1px solid rgba(var(--ax), .28); background: rgba(var(--ax), .05);
+  font: 500 12.5px/1.3 "IBM Plex Sans", sans-serif; color: var(--ax-ink);
+}
+html.pro .schema-view .fx-cap.on { display: grid; animation: fx-cap .4s cubic-bezier(.16, 1, .3, 1); }
+@keyframes fx-cap { from { opacity: 0; transform: translateY(-6px); } }
+html.pro .schema-view :is(.vx-eyebrow, .vx-switch, .fx-trace-btn, .fx-trace-btn b) { white-space: nowrap; }
+html.pro .schema-view .fx-trace-btn { flex: none; }
+html.pro .schema-view .fx-cap .n { font: 600 10.5px/1 "IBM Plex Mono", monospace; letter-spacing: .14em; color: rgb(var(--ax)); text-transform: uppercase; }
+html.pro .schema-view .fx-cap .t { animation: fx-fade .35s ease; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html.pro .schema-view .fx-cap .bar { height: 2px; background: rgba(var(--ax), .15); }
+html.pro .schema-view .fx-cap .bar i { display: block; height: 100%; background: rgb(var(--ax)); box-shadow: 0 0 8px rgb(var(--ax)); transition: width .5s ease; }
+html.pro:not(.holo) .schema-view .fx-cap { border-radius: 10px; }
+
+/* board backdrop */
+html.pro .schema-view .ax-board { isolation: isolate; }
+html.pro .schema-view .fx-bg { position: absolute; inset: -40px -32px; z-index: -1; pointer-events: none; overflow: hidden; }
+html.pro .schema-view .fx-bg .grid {
+  position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(var(--ax), .07) 1px, transparent 1px), linear-gradient(90deg, rgba(var(--ax), .07) 1px, transparent 1px);
+  background-size: 44px 44px; animation: fx-grid 18s linear infinite;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 20%, transparent 75%); mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 20%, transparent 75%);
+}
+html.pro .schema-view .fx-bg .g1, html.pro .schema-view .fx-bg .g2 { position: absolute; width: 46%; aspect-ratio: 1; border-radius: 50%; filter: blur(70px); opacity: .22; }
+html.pro .schema-view .fx-bg .g1 { left: 30%; top: 5%; background: rgb(var(--ax)); animation: fx-drift1 16s ease-in-out infinite alternate; }
+html.pro .schema-view .fx-bg .g2 { left: 55%; top: 40%; width: 30%; background: rgb(var(--ax-amber)); opacity: .12; animation: fx-drift2 20s ease-in-out infinite alternate; }
+
+/* zones + labels */
+html.pro .schema-view .ax-zone, html.pro .schema-view .ax-sub { animation: fx-fade 1s .2s ease backwards; }
+html.pro .schema-view .ax-tag { display: inline-flex; align-items: center; gap: 6px; }
+html.pro .schema-view .ax-tag::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: rgb(var(--ax)); animation: fx-blink 1.6s ease-in-out infinite; }
+html.pro .schema-view .ax-lbl { animation: fx-fade .6s ease backwards; }
+html.pro .schema-view .ax-lbl::after { transform-origin: left; animation: fx-line 1.1s .3s cubic-bezier(.16, 1, .3, 1) backwards; }
+
+/* nodes */
+html.pro .schema-view .ax-node {
+  background: radial-gradient(240px circle at var(--mx, -400px) var(--my, -400px), rgba(var(--ax), .16), transparent 60%), linear-gradient(180deg, rgba(var(--ax), .07), rgba(var(--ax), .015)), var(--ax-card);
+  animation: fx-node .85s cubic-bezier(.16, 1, .3, 1) backwards;
+  transition: border-color .25s, box-shadow .3s, transform .25s cubic-bezier(.16, 1, .3, 1), opacity .3s, filter .3s;
+  will-change: transform;
+}
+html.pro .schema-view .ax-node:hover { transform: translateY(-2px); }
+html.pro .schema-view .ax-node .ax-ic { transition: transform .3s cubic-bezier(.16, 1, .3, 1), background .3s; }
+html.pro .schema-view .ax-node:hover .ax-ic { transform: scale(1.1) rotate(-6deg); background: rgba(var(--ax), .16); }
+html.pro .schema-view .ax-node::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid rgb(var(--ax)); opacity: 0; pointer-events: none; }
+html.pro .schema-view .ax-node.fx-ping { border-color: rgba(var(--ax), .8); }
+html.pro .schema-view .ax-node.fx-ping::after { animation: fx-ping .85s cubic-bezier(.16, 1, .3, 1); }
+html.pro .schema-view .ax-node.fx-ping .ax-ic { background: rgba(var(--ax), .28); box-shadow: 0 0 16px rgba(var(--ax), .6); }
+
+/* core: rotating light ring + heartbeat */
+html.pro .schema-view .ax-node.core { overflow: hidden; isolation: isolate; border-color: rgba(var(--ax), .3); }
+html.pro .schema-view .ax-node.core::before { content: ""; position: absolute; inset: 1.5px; z-index: -1; border-radius: 3px; background: radial-gradient(240px circle at var(--mx, -400px) var(--my, -400px), rgba(var(--ax), .16), transparent 60%), linear-gradient(180deg, rgba(var(--ax), .1), rgba(var(--ax), .02)), var(--fx-solid); }
+html.pro .schema-view .fx-ring { position: absolute; left: 50%; top: 50%; width: 220%; aspect-ratio: 1; z-index: -2; translate: -50% -50%; background: conic-gradient(from 0deg, transparent 0 62%, rgba(var(--ax), .15) 72%, rgb(var(--ax)) 84%, rgba(var(--ax-amber), .9) 88%, transparent 92%); animation: fx-spin 4.5s linear infinite; }
+html.pro .schema-view .ax-node.core .ax-ic { animation: fx-beat 2.4s ease-in-out infinite; }
+
+/* wires + comets */
+html.pro .schema-view .sx-wire { stroke-width: 1.3; }
+html.pro .schema-view .sx-wire.fx-trace { stroke: rgb(var(--ax)) !important; stroke-width: 2.2; stroke-dasharray: 6 4; filter: drop-shadow(0 0 5px rgba(var(--ax), .9)); animation-duration: .4s; }
+html.pro .schema-view .sx-wire.gate.fx-trace { stroke: rgb(var(--ax-amber)) !important; filter: drop-shadow(0 0 5px rgba(var(--ax-amber), .9)); }
+html.pro .schema-view .fx-comet circle { fill: rgb(var(--ax)); }
+html.pro .schema-view .fx-comet circle.head { fill: #f4fcff; filter: drop-shadow(0 0 5px rgb(var(--ax))) drop-shadow(0 0 10px rgba(var(--ax), .7)); }
+html.pro .schema-view .fx-comet.amber circle { fill: rgb(var(--ax-amber)); }
+html.pro .schema-view .fx-comet.amber circle.head { fill: #fff3df; filter: drop-shadow(0 0 5px rgb(var(--ax-amber))); }
+html.pro .schema-view .fx-comet.trace circle.head { filter: drop-shadow(0 0 7px rgb(var(--ax))) drop-shadow(0 0 16px rgba(var(--ax), .8)); }
+
+/* trace focus: dim everything not on the path */
+html.pro .schema-view .fx-tracing .ax-node:not(.fx-lit) { opacity: .4; filter: saturate(.4); }
+html.pro .schema-view .fx-tracing .ax-node.fx-lit { border-color: rgba(var(--ax), .75); box-shadow: 0 0 28px rgba(var(--ax), .22); }
+html.pro .schema-view .fx-tracing .sx-wire:not(.fx-trace) { opacity: .35; }
+
+@keyframes fx-word { from { opacity: 0; transform: translateY(.45em) rotateX(-40deg); filter: blur(8px); } }
+@keyframes fx-fade { from { opacity: 0; } }
+@keyframes fx-node { from { opacity: 0; transform: translateY(16px) scale(.96); filter: blur(6px); } }
+@keyframes fx-line { from { transform: scaleX(0); } }
+@keyframes fx-ping { 0% { opacity: .9; inset: -1px; } 100% { opacity: 0; inset: -9px; } }
+@keyframes fx-spin { to { rotate: 360deg; } }
+@keyframes fx-beat { 0%, 100% { box-shadow: 0 0 0 0 rgba(var(--ax), .5); } 50% { box-shadow: 0 0 0 6px rgba(var(--ax), 0); } }
+@keyframes fx-live { 0% { box-shadow: 0 0 0 0 rgba(91, 228, 155, .6); } 100% { box-shadow: 0 0 0 8px rgba(91, 228, 155, 0); } }
+@keyframes fx-blink { 50% { opacity: .25; } }
+@keyframes fx-sheen { 0%, 60% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+@keyframes fx-grid { to { background-position: 44px 44px; } }
+@keyframes fx-drift1 { to { transform: translate(-18%, 12%) scale(1.15); } }
+@keyframes fx-drift2 { to { transform: translate(-30%, -20%) scale(.9); } }
+
+@media (max-width: 780px) { html.pro .schema-view .fx-cap { margin-left: 18px; margin-right: 18px; grid-template-columns: auto minmax(0, 1fr); } html.pro .schema-view .fx-cap .bar { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  html.pro .schema-view *, html.pro .schema-view *::before, html.pro .schema-view *::after { animation: none !important; transition-duration: .01ms !important; }
+}
