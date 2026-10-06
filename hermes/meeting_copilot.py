@@ -3,8 +3,9 @@
 get_guidance() and prepare_brief() deliberately avoid the tool-use agent
 (hermes.agent.run_turn): they never call Maton, never send anything, never
 speak in the meeting — they only read what's already been indexed by the
-ingestion pipeline. Fast on purpose: one semantic search + one plain Claude
-call, no tool loop, no extended thinking.
+ingestion pipeline. Fast on purpose: one semantic search + one plain model
+call (background policy: NVIDIA, via llm_json), no tool loop, no extended
+thinking.
 
 generate_ai_notes() (bottom of this file) is the one deliberate exception —
 it DOES call the full tool-use agent, reaching live into Gmail/Drive on the
@@ -15,20 +16,9 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-import anthropic
-
 from .config import Config
-from .llm_json import call_claude_json
+from .llm_json import call_claude_json, call_text
 from .search import semantic_search
-
-_client: anthropic.Anthropic | None = None
-
-
-def _anthropic() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
-    return _client
 
 
 _SYSTEM_TEMPLATE = """You are Gandi's private meeting copilot for {business_name}. \
@@ -232,17 +222,9 @@ def get_guidance(
         if notes_so_far else f"What was just said: {latest_text}"
     )
 
-    client = _anthropic()
-    resp = client.messages.create(
-        model=Config.GUIDANCE_MODEL,
-        max_tokens=400,
-        system=system,
-        messages=[{"role": "user", "content": user_message}],
-    )
-    text = "".join(
-        getattr(block, "text", "") for block in resp.content
-        if getattr(block, "type", None) == "text"
-    )
+    # Background policy applies: NVIDIA-only, with fallthrough (see llm_json).
+    text = call_text(system=system, user_message=user_message, max_tokens=400,
+                     model=Config.GUIDANCE_MODEL)
     bullets = _parse_bullets(text)
 
     return {
@@ -446,26 +428,18 @@ def _fetch_business_data(entity_id: str, max_sensitivity: str = "confidential") 
     # - Floormap/org data: team structure and dependencies
     # - Calendar/email patterns: team capacity and utilization
 
-    try:
-        from .db.meetings import prior_bullets  # avoid cycle
-        # TODO: query Postgres for business.goals, business.roadmap, business.risks
-        # TODO: semantic_search for "decision", "blocker", "risk" in this entity
-        # TODO: fetch floormap/org structure if available
-        # TODO: aggregate team capacity signals from calendar/meetings
-
-        return {
-            "q3_goals": "(database lookup: current quarterly goals)",
-            "roadmap": "(database lookup: known milestones/timeline)",
-            "team_structure": "(floormap lookup: org/team/dependencies)",
-            "known_risks": "(risk register: identified technical/business risks)",
-            "blockers": "(query: current escalations/showstoppers)",
-            "capacity": "(signals: team availability, budget headroom)",
-            "recent_decisions": "(last 30 days: what was decided and by whom)",
-        }
-    except Exception as exc:
-        import logging
-        logging.getLogger("hermes.meeting_copilot").warning("_fetch_business_data failed: %s", exc)
-        return {}
+    # TODO: query Postgres for business.goals, business.roadmap, business.risks
+    # TODO: semantic_search for "decision", "blocker", "risk" in this entity
+    # TODO: fetch floormap/org structure if available
+    # TODO: aggregate team capacity signals from calendar/meetings
+    #
+    # None of those sources is wired yet, so this returns NOTHING rather than
+    # descriptive stand-ins. It used to return strings like
+    # "(database lookup: current quarterly goals)", which reached the prompt as
+    # if they were real records — and the model, asked how a moment "conflicts
+    # with his Q3 goals", invented Q3 targets to answer. An empty dict renders
+    # as "(business data unavailable)", which the prompt handles honestly.
+    return {}
 
 
 def get_guidance_comprehensive(
@@ -553,7 +527,7 @@ def get_guidance_comprehensive(
     # Format business data
     business_context_lines = []
     for key, value in business_data.items():
-        if value and value != "(database lookup: ...)":  # skip unfilled placeholders
+        if value and not str(value).startswith("("):  # never pass a "(lookup: …)" stand-in off as data
             business_context_lines.append(f"- {key.replace('_', ' ').title()}: {value}")
     business_context = "\n".join(business_context_lines) if business_context_lines else "(business data unavailable)"
 
@@ -569,17 +543,8 @@ def get_guidance_comprehensive(
         if notes_so_far else f"What was just said: {latest_text}"
     )
 
-    client = _anthropic()
-    resp = client.messages.create(
-        model=Config.GUIDANCE_MODEL,
-        max_tokens=400,
-        system=system,
-        messages=[{"role": "user", "content": user_message}],
-    )
-    text = "".join(
-        getattr(block, "text", "") for block in resp.content
-        if getattr(block, "type", None) == "text"
-    )
+    text = call_text(system=system, user_message=user_message, max_tokens=400,
+                     model=Config.GUIDANCE_MODEL)
     bullets = _parse_bullets(text)
 
     return {

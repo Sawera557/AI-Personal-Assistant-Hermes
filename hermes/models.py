@@ -75,11 +75,8 @@ MODEL_OPTIONS: list[dict[str, str]] = [
         "provider": "nvidia",
         "label": "NVIDIA · Kimi K3 (reasoning, vision)",
     },
-    {
-        "id": "deepseek-ai/deepseek-v4-flash-0731",
-        "provider": "nvidia",
-        "label": "NVIDIA · DeepSeek V4 Flash (reasoning)",
-    },
+    # deepseek-ai/deepseek-v4-flash-0731 removed: NVIDIA retired it 2026-09-21
+    # (every call now returns 410 Gone).
 ]
 _KNOWN_IDS = {m["id"] for m in MODEL_OPTIONS}
 
@@ -107,6 +104,7 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     # than smaller ones on the usage page.
     "google/diffusiongemma-26b-a4b-it": {"input": 0.10, "output": 0.30, "cache_read": 0.0},
     "moonshotai/kimi-k3": {"input": 0.60, "output": 2.50, "cache_read": 0.0},
+    # Retired 2026-09-21 — no longer selectable; kept so past usage still prices.
     "deepseek-ai/deepseek-v4-flash-0731": {"input": 0.15, "output": 0.60, "cache_read": 0.0},
 }
 _warned_unpriced: set[str] = set()
@@ -235,9 +233,10 @@ BACKGROUND_PROVIDERS = frozenset({"nvidia"})
 
 #: Ordered background preference, by measured latency and reliability on NIM —
 #: these run per-turn, so speed matters more than raw capability:
-#:   deepseek-v4-flash   ~0.8s, consistently correct
-#:   diffusiongemma      ~7s, reliable, also vision-capable
-#:   nemotron            NVIDIA's own, reliable
+#:   diffusiongemma      3–9s, stays grounded, also vision-capable. Default
+#:                       since deepseek-v4-flash was retired 2026-09-21.
+#:   nemotron            NVIDIA's own; 24–35s on meeting guidance (2026-10-06)
+#:                       and invented facts when given no records
 #:   kimi-k3             ~35s and throttles hard; late resort
 #:   gemma-4-31b         measured >145s; last resort only
 #:
@@ -245,7 +244,6 @@ BACKGROUND_PROVIDERS = frozenset({"nvidia"})
 #: the NVIDIA key, but it is an OpenAI-lineage model and the instruction was no
 #: OpenAI models in the background. Add it here if that reading is too strict.
 BACKGROUND_MODELS: list[str] = [
-    "deepseek-ai/deepseek-v4-flash-0731",
     "google/diffusiongemma-26b-a4b-it",
     "nvidia/nemotron-3.5-lightning-30b-a3b",
     "moonshotai/kimi-k3",

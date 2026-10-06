@@ -11,12 +11,15 @@ chunk row (and now its embedding) live in the same table, no separate system.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
 from . import vector_store as ps
 from .db import documents as docs_repo
 from .db.connection import cursor
+
+log = logging.getLogger("hermes.ingest")
 
 _TEXT_DECODABLE_HINTS = ("text/", "json", "csv", "xml", "markdown", "yaml", "html")
 
@@ -117,6 +120,24 @@ def _reindex(
 _GLOBAL_REGION = "us-east-1"  # default region for a document with no single owning business
 
 
+def _discard_partial(document_id: str, s3_uri: str | None, recorded: bool) -> None:
+    """Undo a failed ingest: the documents row (its chunks cascade) and the S3
+    object. Best-effort — a cleanup failure is logged, never raised, so the
+    caller still sees the ORIGINAL error that made the ingest fail."""
+    from . import storage  # lazy, as in ingest_document
+
+    if recorded:
+        try:
+            docs_repo.delete_document(document_id)
+        except Exception:  # noqa: BLE001
+            log.exception("ingest rollback: could not delete document %s", document_id)
+    if s3_uri:
+        try:
+            storage.delete(s3_uri)
+        except Exception:  # noqa: BLE001
+            log.exception("ingest rollback: could not delete %s", s3_uri)
+
+
 def ingest_document(
     entity_id: str | None,
     *,
@@ -145,32 +166,43 @@ def ingest_document(
 
     document_id = str(uuid.uuid4())
 
-    # 1) Bytes -> S3 (optional).
+    # All-or-nothing: if any step below fails (most often the embedding call),
+    # everything already written for this document is removed before the error
+    # propagates. Previously a failed upload answered 500 yet left the row (and
+    # un-embedded chunks and the S3 object) behind — a document that showed on
+    # the Context page but could never be found by search.
     s3_uri = None
-    if raw is not None and storage.enabled():
-        key = f"{slug or 'global'}/{document_id}/{filename}"
-        s3_uri = storage.put(key, raw, mime or "application/octet-stream")
+    recorded = False
+    try:
+        # 1) Bytes -> S3 (optional).
+        if raw is not None and storage.enabled():
+            key = f"{slug or 'global'}/{document_id}/{filename}"
+            s3_uri = storage.put(key, raw, mime or "application/octet-stream")
 
-    # 2) Record the document.
-    body = _extract_text(raw, text, mime)
-    docs_repo.create_document(
-        document_id=document_id,
-        entity_uuid=entity_uuid,
-        title=filename,
-        s3_uri=s3_uri,
-        source_system=source_system,
-        doc_type=doc_type or (mime or None),
-        sensitivity_level=sensitivity_level,
-        message_id=message_id,
-        metadata={"filename": filename, "mime": mime},
-        body_text=body,
-    )
+        # 2) Record the document.
+        body = _extract_text(raw, text, mime)
+        docs_repo.create_document(
+            document_id=document_id,
+            entity_uuid=entity_uuid,
+            title=filename,
+            s3_uri=s3_uri,
+            source_system=source_system,
+            doc_type=doc_type or (mime or None),
+            sensitivity_level=sensitivity_level,
+            message_id=message_id,
+            metadata={"filename": filename, "mime": mime},
+            body_text=body,
+        )
+        recorded = True
 
-    # 3) Chunk + create rows + embed.
-    chunks, embedded = _reindex(
-        entity_uuid=entity_uuid, slug=slug, region=region, document_id=document_id,
-        body=body, sensitivity_level=sensitivity_level, source_system=source_system,
-    )
+        # 3) Chunk + create rows + embed.
+        chunks, embedded = _reindex(
+            entity_uuid=entity_uuid, slug=slug, region=region, document_id=document_id,
+            body=body, sensitivity_level=sensitivity_level, source_system=source_system,
+        )
+    except Exception:
+        _discard_partial(document_id, s3_uri, recorded)
+        raise
 
     return {
         "document_id": document_id,

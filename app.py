@@ -265,9 +265,9 @@ def _asset_version() -> int:
     """A version stamp that changes whenever a static asset changes, so browsers
     fetch fresh JS/CSS after a deploy instead of serving a stale cached copy."""
     latest = 0.0
-    for name in ("app.js", "style.css", "voice.js", "meeting.js", "bills.js", "register.js", "business.js", "tasks.js", "context.js", "model.js", "files.js", "jobs.js", "artefacts.js", "library.js"):
+    for path in (_BASE_DIR / "static").glob("*.[cj]s*"):
         try:
-            latest = max(latest, (_BASE_DIR / "static" / name).stat().st_mtime)
+            latest = max(latest, path.stat().st_mtime)
         except OSError:
             pass
     return int(latest)
@@ -293,6 +293,13 @@ def index(request: Request):
             "v": _asset_version(),
         },
     )
+
+
+# Each tab has its own URL (static/hermes-router.js). A reload or deep link on
+# one of these paths serves the same page; the router then opens that tab.
+for _tab in ("agent", "system", "billing", "meetings", "context", "tasks",
+             "files", "jobs", "artifacts", "usage", "settings"):
+    app.add_api_route(f"/{_tab}", index, methods=["GET"], include_in_schema=False)
 
 
 def _context_enabled_for_template() -> bool:
@@ -898,10 +905,16 @@ async def upload_documents(request: Request):
                 source_system=source_system,
                 sensitivity_level=sensitivity,
             )
+        # A failed file is rolled back whole by ingest_document; files earlier
+        # in the same request are already saved, so `saved` names them rather
+        # than letting the error imply the entire batch was lost.
         except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
+            return JSONResponse({"error": str(exc), "failed": upload.filename, "saved": out}, status_code=400)
         except Exception as exc:  # noqa: BLE001
-            return JSONResponse({"error": f"Ingest failed: {exc}"}, status_code=500)
+            return JSONResponse(
+                {"error": f"Ingest failed: {exc}", "failed": upload.filename, "saved": out},
+                status_code=500,
+            )
         out.append({"filename": upload.filename, **result})
     return {"documents": out, "entity_id": business_slug}
 

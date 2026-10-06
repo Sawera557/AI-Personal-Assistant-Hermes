@@ -128,13 +128,46 @@ def test_a_dry_background_model_retries_on_another_nvidia_model(monkeypatch):
     assert all(models.provider_of(m) == "nvidia" for m in calls)
 
 
+def test_a_retired_background_model_falls_through_to_the_next(monkeypatch):
+    """NIM answers 410 Gone once a model reaches end of life. That must move the
+    call to the next model, not surface as a bug — a retired default once
+    stopped memory extraction outright."""
+    import openai
+
+    calls = []
+
+    def fake_openai(provider, model_id, system, user_message, max_tokens):
+        calls.append(model_id)
+        if len(calls) == 1:
+            raise openai.APIStatusError(
+                "The model has reached its end of life",
+                response=httpx.Response(410, request=httpx.Request("POST", "https://x")),
+                body=None,
+            )
+        return '{"ok": true}'
+
+    monkeypatch.setattr(llm_json, "_call_openai_protocol", fake_openai)
+
+    out = llm_json.call_json(
+        system="s", user_message="u", max_tokens=50, fallback_key="_raw",
+    )
+    assert out == {"ok": True}
+    assert len(calls) == 2 and calls[0] != calls[1]
+
+
+def test_retired_model_is_not_offered_or_used_in_the_background():
+    gone = "deepseek-ai/deepseek-v4-flash-0731"
+    assert gone not in {m["id"] for m in models.MODEL_OPTIONS}
+    assert gone not in models.BACKGROUND_MODELS
+
+
 def test_one_dry_nim_key_does_not_disable_the_other_models():
     """NIM issues a key per model, so exhaustion is per key. A dry Kimi balance
-    must not take DeepSeek and Nemotron down with it."""
+    must not take DiffusionGemma and Nemotron down with it."""
     kimi = "moonshotai/kimi-k3"
     credits.note_failure(credits.scope_for("nvidia", kimi), _credit_error())
     assert not models.is_available(kimi)
-    assert models.is_available("deepseek-ai/deepseek-v4-flash-0731")
+    assert models.is_available("google/diffusiongemma-26b-a4b-it")
     assert models.background_model() != kimi
 
 
@@ -246,3 +279,25 @@ def test_a_genuine_bug_is_raised_not_retried_across_every_model(monkeypatch):
     with pytest.raises(TypeError):
         llm_json.call_json(system="s", user_message="u", max_tokens=50, fallback_key="_raw")
     assert len(calls) == 1
+
+
+def test_background_calls_switch_nim_reasoning_off(monkeypatch):
+    """Left on, Nemotron writes its reasoning into `content` and the caller
+    parses "Here's a thinking process: …" instead of the answer."""
+    sent = {}
+
+    class _Completions:
+        def create(self, **kw):
+            sent.update(kw)
+            msg = type("M", (), {"content": '{"ok": true}'})()
+            return type("R", (), {"choices": [type("C", (), {"message": msg})()]})()
+
+    fake_client = type("Cli", (), {"chat": type("Chat", (), {"completions": _Completions()})()})()
+    monkeypatch.setattr(llm_json, "_openai_compatible", lambda provider, model_id: fake_client)
+
+    llm_json._call_openai_protocol("nvidia", "nvidia/nemotron-3.5-lightning-30b-a3b", "s", "u", 50)
+    assert sent["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+    sent.clear()
+    llm_json._call_openai_protocol("nvidia", "moonshotai/kimi-k3", "s", "u", 50)
+    assert "extra_body" not in sent  # Kimi rejects the toggle
