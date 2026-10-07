@@ -1,0 +1,112 @@
+/* Hermes v2 · File Explorer motion layer (same language as the System tab) */
+html.pro .files-view { --ax: 127, 220, 255; --ax-amber: 255, 182, 77; --ax-ink: #eafaff; --ax-dim: rgba(160, 190, 208, .92); --ax-card: rgba(4, 9, 14, .72); --fx-r: 4px; }
+html.pro:not(.holo) .files-view { --ax: 245, 166, 35; --ax-amber: 251, 113, 133; --ax-ink: #f3f4f7; --ax-dim: rgba(170, 178, 192, .92); --ax-card: rgba(18, 21, 28, .8); --fx-r: 12px; }
+
+html.pro .files-view .files-page { position: relative; isolation: isolate; }
+html.pro .files-view .ff-bg { position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+html.pro .files-view .ff-bg .grid {
+  position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(var(--ax), .06) 1px, transparent 1px), linear-gradient(90deg, rgba(var(--ax), .06) 1px, transparent 1px);
+  background-size: 44px 44px; animation: ff-grid 22s linear infinite;
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, #000 15%, transparent 75%); mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, #000 15%, transparent 75%);
+}
+html.pro .files-view .ff-bg .g1, html.pro .files-view .ff-bg .g2 { position: absolute; border-radius: 50%; filter: blur(80px); }
+html.pro .files-view .ff-bg .g1 { width: 42%; aspect-ratio: 1; left: 8%; top: -12%; background: rgb(var(--ax)); opacity: .16; animation: ff-drift1 18s ease-in-out infinite alternate; }
+html.pro .files-view .ff-bg .g2 { width: 28%; aspect-ratio: 1; right: 4%; top: 30%; background: rgb(var(--ax-amber)); opacity: .09; animation: ff-drift2 22s ease-in-out infinite alternate; }
+
+/* header */
+html.pro .files-view .ff-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; margin: 6px 0 22px; flex: none; }
+html.pro .files-view .ff-eyebrow { display: inline-flex; align-items: center; gap: 8px; font: 600 10px/1 "IBM Plex Mono", monospace; letter-spacing: .22em; text-transform: uppercase; color: rgba(var(--ax), .8); white-space: nowrap; animation: ff-fade .6s ease backwards; }
+html.pro .files-view .ff-eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #5be49b; animation: ff-live 2s ease-out infinite; }
+html.pro .files-view .ff-h1 { margin: 10px 0 0; font: 600 clamp(28px, 3.4vw, 44px)/1.05 "Chakra Petch", "IBM Plex Sans", sans-serif; letter-spacing: -.005em; color: var(--ax-ink); }
+html.pro:not(.holo) .files-view .ff-h1 { font-family: "Inter", sans-serif; letter-spacing: -.02em; }
+html.pro .files-view .ff-h1 span { display: inline-block; animation: ff-word .9s cubic-bezier(.16, 1, .3, 1) backwards; }
+html.pro .files-view .ff-stats { display: flex; gap: 1px; background: rgba(var(--ax), .16); border: 1px solid rgba(var(--ax), .18); border-radius: var(--fx-r); overflow: hidden; animation: ff-fade .8s .25s ease backwards; }
+html.pro .files-view .ff-stats div { padding: 9px 14px; background: var(--ax-card); font: 500 9px/1 "IBM Plex Mono", monospace; letter-spacing: .16em; text-transform: uppercase; color: rgba(var(--ax), .65); white-space: nowrap; }
+html.pro .files-view .ff-stats b { display: block; margin-top: 6px; font: 500 17px/1 "IBM Plex Mono", monospace; letter-spacing: 0; color: var(--ax-ink); font-variant-numeric: tabular-nums; }
+
+/* toolbar */
+html.pro .files-view .files-toolbar { padding: 8px 8px 8px 6px; border: 1px solid rgba(var(--ax), .14); background: rgba(var(--ax), .03); border-radius: var(--fx-r); animation: ff-fade .6s .15s ease backwards; }
+html.pro .files-view .crumb { display: inline-flex; align-items: center; height: 28px; padding: 0 10px !important; border-radius: calc(var(--fx-r) - 1px) !important; font: 500 12.5px/1 "IBM Plex Sans", sans-serif; color: var(--ax-dim) !important; transition: background .2s, color .2s; animation: ff-crumb .45s cubic-bezier(.16, 1, .3, 1) backwards; }
+html.pro .files-view .crumb:nth-child(2) { animation-delay: 50ms; } html.pro .files-view .crumb:nth-child(3) { animation-delay: 100ms; } html.pro .files-view .crumb:nth-child(n+4) { animation-delay: 150ms; }
+html.pro .files-view .crumb:hover { background: rgba(var(--ax), .1) !important; color: var(--ax-ink) !important; }
+html.pro .files-view .crumb:last-child { color: var(--ax-ink) !important; background: rgba(var(--ax), .12); box-shadow: inset 0 0 0 1px rgba(var(--ax), .35); }
+html.pro .files-view .crumb + .crumb::before, html.pro .files-view .crumb-sep + .crumb::before { content: none; }
+html.pro .files-view .files-breadcrumb { gap: 2px; }
+html.pro .files-view .files-view-toggle { position: relative; border: 1px solid rgba(var(--ax), .22) !important; border-radius: calc(var(--fx-r) - 1px) !important; background: rgba(var(--ax), .04); }
+html.pro .files-view .files-view-toggle .ff-pill { position: absolute; top: 2px; bottom: 2px; left: 0; width: 0; border-radius: calc(var(--fx-r) - 3px); background: rgba(var(--ax), .22); box-shadow: inset 0 0 0 1px rgba(var(--ax), .55), 0 0 14px rgba(var(--ax), .25); transition: transform .35s cubic-bezier(.16, 1, .3, 1), width .35s; pointer-events: none; }
+html.pro .files-view .files-view-toggle button { position: relative; z-index: 1; height: 30px; padding: 0 12px !important; color: var(--ax-dim) !important; background: none !important; transition: color .2s; }
+html.pro .files-view .files-view-toggle button.active { color: var(--ax-ink) !important; }
+
+/* tiles */
+html.pro .files-view .files-content { perspective: 1200px; overflow-x: hidden !important; }
+html.pro .files-view .files-content.tiles .file-item-body { width: 100% !important; min-width: 0; align-items: center; }
+html.pro .files-view .files-content.tiles .file-item-name { max-width: 100%; white-space: normal !important; overflow: hidden !important; text-overflow: clip !important; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; text-align: center; }
+html.pro .files-view .files-content.tiles .file-item-meta { white-space: normal !important; text-overflow: clip !important; }
+html.pro .files-view .files-content.tiles { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)) !important; gap: 14px !important; padding: 2px 2px 32px; }
+html.pro .files-view .file-item {
+  --tc: var(--ax-ink);
+  position: relative; overflow: hidden; isolation: isolate;
+  border: 1px solid rgba(var(--ax), .14) !important; border-radius: var(--fx-r) !important;
+  background: radial-gradient(220px circle at var(--mx, -400px) var(--my, -400px), rgba(var(--ax), .14), transparent 60%), linear-gradient(180deg, rgba(var(--ax), .05), rgba(var(--ax), .01)), var(--ax-card) !important;
+  transition: border-color .25s, box-shadow .3s, transform .3s cubic-bezier(.16, 1, .3, 1), opacity .3s;
+  animation: ff-in .7s cubic-bezier(.16, 1, .3, 1) backwards; animation-delay: var(--d, 0ms);
+  will-change: transform;
+}
+html.pro .files-view .file-item:hover { border-color: rgba(var(--ax), .5) !important; box-shadow: 0 10px 30px -12px rgba(0, 0, 0, .6), 0 0 26px rgba(var(--ax), .12); }
+html.pro .files-view .file-item::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(105deg, transparent 35%, rgba(var(--ax), .14) 50%, transparent 65%); transform: translateX(-110%); pointer-events: none; }
+html.pro .files-view .file-item:hover::after { animation: ff-sheen .9s ease; }
+html.pro .files-view .files-content.tiles .file-item { padding: 22px 12px 16px !important; gap: 12px !important; min-height: 150px; justify-content: center; }
+html.pro .files-view .file-item-icon { position: relative; display: grid; place-items: center; transition: transform .35s cubic-bezier(.16, 1, .3, 1); }
+html.pro .files-view .files-content.tiles .file-item-icon { width: 64px; height: 64px; border-radius: calc(var(--fx-r) + 2px); background: color-mix(in oklab, var(--tc) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tc) 28%, transparent); }
+html.pro .files-view .files-content.tiles .file-item-icon::before { content: ""; position: absolute; inset: -10px; border-radius: 50%; background: radial-gradient(circle, color-mix(in oklab, var(--tc) 35%, transparent), transparent 70%); opacity: 0; transition: opacity .35s; z-index: -1; }
+html.pro .files-view .files-content.tiles .file-item-icon svg { width: 32px !important; height: 32px !important; filter: drop-shadow(0 0 6px color-mix(in oklab, var(--tc) 45%, transparent)); }
+html.pro .files-view .file-item:hover .file-item-icon { transform: translateY(-4px) scale(1.06); }
+html.pro .files-view .file-item:hover .file-item-icon::before { opacity: 1; }
+html.pro .files-view .file-item.folder:hover .file-item-icon svg { animation: ff-bob 1.4s ease-in-out infinite; }
+html.pro .files-view .file-item-name { font: 500 13px/1.3 "IBM Plex Sans", sans-serif !important; color: var(--ax-ink); }
+html.pro .files-view .file-item-meta { font: 400 10.5px/1.2 "IBM Plex Mono", monospace !important; letter-spacing: .04em; color: var(--ax-dim) !important; }
+html.pro .files-view .files-content.tiles .file-item.folder .file-item-meta { display: inline-flex; align-self: center; padding: 3px 8px; border-radius: 99px; background: rgba(var(--ax), .08); border: 1px solid rgba(var(--ax), .16); }
+html.pro .files-view .file-item.ff-open { animation: ff-open .45s cubic-bezier(.16, 1, .3, 1); }
+html.pro .files-view .file-item .ff-ripple { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: rgba(var(--ax), .45); pointer-events: none; z-index: -1; animation: ff-ripple .6s ease-out forwards; }
+
+/* list */
+html.pro .files-view .files-content.list { gap: 6px !important; padding-bottom: 32px; }
+html.pro .files-view .files-content.list .file-item { padding: 10px 14px !important; gap: 14px !important; animation-name: ff-in-row; }
+html.pro .files-view .files-content.list .file-item-icon { width: 34px; height: 34px; border-radius: var(--fx-r); background: color-mix(in oklab, var(--tc) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tc) 26%, transparent); }
+html.pro .files-view .files-content.list .file-item-icon svg { width: 18px !important; height: 18px !important; }
+html.pro .files-view .files-content.list .file-item:hover .file-item-icon { transform: scale(1.08) rotate(-4deg); }
+html.pro .files-view .files-content.list .file-item:hover { transform: translateX(3px); }
+
+/* folder transition */
+html.pro .files-view .files-content.ff-swap { animation: ff-swap .45s cubic-bezier(.16, 1, .3, 1); }
+
+/* sidebar tree */
+html.pro .files-tree-panel .files-folder-tree button, html.pro .files-tree-panel .files-folder-tree [role="treeitem"] { transition: background .2s, color .2s, transform .2s; }
+html.pro .files-tree-panel .files-folder-tree button:hover { transform: translateX(2px); }
+
+/* empty */
+html.pro .files-view .files-empty .files-empty-icon { animation: ff-float 4s ease-in-out infinite; position: relative; width: 64px; height: 64px; margin: 0 auto; display: grid; place-items: center; border-radius: 50%; background: rgba(var(--ax), .06); }
+html.pro .files-view .files-empty .files-empty-icon::after { content: ""; position: absolute; inset: -10px; border-radius: 50%; border: 1px dashed rgba(var(--ax), .35); animation: ff-spin 14s linear infinite; }
+
+@keyframes ff-word { from { opacity: 0; transform: translateY(.45em) rotateX(-40deg); filter: blur(8px); } }
+@keyframes ff-fade { from { opacity: 0; } }
+@keyframes ff-crumb { from { opacity: 0; transform: translateX(-6px); } }
+@keyframes ff-in { from { opacity: 0; transform: translateY(18px) scale(.94); filter: blur(6px); } }
+@keyframes ff-in-row { from { opacity: 0; transform: translateX(-14px); filter: blur(4px); } }
+@keyframes ff-swap { from { opacity: .2; transform: translateY(8px); } }
+@keyframes ff-open { 40% { transform: scale(.96); } }
+@keyframes ff-ripple { to { width: 360px; height: 360px; margin: -180px 0 0 -180px; opacity: 0; } }
+@keyframes ff-sheen { to { transform: translateX(110%); } }
+@keyframes ff-bob { 50% { transform: translateY(-2px) rotate(-3deg); } }
+@keyframes ff-float { 50% { transform: translateY(-6px); } }
+@keyframes ff-spin { to { transform: rotate(360deg); } }
+@keyframes ff-live { 0% { box-shadow: 0 0 0 0 rgba(91, 228, 155, .6); } 100% { box-shadow: 0 0 0 8px rgba(91, 228, 155, 0); } }
+@keyframes ff-grid { to { background-position: 44px 44px; } }
+@keyframes ff-drift1 { to { transform: translate(22%, 14%) scale(1.15); } }
+@keyframes ff-drift2 { to { transform: translate(-30%, -16%) scale(.9); } }
+
+@media (max-width: 720px) { html.pro .files-view .ff-stats { display: none; } html.pro .files-view .files-content.tiles { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important; } }
+@media (prefers-reduced-motion: reduce) {
+  html.pro .files-view *, html.pro .files-view *::before, html.pro .files-view *::after { animation: none !important; transition-duration: .01ms !important; }
+}

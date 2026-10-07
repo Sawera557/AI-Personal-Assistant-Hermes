@@ -9,10 +9,66 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-holo.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/home-hud.css?v={{ v }}" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/hermes-pro.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-views.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-stock.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-v2.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-schema-fx.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-files-fx.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-theme-fx.css?v={{ v }}" />
+  <script>
+    // Skin is chosen in the top bar and remembered; Holo by default, Stock = pro without holo.
+    // Set before first paint so the page never flashes the wrong skin.
+    document.documentElement.classList.add("pro", "has-topbar");
+    document.documentElement.classList.toggle("holo", localStorage.getItem("hermes.skin") !== "stock");
+  </script>
 </head>
 <body>
-  <div class="app" id="app" data-view="agent">
+  <header class="hx-topbar" id="hx-topbar" role="toolbar" aria-label="Display">
+    <div class="hx-tb-brand">
+      <span class="hx-tb-mark"><svg viewBox="0 0 32 32" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square"><path d="M9 6v20M23 6v20M9 16h14"/></svg></span>
+      <span class="hx-tb-word">HERMES</span>
+    </div>
+    <span class="hx-tb-sep"></span>
+    <label class="hx-tb-group hx-tb-biz" title="Active business — applies to every tab">
+      <span class="hx-tb-k">Business</span>
+      <select id="hermes-biz-select-top" class="hx-tb-select" aria-label="Active business"></select>
+    </label>
+    <button type="button" class="hx-tb-attn" id="hx-tb-attn" title="Open Home">
+      <i class="hud-led" id="hx-status-led"></i><span id="hx-status">Systems check</span>
+    </button>
+    <span class="hx-tb-sep"></span>
+    <div class="hx-tb-group">
+      <span class="hx-tb-k">Skin</span>
+      <div class="hx-tb-seg" role="group" aria-label="Skin">
+        <button type="button" data-skin="holo">Holo</button>
+        <button type="button" data-skin="stock">Stock</button>
+      </div>
+    </div>
+    <span class="hx-tb-sep"></span>
+    <div class="hx-tb-group" id="hx-tb-data" title="Connecting to the Hermes API…">
+      <span class="hx-tb-k">Data</span>
+      <span class="hx-tb-dot"></span>
+      <span class="hx-tb-v" id="hx-tb-status">Connecting…</span>
+    </div>
+    <div class="hx-tb-end">
+      <span class="hx-tb-date" id="hx-date">—</span>
+      <button type="button" class="hx-tb-btn" id="hx-tb-palette" title="Command palette"><span class="hx-tb-kbd">Ctrl K</span></button>
+      <button type="button" class="hx-tb-btn hx-tb-icon" id="hx-tb-replay" title="Replay intro" aria-label="Replay intro">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M4 4v6h6"/><path d="M5.5 15a7 7 0 1 0 1.6-7.3L4 10"/></svg>
+      </button>
+      <button type="button" class="hx-tb-present" id="hx-tb-present" title="Full screen">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/></svg>Present
+      </button>
+    </div>
+  </header>
+
+  <div class="app" id="app" data-view="home">
     <div class="overlay" id="overlay"></div>
 
     <!--
@@ -25,11 +81,19 @@
       <!-- Icon strip: brand + section tabs + collapse toggle -->
       <div class="icon-strip">
         <div class="strip-brand">
-          <div class="logo">⚡</div>
+          <div class="logo hx-mark"><svg viewBox="0 0 32 32" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"><path d="M9 6v20M23 6v20M9 16h14"/><path d="M4 11l5-5M28 21l-5 5" stroke-width="1.4" opacity=".7"/></svg></div>
         </div>
 
         <div class="strip-tabs">
-          <button class="strip-tab active" type="button" data-view="agent" title="AI Agent">
+          <button class="strip-tab active" type="button" data-view="home" title="Home">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+              <circle cx="12" cy="12" r="3.2"/>
+              <circle cx="12" cy="12" r="7" stroke-dasharray="3 4"/>
+              <circle cx="12" cy="12" r="10.2" stroke-dasharray="1.5 5" opacity=".8"/>
+            </svg>
+            <span>Home</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="agent" title="AI Agent">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="4" y="8" width="16" height="12" rx="2"/>
               <path d="M12 8V4"/>
@@ -38,6 +102,13 @@
               <path d="M2 14h2M20 14h2"/>
             </svg>
             <span>Agent</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="schema" title="How Hermes works">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2.5" y="9.5" width="5" height="5"/><rect x="16.5" y="3.5" width="5" height="5"/><rect x="16.5" y="15.5" width="5" height="5"/>
+              <path d="M7.5 12h4M11.5 6v12M11.5 6h5M11.5 18h5"/>
+            </svg>
+            <span>System</span>
           </button>
           <button class="strip-tab" type="button" data-view="bills" title="Billing &amp; Invoices">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -143,66 +214,6 @@
             <p class="hint" id="convos-empty">No conversations yet.</p>
           </div>
 
-          <div class="panel">
-            <h2>Model</h2>
-            <select id="model-select" class="voice-select" aria-label="Agent model">
-              {% for m in model_options %}
-              <option value="{{ m.id }}" {% if m.id == active_model %}selected{% endif %}
-                      {% if m.available is defined and not m.available %}disabled{% endif %}>{{ m.label }}</option>
-              {% endfor %}
-            </select>
-            <p class="hint" id="model-select-status" hidden></p>
-          </div>
-
-          <div class="panel">
-            <h2>Business Context</h2>
-            <div class="context-toggle-row">
-              <span class="context-toggle-state" id="context-toggle-label">{% if context_enabled %}On{% else %}Off{% endif %}</span>
-              <label class="tk-toggle" id="context-toggle" title="{% if context_enabled %}On{% else %}Off{% endif %}">
-                <input type="checkbox" id="context-toggle-input"
-                       aria-label="Business context"
-                       {% if context_enabled %}checked{% endif %}>
-                <span class="tk-toggle-track"></span>
-              </label>
-            </div>
-            <p class="hint" id="context-select-status" hidden></p>
-          </div>
-
-          <div class="panel">
-            <h2>Apps access</h2>
-            <div class="context-toggle-row">
-              <span class="context-toggle-state" id="apps-toggle-label">{% if apps_enabled %}On{% else %}Off{% endif %}</span>
-              <label class="tk-toggle" id="apps-toggle" title="{% if apps_enabled %}On{% else %}Off{% endif %}">
-                <input type="checkbox" id="apps-toggle-input"
-                       aria-label="Apps access"
-                       {% if apps_enabled %}checked{% endif %}>
-                <span class="tk-toggle-track"></span>
-              </label>
-            </div>
-            <p class="hint" id="apps-select-status" hidden></p>
-          </div>
-
-          <div class="panel">
-            <h2>Reasoning effort</h2>
-            <select id="effort-select" class="voice-select" aria-label="Reasoning effort" data-default="{{ active_effort }}">
-              <option value="auto" selected>Auto — pick per message</option>
-              <option value="low">Low — fastest</option>
-              <option value="medium">Medium — balanced</option>
-              <option value="high">High — deepest</option>
-            </select>
-          </div>
-
-          {% if voice_enabled %}
-          <div class="panel">
-            <h2>Voice</h2>
-            <select id="voice-select" class="voice-select" aria-label="Voice">
-              {% for v in voices %}
-              <option value="{{ v }}" {% if v == voice %}selected{% endif %}>{{ v|capitalize }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          {% endif %}
-
           <details class="panel apps-panel">
             <summary>
               <span class="apps-title">Connected apps</span>
@@ -223,7 +234,7 @@
 
           {% if web_search %}
           <div class="panel push-bottom">
-            <p class="hint">🌐 Web search enabled</p>
+            <p class="hint">Web search enabled</p>
           </div>
           {% endif %}
         </div>
@@ -236,7 +247,7 @@
             <p class="biz-not-connected" id="hermes-biz-badge-bills" hidden></p>
           </div>
 
-          <div class="bills-panel-head">
+          <div class="bills-panel-head" hidden>
             <div class="bills-panel-icon">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v18l2-1 2 1 2-1 2 1 2-1 2 1V3l-2 1-2-1-2 1-2-1-2 1-2-1z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg>
             </div>
@@ -251,21 +262,6 @@
             <p class="hint" style="margin-top:6px;">No bills yet. Upload from the main view.</p>
           </div>
 
-          <div class="panel">
-            <h2>Features</h2>
-            <ul class="feature-list">
-              <li>Line-item extraction</li>
-              <li>Vendor recognition</li>
-              <li>Due date detection</li>
-              <li>Total &amp; tax parsing</li>
-            </ul>
-          </div>
-
-          <div class="panel push-bottom">
-            <div class="status-chip">
-              <span class="status-dot"></span>Coming soon
-            </div>
-          </div>
         </div>
 
         <!-- Meeting Copilot panel: sidebar metadata for the Meeting section -->
@@ -302,7 +298,7 @@
           </div>
 
           <div class="panel push-bottom">
-            <p class="hint">Notes and files you add here are chunked, embedded, and searchable by Hermes in chat via `search_business_knowledge` — kept separate per business.</p>
+            <p class="hint">Hermes can search the notes and files you add here while chatting. Each business keeps its own.</p>
           </div>
         </div>
 
@@ -315,16 +311,6 @@
           </div>
 
           <button id="task-new-btn" class="ghost new-convo">＋ New task</button>
-
-          <div class="panel">
-            <h2>How it works</h2>
-            <ul class="feature-list">
-              <li>Runs on your schedule, unattended</li>
-              <li>Scoped to one business &amp; its apps</li>
-              <li>Read-only by default — safe to run</li>
-              <li>Every run is saved &amp; reviewable</li>
-            </ul>
-          </div>
 
           <div class="panel push-bottom">
             <p class="hint" id="tasks-cron-hint">Tasks fire when your scheduler pings <code>/api/scheduled-tasks/run-due</code>. Use <strong>Run now</strong> to test any task instantly.</p>
@@ -357,16 +343,6 @@
 
           <button id="jobs-refresh-btn" class="ghost new-convo">↻ Refresh</button>
 
-          <div class="panel">
-            <h2>How it works</h2>
-            <ul class="feature-list">
-              <li>Runs on a schedule, unattended</li>
-              <li><strong>Start</strong> to run now, <strong>Stop</strong> to cancel</li>
-              <li>Every run is saved &amp; reviewable</li>
-              <li>Status: running · finished · failed</li>
-            </ul>
-          </div>
-
           <div class="panel push-bottom">
             <p class="hint" id="jobs-cron-hint">Jobs fire when your scheduler pings <code>/api/jobs/run-due</code>. Use <strong>Start</strong> to run any job instantly.</p>
           </div>
@@ -382,16 +358,6 @@
 
           <button id="artefacts-refresh-btn" class="ghost new-convo">↻ Refresh</button>
 
-          <div class="panel">
-            <h2>What's here</h2>
-            <ul class="feature-list">
-              <li><strong>Artifacts</strong> — live views that re-sync on open</li>
-              <li><strong>Files</strong> — generated reports/sheets/PDFs</li>
-              <li>Files stay re-downloadable after links expire</li>
-              <li>All created by the AI from chat</li>
-            </ul>
-          </div>
-
           <div class="panel push-bottom">
             <p class="hint">Open an artifact to see current data (or <strong>Sync now</strong>). Files re-download with a fresh link every time.</p>
           </div>
@@ -406,14 +372,6 @@
 
           <button id="pricing-refresh-btn" class="ghost new-convo">↻ Refresh</button>
 
-          <div class="panel">
-            <h2>How it's counted</h2>
-            <ul class="feature-list">
-              <li>Every reply shows its own token/cost line</li>
-              <li>Cost = tokens × per-model price</li>
-              <li>Rates live in <code>hermes/models.py</code></li>
-            </ul>
-          </div>
         </div>
 
       </div><!-- /content-panel -->
@@ -430,10 +388,69 @@
         <button class="icon-btn plus" id="reset-top" aria-label="New conversation">＋</button>
       </header>
 
+      <div class="ab" id="agent-bar" role="toolbar" aria-label="Agent settings">
+        <label class="ab-f" title="Agent model — applies to every conversation">
+          <span class="ab-k">Model</span>
+          <select id="model-select" aria-label="Agent model">
+            {% for m in model_options %}
+            <option value="{{ m.id }}" {% if m.id == active_model %}selected{% endif %}
+                    {% if m.available is defined and not m.available %}disabled{% endif %}>{{ m.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="ab-f" title="Reasoning effort — Auto sizes thinking to each question. Applies to your next message.">
+          <span class="ab-k">Reasoning</span>
+          <select id="effort-select" aria-label="Reasoning effort" data-default="{{ active_effort }}">
+            <option value="auto" selected>Auto</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+        {% if voice_enabled %}
+        <label class="ab-f" title="Voice used for voice calls">
+          <span class="ab-k">Voice</span>
+          <select id="voice-select" aria-label="Voice">
+            {% for vo in voices %}
+            <option value="{{ vo }}" {% if vo == voice %}selected{% endif %}>{{ vo|capitalize }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endif %}
+        <div class="ab-t" title="Off: Hermes stops carrying memory, the context pack and documents into each message. Cheaper; apps stay connected.">
+          <span class="ab-k">Business context</span>
+          <label class="tk-toggle" id="context-toggle" title="{% if context_enabled %}On{% else %}Off{% endif %}">
+            <input type="checkbox" id="context-toggle-input" aria-label="Business context" {% if context_enabled %}checked{% endif %}>
+            <span class="tk-toggle-track"></span>
+          </label>
+          <span class="ab-v" id="context-toggle-label">{% if context_enabled %}On{% else %}Off{% endif %}</span>
+        </div>
+        <div class="ab-t" title="Off: Hermes can't email, reach Drive/Calendar/Jira/WhatsApp, search the web or read files. Biggest saving.">
+          <span class="ab-k">Apps access</span>
+          <label class="tk-toggle" id="apps-toggle" title="{% if apps_enabled %}On{% else %}Off{% endif %}">
+            <input type="checkbox" id="apps-toggle-input" aria-label="Apps access" {% if apps_enabled %}checked{% endif %}>
+            <span class="tk-toggle-track"></span>
+          </label>
+          <span class="ab-v" id="apps-toggle-label">{% if apps_enabled %}On{% else %}Off{% endif %}</span>
+        </div>
+        <div class="ab-status" aria-live="polite">
+          <p class="hint" id="model-select-status" hidden></p>
+          <p class="hint" id="context-select-status" hidden></p>
+          <p class="hint" id="apps-select-status" hidden></p>
+        </div>
+      </div>
+
       <div id="messages" class="messages">
         <div class="msg assistant">
           <div class="bubble">Hi! I'm connected to your business apps. How can I help you?</div>
         </div>
+      </div>
+
+      <div class="v2-starters" id="v2-starters" aria-label="Suggested prompts">
+        <button type="button" class="v2-starter">What needs my attention today?</button>
+        <button type="button" class="v2-starter">Which bills are due this week?</button>
+        <button type="button" class="v2-starter">Summarize yesterday's emails</button>
+        <button type="button" class="v2-starter">What meetings do I have tomorrow?</button>
       </div>
 
       <form id="composer" class="composer">
@@ -505,14 +522,17 @@
              is Hermes' own store of the original PDFs and emails, which is what
              lets it resolve the register's unverified amounts. -->
         <div class="reg-tabs" id="reg-tabs">
+          <button class="reg-tab" data-mode="overview" onclick="setBillingMode('overview')">Overview</button>
           <button class="reg-tab is-active" data-mode="register" onclick="setBillingMode('register')">
             Register <span class="reg-tab-count" id="reg-count-lines"></span>
           </button>
           <button class="reg-tab" data-mode="documents" onclick="setBillingMode('documents')">
             Documents <span class="reg-tab-count" id="reg-count-docs"></span>
           </button>
-          <a class="reg-sheet-link" id="reg-sheet-link" target="_blank" rel="noopener noreferrer">Open the Sheet →</a>
+          <a class="reg-sheet-link" id="reg-sheet-link" target="_blank" rel="noopener noreferrer">Open in Google Sheets ↗</a>
         </div>
+
+        <div class="bo" id="bill-overview" hidden></div>
 
         <!-- Stats row — rendered by bills.js -->
         <div class="bills-stats-row" id="bills-stats-row"></div>
@@ -633,10 +653,11 @@
         <!-- Not-connected notice: meeting copilot always needs ONE specific business -->
         <div class="meeting-need-biz" id="meeting-need-biz" hidden>
           <div class="meeting-need-biz-card">
-            <div style="font-size:26px">🏢</div>
+            <div class="v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="1"/><path d="M9 7h2M13 7h2M9 11h2M13 11h2M10 21v-4h4v4"/></svg></div>
             <h3>Pick a business to start</h3>
-            <p class="hint">The meeting copilot is always scoped to one business — select it from the sidebar (or the dropdown above on mobile) so guidance stays grounded in the right records.</p>
-            <p class="hint">Your past meetings across every business are listed in the sidebar — open one to jump straight to it.</p>
+            <p class="hint">Meeting Copilot works on one business at a time, so its guidance comes only from that business's records.</p>
+            <button type="button" class="v2-btn" id="v2-meeting-pick">Choose a business</button>
+            <p class="hint">Past meetings for every business are listed in the sidebar.</p>
           </div>
         </div>
 
@@ -709,6 +730,160 @@
       </div>
     </main>
 
+    <!-- ── Main area: Home HUD ────────────────────────────────────── -->
+    <main class="home-view" id="home-view">
+      <div class="hud">
+        <section class="hud-col">
+          <div class="hud-mod hud-clock">
+            <div class="hud-dial-wrap">
+              <svg class="hud-dial" viewBox="0 0 120 120">
+                <circle class="trk" cx="60" cy="60" r="52"></circle>
+                <circle class="arc" id="hud-day-arc" cx="60" cy="60" r="52" stroke-dasharray="0 999"></circle>
+                <circle class="tick" cx="60" cy="60" r="43" stroke-dasharray="1 7"></circle>
+                <circle class="arc sec" id="hx-sec-arc" cx="60" cy="60" r="46" stroke-dasharray="0 999"></circle>
+              </svg>
+              <div class="hud-dial-center">
+                <div class="hud-month" id="hud-month">—</div>
+                <div class="hud-daynum" id="hud-daynum">—</div>
+              </div>
+            </div>
+            <div>
+              <div class="hud-time" id="hud-time">--:--:--</div>
+              <div class="hud-weekday" id="hud-weekday">—</div>
+              <div class="hud-zone" id="hud-zone">—</div>
+            </div>
+          </div>
+
+          <div class="hud-mod">
+            <h3>Knowledge base</h3>
+            <div class="hud-minis">
+              <div class="hud-mini">
+                <div class="hud-mini-wrap">
+                  <svg class="hud-dial" viewBox="0 0 76 76">
+                    <circle class="trk" cx="38" cy="38" r="32" stroke-width="5"></circle>
+                    <circle class="arc" id="hud-docs-arc" cx="38" cy="38" r="32" stroke-width="5" stroke-dasharray="0 999"></circle>
+                  </svg>
+                  <div class="hud-mini-val" id="hud-docs-val">·</div>
+                </div>
+                <div class="hud-mini-label">Documents</div>
+              </div>
+              <div class="hud-mini">
+                <div class="hud-mini-wrap">
+                  <svg class="hud-dial" viewBox="0 0 76 76">
+                    <circle class="trk" cx="38" cy="38" r="32" stroke-width="5"></circle>
+                    <circle class="arc amber" id="hud-mem-arc" cx="38" cy="38" r="32" stroke-width="5" stroke-dasharray="0 999"></circle>
+                  </svg>
+                  <div class="hud-mini-val" id="hud-mem-val">·</div>
+                </div>
+                <div class="hud-mini-label">Memories</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="hud-mod">
+            <h3>Credit load</h3>
+            <div class="hud-meter-top">
+              <div class="hud-meter-val" id="hud-cost">—</div>
+              <div class="hud-meter-sub" id="hud-cost-cap">—</div>
+            </div>
+            <div class="hud-bar"><i id="hud-cost-bar" style="width:0"></i></div>
+            <div class="hud-split" id="hud-tokens"></div>
+          </div>
+
+          <div class="hud-mod">
+            <h3>Next scheduled runs</h3>
+            <div class="hud-list hud-list-compact" id="hud-sched"></div>
+            <button type="button" class="hud-more" data-goto="tasks">View all →</button>
+          </div>
+        </section>
+
+        <section class="hud-core">
+          <div class="hud-spokes left">
+            <button class="hud-spoke" type="button" data-goto="agent">
+              <span class="lbl">AI Agent</span><span class="ln"></span><span class="dot"></span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="bills">
+              <span class="lbl">Billing</span><span class="cnt" id="hud-c-bills">·</span><span class="ln"></span><span class="dot"></span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="meeting">
+              <span class="lbl">Meetings</span><span class="ln"></span><span class="dot"></span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="context">
+              <span class="lbl">Context</span><span class="cnt" id="hud-c-context">·</span><span class="ln"></span><span class="dot"></span>
+            </button>
+          </div>
+
+          <div class="hud-rings" id="hud-rings">
+            <div class="pl" data-depth="5">
+              <svg class="r-outer" viewBox="0 0 400 400">
+                <circle class="ring-faint" cx="200" cy="200" r="197"></circle>
+                <circle class="ring-seg" cx="200" cy="200" r="188" stroke-dasharray="120 60 40 60 210 90 30 60 180 332"></circle>
+                <circle class="ring-faint" cx="200" cy="200" r="180" stroke-dasharray="2 6"></circle>
+              </svg>
+            </div>
+            <div class="pl" data-depth="9"><svg class="r-ticks" id="hx-ticks" viewBox="0 0 400 400"></svg></div>
+            <div class="pl hx-sweep" data-depth="11"></div>
+            <div class="pl" data-depth="14">
+              <svg class="r-mid" viewBox="0 0 400 400">
+                <circle class="ring-seg-dim" cx="200" cy="200" r="142" stroke-dasharray="60 24 8 24"></circle>
+                <circle class="ring-amber" cx="200" cy="200" r="132" stroke-dasharray="44 785"></circle>
+              </svg>
+            </div>
+            <div class="pl hx-orbit-wrap" data-depth="18"><div class="hx-orbit" id="hx-orbit"></div></div>
+            <div class="pl" data-depth="22">
+              <svg class="r-in" viewBox="0 0 400 400">
+                <circle class="ring-seg" cx="200" cy="200" r="112" stroke-dasharray="4 10"></circle>
+                <circle class="ring-faint" cx="200" cy="200" r="102"></circle>
+              </svg>
+            </div>
+            <div class="hud-core-face pl" data-depth="26">
+              <div class="hud-core-label" id="hx-core-label">Hermes online</div>
+              <div class="hud-core-biz" id="hud-core-biz">All businesses</div>
+              <div class="hx-core-sub" id="hx-core-sub"></div>
+            </div>
+            <div class="hud-core-cap">Central interface</div>
+          </div>
+          <div class="hud-spokes">
+            <button class="hud-spoke" type="button" data-goto="tasks">
+              <span class="dot"></span><span class="ln"></span><span class="cnt" id="hud-c-tasks">·</span><span class="lbl">Tasks</span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="files">
+              <span class="dot"></span><span class="ln"></span><span class="lbl">Files</span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="jobs">
+              <span class="dot"></span><span class="ln"></span><span class="cnt" id="hud-c-jobs">·</span><span class="lbl">Jobs</span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="artefacts">
+              <span class="dot"></span><span class="ln"></span><span class="lbl">Artifacts</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="hud-col">
+          <div class="hud-mod">
+            <h3>Connected apps</h3>
+            <div class="hud-conns" id="hud-conns"></div>
+          </div>
+          <div class="hud-mod">
+            <h3>Alerts · Hermes runs</h3>
+            <div class="hud-list hud-list-compact" id="hud-alerts"></div>
+            <button type="button" class="hud-more" data-goto="tasks">View all →</button>
+          </div>
+        </section>
+      </div>
+      <footer class="hud-ticker" id="hud-ticker"></footer>
+      <div class="hx-dock">
+        <form class="hx-ask" id="hx-ask" autocomplete="off">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+          <input id="hx-ask-input" type="text" placeholder="Ask Hermes…" aria-label="Ask Hermes" />
+          <button type="submit" class="hx-ask-go">Engage</button>
+          </form>
+      </div>
+    </main>
+
+    <!-- ── Main area: How it works (live schematic) ── -->
+    <main class="schema-view" id="schema-view"></main>
+
     <!-- ── Main area: Business Context ────────────────────────────── -->
     <main class="context-view" id="context-view">
       <!-- Mobile topbar -->
@@ -727,12 +902,13 @@
           </div>
           <div class="context-header-actions">
             <input type="file" id="context-file-input" accept=".md,.markdown,text/markdown" hidden />
-            <button type="button" id="context-upload-btn" class="ghost">📄 Upload .md file</button>
+            <button type="button" id="context-upload-btn" class="ghost">Upload .md file</button>
           </div>
         </div>
 
-        <p class="hint" id="context-scope-hint" hidden>🌐 "All Businesses" is selected — this will be saved as a <strong>global</strong> note visible to every business, not just one.</p>
+        <p class="hint" id="context-scope-hint" hidden>"All Businesses" is selected — this will be saved as a <strong>global</strong> note visible to every business, not just one.</p>
 
+        <details class="v2-add" id="v2-context-add"><summary>＋ Add a note</summary>
         <div class="context-add" id="context-add">
           <input type="text" id="context-paste-title" class="context-title-input" placeholder="Title (e.g. &quot;Lease terms overview&quot;)" autocomplete="off" />
           <textarea id="context-paste-body" placeholder="Paste markdown context here…" rows="4"></textarea>
@@ -747,6 +923,7 @@
           </div>
           <p id="context-result" class="hint"></p>
         </div>
+        </details>
 
         <div class="context-subtabs" role="tablist">
           <button type="button" class="context-subtab active" id="context-subtab-files" data-subview="files">Files</button>
@@ -814,6 +991,7 @@
           <div>
             <h2 class="tasks-pg-title">Scheduled tasks</h2>
             <p class="tasks-pg-sub">Run Hermes on a schedule — briefings, triage, sweeps — automatically.</p>
+            <p class="v2-tz" id="v2-tz"></p>
           </div>
           <button class="tasks-new-btn" id="task-new-btn-main" type="button">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -823,7 +1001,7 @@
 
         <div class="tasks-list" id="tasks-list"></div>
         <div class="tasks-empty" id="tasks-empty" hidden>
-          <div class="tasks-empty-icon">⏰</div>
+          <div class="tasks-empty-icon v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 1.5"/></svg></div>
           <h3>No scheduled tasks yet</h3>
           <p class="hint">Create one to have Hermes run on a schedule — a daily briefing, inbox triage, a rent-arrears sweep, whatever you'd otherwise ask in chat every day.</p>
           <button class="tasks-new-btn" id="task-new-btn-empty" type="button">＋ Create your first task</button>
@@ -1017,7 +1195,7 @@
         <div class="files-content" id="files-content"></div>
         <p class="hint" id="files-loading" hidden>Loading…</p>
         <div class="files-empty" id="files-empty" hidden>
-          <div class="files-empty-icon">📁</div>
+          <div class="files-empty-icon v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
           <h3>This folder is empty</h3>
           <p class="hint">Files uploaded, generated, or received for this business will appear here.</p>
         </div>
@@ -1045,9 +1223,9 @@
 
         <div class="tasks-list" id="jobs-list"></div>
         <div class="tasks-empty" id="jobs-empty" hidden>
-          <div class="tasks-empty-icon">⚙️</div>
+          <div class="tasks-empty-icon v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4h4a2 2 0 0 1 2 2v2h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3V6a2 2 0 0 1 2-2z"/><path d="M8 8V6h8v2"/></svg></div>
           <h3>No jobs yet</h3>
-          <p class="hint">Jobs are set up in the backend. Once the database migration has run, the Google Reviews Scraper appears here.</p>
+          <p class="hint">Background jobs like the Google Reviews scraper appear here once they are set up for your account.</p>
         </div>
       </div>
 
@@ -1108,15 +1286,15 @@
 
         <!-- Sub-tabs: Artefacts (live) vs Files (generated downloads) -->
         <div class="lib-subtabs" role="tablist">
-          <button class="lib-subtab active" type="button" data-libview="artefacts" role="tab">🎨 Artifacts</button>
-          <button class="lib-subtab" type="button" data-libview="files" role="tab">📄 Files</button>
+          <button class="lib-subtab active" type="button" data-libview="artefacts" role="tab">Artifacts</button>
+          <button class="lib-subtab" type="button" data-libview="files" role="tab">Files</button>
         </div>
 
         <!-- Artefacts sub-list -->
         <div id="lib-artefacts">
           <div class="tasks-list" id="artefacts-list"></div>
           <div class="tasks-empty" id="artefacts-empty" hidden>
-            <div class="tasks-empty-icon">🎨</div>
+            <div class="tasks-empty-icon v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h5l2 2h9v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 11h8"/><path d="M8 15h5"/></svg></div>
             <h3>No artifacts yet</h3>
             <p class="hint">Ask the AI in chat to build one — e.g. “make a live dashboard from this budget sheet”. It’ll appear here.</p>
           </div>
@@ -1126,7 +1304,7 @@
         <div id="lib-files" hidden>
           <div class="tasks-list" id="files-list"></div>
           <div class="tasks-empty" id="files-empty" hidden>
-            <div class="tasks-empty-icon">📄</div>
+            <div class="tasks-empty-icon v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
             <h3>No generated files yet</h3>
             <p class="hint">Files the AI creates for you (reports, spreadsheets, PDFs) land here — always re-downloadable, even after the original link expires.</p>
           </div>
@@ -1267,6 +1445,14 @@
   <script src="/static/artefacts.js?v={{ v }}"></script>
   <script src="/static/library.js?v={{ v }}"></script>
   <script src="/static/pricing.js?v={{ v }}"></script>
+  <script src="/static/home-hud.js?v={{ v }}"></script>
   {% if voice_enabled %}<script src="/static/voice.js?v={{ v }}"></script>{% endif %}
+  <script src="/static/hermes-fx.js?v={{ v }}"></script>
+  <script src="/static/hermes-views.js?v={{ v }}"></script>
+  <script src="/static/hermes-v2.js?v={{ v }}"></script>
+  <script src="/static/hermes-schema-fx.js?v={{ v }}"></script>
+  <script src="/static/hermes-files-fx.js?v={{ v }}"></script>
+  <script src="/static/hermes-theme-fx.js?v={{ v }}"></script>
+  <script src="/static/hermes-router.js?v={{ v }}"></script>
 </body>
 </html>

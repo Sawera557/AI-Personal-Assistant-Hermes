@@ -119,10 +119,6 @@ _NVIDIA_TUNING: dict[str, dict[str, Any]] = {
         "params": {"temperature": 1.0},
         "extra": {"reasoning_effort": "max"},
     },
-    "deepseek-ai/deepseek-v4-flash-0731": {
-        "params": {"temperature": 1.0, "top_p": 0.95},
-        "thinking_kwargs": {"thinking": True, "reasoning_effort": "high"},
-    },
 }
 
 

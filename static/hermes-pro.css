@@ -1,0 +1,577 @@
+/* ════════════════════════════════════════════════════════════════════════
+   HERMES · PRO LAYER
+   Presentation polish over the holo skin: refined type, glass depth,
+   motion system, Home HUD v2, command palette, boot sequence, toasts.
+   Gated on html.holo.pro — the Stock toggle still reverts everything.
+   ══════════════════════════════════════════════════════════════════════ */
+
+html.holo.pro {
+  --bg-1: #03060a;
+  --bg-2: #060b11;
+  --text: #e4f3fb;
+  --muted: #8aa3b6;
+  --holo: #7fdcff;
+  --holo-hi: #c9f2ff;
+  --amber: #ffb64d;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-io: cubic-bezier(0.65, 0, 0.35, 1);
+  --glass: rgba(6, 12, 18, 0.62);
+  --hair: rgba(127, 205, 255, 0.14);
+}
+html.holo.pro body {
+  font-family: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+  background-image:
+    radial-gradient(1200px 700px at 72% -18%, rgba(41, 182, 232, 0.13), transparent 70%),
+    radial-gradient(900px 600px at -10% 110%, rgba(127, 220, 255, 0.06), transparent 72%);
+  background-size: auto;
+}
+html.holo.pro body::after { opacity: 0.16; }
+html.holo.pro ::selection { background: rgba(127, 220, 255, 0.32); color: #fff; }
+html.holo.pro .app { z-index: 1; background: transparent; }
+
+/* Starfield canvas (hermes-fx.js) */
+#hx-stars { position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0; transition: opacity 1.6s var(--ease-out, ease); }
+html.holo.pro #hx-stars.on { opacity: 1; }
+html:not(.holo) #hx-stars { display: none; }
+
+/* Scrollbars */
+html.holo.pro * { scrollbar-width: thin; scrollbar-color: rgba(127, 220, 255, 0.25) transparent; }
+html.holo.pro ::-webkit-scrollbar { width: 8px; height: 8px; }
+html.holo.pro ::-webkit-scrollbar-thumb { background: rgba(127, 220, 255, 0.2); border: 2px solid transparent; background-clip: padding-box; }
+html.holo.pro ::-webkit-scrollbar-thumb:hover { background-color: rgba(127, 220, 255, 0.4); }
+
+/* ── Icon strip (holo targeted .strip; markup is .icon-strip) ───────────── */
+html.holo.pro .icon-strip {
+  background: linear-gradient(180deg, rgba(8, 15, 22, 0.88), rgba(4, 8, 12, 0.92));
+  backdrop-filter: blur(14px) saturate(1.2);
+  border-right: 1px solid var(--hair);
+  box-shadow: inset -1px 0 0 rgba(127, 220, 255, 0.05), 8px 0 40px rgba(0, 0, 0, 0.35);
+}
+html.holo.pro .strip-tabs { position: relative; }
+html.holo.pro .strip-tab { transition: color 0.25s, background 0.25s, transform 0.25s var(--ease-out); }
+html.holo.pro .strip-tab:hover { transform: translateX(2px); }
+html.holo.pro .strip-tab:active { transform: scale(0.96); }
+html.holo.pro .strip-tab.active::before { display: none; }
+html.holo.pro .strip-tab.active { box-shadow: 0 0 0 1px rgba(127, 220, 255, 0.3), 0 0 30px rgba(127, 220, 255, 0.14); }
+.hx-rail-ind {
+  position: absolute; left: -7px; top: 0; width: 2px; height: 34px;
+  background: var(--holo, #7fdcff); box-shadow: 0 0 14px #7fdcff, 0 0 2px #fff;
+  transition: transform 0.55s cubic-bezier(0.16, 1, 0.3, 1), height 0.55s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s;
+  pointer-events: none;
+}
+html.holo.pro .hx-mark {
+  width: 38px; height: 38px; display: grid; place-items: center; color: #02181f;
+  background: linear-gradient(145deg, #c9f2ff, #7fdcff 45%, #1d8fbd);
+  box-shadow: 0 0 0 1px rgba(201, 242, 255, 0.5), 0 0 28px rgba(127, 220, 255, 0.45);
+  position: relative; overflow: hidden;
+}
+html.holo.pro .hx-mark::after {
+  content: ""; position: absolute; inset: -40%;
+  background: linear-gradient(115deg, transparent 40%, rgba(255, 255, 255, 0.7) 50%, transparent 60%);
+  animation: hx-glint 6s var(--ease-io) infinite;
+}
+@keyframes hx-glint { 0%, 70% { transform: translateX(-60%); } 100% { transform: translateX(60%); } }
+
+/* ── Side panel: glass ──────────────────────────────────────────────────── */
+html.holo.pro .content-panel {
+  background: linear-gradient(180deg, rgba(7, 13, 19, 0.78), rgba(4, 8, 12, 0.82));
+  backdrop-filter: blur(16px) saturate(1.15);
+  border-right: 1px solid var(--hair);
+}
+html.holo.pro .panel-section, html.holo.pro .convos { overflow-x: hidden; }
+html.holo.pro .panel-section.visible > * { animation: hx-rise 0.6s var(--ease-out) backwards; }
+html.holo.pro .panel-section.visible > *:nth-child(2) { animation-delay: 40ms; }
+html.holo.pro .panel-section.visible > *:nth-child(3) { animation-delay: 80ms; }
+html.holo.pro .panel-section.visible > *:nth-child(4) { animation-delay: 120ms; }
+html.holo.pro .panel-section.visible > *:nth-child(5) { animation-delay: 160ms; }
+html.holo.pro .panel-section.visible > *:nth-child(n+6) { animation-delay: 200ms; }
+html.holo.pro .convos li { transition: background 0.2s, transform 0.25s var(--ease-out), box-shadow 0.2s; }
+html.holo.pro .convos li:hover { transform: translateX(3px); box-shadow: inset 2px 0 0 var(--holo); }
+
+/* ── View transitions: every main replays its entrance when shown ───────── */
+html.holo.pro .app > main { animation: hx-view 0.7s var(--ease-out) both; }
+@keyframes hx-view {
+  from { opacity: 0; transform: translateY(10px) scale(0.995); filter: blur(6px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes hx-rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes hx-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Page headers get a scanning hairline */
+html.holo.pro .bills-pg-title,
+html.holo.pro .tasks-pg-title,
+html.holo.pro .tk-title { letter-spacing: 0.08em; font-size: 20px; }
+html.holo.pro .bills-pg-header,
+html.holo.pro .tasks-pg-header,
+html.holo.pro .context-pg-header { position: relative; }
+html.holo.pro .bills-pg-header::after,
+html.holo.pro .tasks-pg-header::after,
+html.holo.pro .context-pg-header::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -8px; height: 1px;
+  background: linear-gradient(90deg, rgba(127, 220, 255, 0.6), rgba(127, 220, 255, 0.08) 40%, transparent);
+  transform-origin: left; animation: hx-draw 1.1s var(--ease-out) 0.15s backwards;
+}
+@keyframes hx-draw { from { transform: scaleX(0); } }
+
+/* Stagger lists and grids as they land */
+html.holo.pro .tk-card,
+html.holo.pro .bstat,
+html.holo.pro .usage-stat,
+html.holo.pro .context-item,
+html.holo.pro .reg-row,
+html.holo.pro .guardrail-row,
+html.holo.pro .file-row,
+html.holo.pro .meeting-upcoming-row,
+html.holo.pro .usage-table tbody tr { animation: hx-rise 0.6s var(--ease-out) backwards; }
+html.holo.pro :is(.tk-card, .bstat, .usage-stat, .context-item, .reg-row, .guardrail-row, .file-row, .meeting-upcoming-row):nth-child(2) { animation-delay: 50ms; }
+html.holo.pro :is(.tk-card, .bstat, .usage-stat, .context-item, .reg-row, .guardrail-row, .file-row, .meeting-upcoming-row):nth-child(3) { animation-delay: 100ms; }
+html.holo.pro :is(.tk-card, .bstat, .usage-stat, .context-item, .reg-row, .guardrail-row, .file-row, .meeting-upcoming-row):nth-child(4) { animation-delay: 150ms; }
+html.holo.pro :is(.tk-card, .bstat, .usage-stat, .context-item, .reg-row, .guardrail-row, .file-row, .meeting-upcoming-row):nth-child(5) { animation-delay: 200ms; }
+html.holo.pro :is(.tk-card, .bstat, .usage-stat, .context-item, .reg-row, .guardrail-row, .file-row, .meeting-upcoming-row):nth-child(n+6) { animation-delay: 250ms; }
+
+/* Cursor spotlight (hermes-fx sets --mx/--my on the hovered tile) */
+html.holo.pro :is(.tk-card, .bstat, .usage-stat, .guardrail-row, .context-item, .meeting-box, .reg-proposal, .hud-mod) {
+  background-image:
+    radial-gradient(260px circle at var(--mx, -400px) var(--my, -400px), rgba(127, 220, 255, 0.13), transparent 62%),
+    linear-gradient(180deg, rgba(127, 205, 255, 0.055), rgba(127, 205, 255, 0.015));
+  transition: border-color 0.25s, box-shadow 0.3s, transform 0.35s var(--ease-out);
+}
+html.holo.pro :is(.tk-card, .bstat, .usage-stat):hover { transform: translateY(-2px); }
+
+/* Buttons: press feel + ripple */
+html.holo.pro button:not(:disabled):active { transform: scale(0.975); }
+html.holo.pro :is(.tasks-new-btn, .bills-upload-btn, .context-add-btn, .meeting-primary-btn, #send-btn, .tk-save, .reg-approve, .hx-ask-go) {
+  position: relative; overflow: hidden; transition: filter 0.2s, box-shadow 0.25s, transform 0.15s;
+}
+html.holo.pro :is(.tasks-new-btn, .bills-upload-btn, .context-add-btn, .meeting-primary-btn, #send-btn, .hx-ask-go):hover {
+  filter: brightness(1.12); box-shadow: 0 0 34px rgba(127, 220, 255, 0.45);
+}
+.hx-ripple {
+  position: absolute; border-radius: 50%; pointer-events: none;
+  width: 8px; height: 8px; margin: -4px 0 0 -4px;
+  background: rgba(255, 255, 255, 0.55);
+  animation: hx-ripple 0.7s var(--ease-out, ease-out) forwards;
+}
+@keyframes hx-ripple { to { transform: scale(40); opacity: 0; } }
+
+/* Labels never wrap mid-token under the tracked uppercase treatment */
+html.holo.pro :is(.reg-tab, .usage-chip, .tk-btn, .cx-action-btn, .bv-action-btn, .reg-doc-btn, .bills-upload-btn, .tasks-new-btn, .context-add-btn, .meeting-primary-btn,
+  .reg-entity, .reg-basis, .reg-card, .reg-evi, .reg-status, .reg-unverified, .reg-prop-tag, .reg-prop-inv, .reg-prop-conf, .reg-ref, .tk-chip, .badge, .chip) { white-space: nowrap; }
+html.holo.pro .reg-tab { display: inline-flex; align-items: center; gap: 8px; }
+html.holo.pro :is(.reg-basis, .reg-evi) { letter-spacing: 0.1em; }
+html.holo.pro :is(.bstat-label, .usage-stat-label) { letter-spacing: 0.14em; line-height: 1.45; }
+html.holo.pro :is(.bills-upload-btn, .tasks-new-btn) { display: inline-flex; align-items: center; gap: 8px; }
+
+/* ── Chat: transmissions slide in ───────────────────────────────────────── */
+html.holo.pro .msg { animation: hx-msg 0.55s var(--ease-out) backwards; }
+@keyframes hx-msg { from { opacity: 0; transform: translateY(14px); filter: blur(4px); } }
+html.holo.pro .msg.user .bubble { box-shadow: 0 0 30px rgba(127, 220, 255, 0.08); }
+html.holo.pro .bubble { backdrop-filter: blur(6px); line-height: 1.6; }
+html.holo.pro .composer {
+  background: linear-gradient(180deg, rgba(4, 8, 12, 0.2), rgba(4, 8, 12, 0.8));
+  backdrop-filter: blur(12px);
+}
+html.holo.pro #input { transition: border-color 0.25s, box-shadow 0.35s; }
+html.holo.pro .thinking-live {
+  background-image: linear-gradient(90deg, transparent, rgba(127, 220, 255, 0.08), transparent);
+  background-size: 200% 100%; animation: hx-shimmer 1.8s linear infinite;
+}
+@keyframes hx-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* ── Modals: materialise ────────────────────────────────────────────────── */
+html.holo.pro :is(.appdlg, .tk-modal, .jb-modal, .af-modal, .cx-edit, .bv-modal, .call-card) {
+  animation: hx-mat 0.5s var(--ease-out) backwards;
+}
+@keyframes hx-mat { from { opacity: 0; transform: translateY(8px) scale(0.98); filter: blur(8px) brightness(1.6); } }
+
+/* ════════════════════════════════════════════════════════════════════════
+   HOME · HUD v2
+   ══════════════════════════════════════════════════════════════════════ */
+html.holo.pro .home-view { overflow-x: hidden; }
+.hx-chip {
+  display: inline-block; white-space: nowrap; padding: 1px 8px; margin: 0 1px; vertical-align: baseline;
+  font: inherit; line-height: 1.5; color: #eafaff; cursor: pointer;
+  background: rgba(127, 220, 255, 0.09); border: 1px solid rgba(127, 220, 255, 0.24);
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+  transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.hx-chip b { font-family: "IBM Plex Mono", monospace; font-weight: 600; }
+.hx-chip:hover { background: rgba(127, 220, 255, 0.2); border-color: rgba(127, 220, 255, 0.6); box-shadow: 0 0 18px rgba(127, 220, 255, 0.25); }
+.hx-chip.warn { color: #ffe0b0; background: rgba(255, 182, 77, 0.1); border-color: rgba(255, 182, 77, 0.35); }
+.hx-chip.warn:hover { background: rgba(255, 182, 77, 0.2); box-shadow: 0 0 18px rgba(255, 182, 77, 0.25); }
+
+.hx-ask {
+  grid-column: 1 / -1; justify-self: center; width: min(480px, 100%); margin-top: 22px; display: flex; align-items: center; gap: 10px;
+  padding: 7px 7px 7px 14px; color: var(--holo);
+  background: linear-gradient(180deg, rgba(10, 20, 28, 0.85), rgba(5, 10, 15, 0.85));
+  border: 1px solid rgba(127, 220, 255, 0.28);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  backdrop-filter: blur(10px);
+  transition: border-color 0.3s, box-shadow 0.4s;
+}
+.hx-ask:focus-within { border-color: rgba(127, 220, 255, 0.75); box-shadow: 0 0 0 1px rgba(127, 220, 255, 0.25), 0 0 40px rgba(127, 220, 255, 0.2); }
+.hx-ask svg { flex: none; opacity: 0.8; }
+.hx-ask input {
+  flex: 1 1 auto; min-width: 0; background: none; border: 0; outline: none; color: #eafaff;
+  font: 400 14px/1.4 "IBM Plex Sans", sans-serif; padding: 8px 0;
+}
+.hx-ask input::placeholder { color: rgba(139, 166, 187, 0.75); }
+.hx-kbd {
+  flex: none; font: 500 10px/1 "IBM Plex Mono", monospace; letter-spacing: 0.08em; color: rgba(201, 242, 255, 0.8);
+  padding: 6px 7px; background: rgba(127, 220, 255, 0.08); border: 1px solid rgba(127, 220, 255, 0.22); cursor: pointer;
+}
+.hx-kbd:hover { background: rgba(127, 220, 255, 0.18); }
+.hx-ask-go {
+  flex: none; padding: 10px 16px; border: 0; cursor: pointer;
+  font: 700 11px/1 "Chakra Petch", sans-serif; letter-spacing: 0.16em; text-transform: uppercase; color: #02181f;
+  background: linear-gradient(180deg, #c9f2ff, #7fdcff 50%, #2aa8d6);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+
+.hx-bar {
+  display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap;
+  padding: 14px 28px; border-bottom: 1px solid rgba(127, 205, 255, 0.12);
+  background: linear-gradient(180deg, rgba(6, 12, 18, 0.7), rgba(6, 12, 18, 0.3));
+  backdrop-filter: blur(10px);
+}
+.hx-field {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 0 0 0 12px; background: rgba(4, 8, 12, 0.7); border: 1px solid rgba(127, 205, 255, 0.18);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  transition: border-color 0.2s, box-shadow 0.25s;
+}
+.hx-field:hover, .hx-field:focus-within { border-color: rgba(127, 220, 255, 0.55); box-shadow: 0 0 20px rgba(127, 220, 255, 0.12); }
+.hx-field > span {
+  font: 600 9px/1 "IBM Plex Mono", monospace; letter-spacing: 0.2em; text-transform: uppercase; color: rgba(127, 220, 255, 0.6);
+}
+.hx-field select {
+  appearance: none; -webkit-appearance: none; min-width: 0; max-width: 240px;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237fdcff' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 12px center;
+  border: 0; border-left: 1px solid rgba(127, 205, 255, 0.14); outline: none; cursor: pointer;
+  padding: 10px 34px 10px 12px; color: #eafaff; font: 500 13px/1.2 "IBM Plex Sans", sans-serif;
+}
+.hx-field select option { background: #071018; color: #eafaff; }
+.hx-status {
+  display: flex; align-items: center; gap: 9px;
+  font: 500 10px/1 "IBM Plex Mono", monospace; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(205, 243, 255, 0.8); white-space: nowrap;
+}
+.hx-bar-end { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.hx-date { font: 500 10px/1 "IBM Plex Mono", monospace; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(139, 166, 187, 0.9); white-space: nowrap; }
+.hx-bar .hx-kbd { padding: 9px 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+
+/* HUD modules: glass + corner reticles + staged entrance */
+html.holo.pro .hud { padding-top: 22px; gap: 24px; }
+html.holo.pro .hud-mod {
+  background-color: rgba(6, 12, 18, 0.55);
+  backdrop-filter: blur(10px);
+  border-color: rgba(127, 205, 255, 0.15);
+}
+html.holo.pro .hud-mod::after {
+  content: ""; position: absolute; right: 6px; bottom: 6px; width: 8px; height: 8px;
+  border-right: 1px solid rgba(127, 220, 255, 0.5); border-bottom: 1px solid rgba(127, 220, 255, 0.5);
+}
+html.holo.pro .hud-mod:hover { border-color: rgba(127, 220, 255, 0.32); box-shadow: 0 0 40px rgba(127, 220, 255, 0.07); }
+html.holo.pro .hud-mod h3 { display: flex; align-items: center; gap: 8px; }
+html.holo.pro .hud-mod h3::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(127, 220, 255, 0.22), transparent); }
+
+.hx-stage .hx-bar,
+.hx-stage .hx-ask,
+.hx-stage .hud-col > .hud-mod,
+.hx-stage .hud-spoke,
+.hx-stage .hud-rings,
+.hx-stage .hud-ticker { opacity: 0; }
+.hx-go .hx-bar { animation: hx-rise 0.8s var(--ease-out, ease) backwards; }
+.hx-go .hx-ask { animation: hx-rise 0.9s var(--ease-out, ease) 0.7s backwards; }
+.hx-go .hud-col > .hud-mod { animation: hx-slide-l 0.9s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+.hx-go .hud-col:last-child > .hud-mod { animation-name: hx-slide-r; }
+.hx-go .hud-col > .hud-mod:nth-child(1) { animation-delay: 0.25s; }
+.hx-go .hud-col > .hud-mod:nth-child(2) { animation-delay: 0.38s; }
+.hx-go .hud-col > .hud-mod:nth-child(3) { animation-delay: 0.51s; }
+.hx-go .hud-col > .hud-mod:nth-child(4) { animation-delay: 0.64s; }
+.hx-go .hud-col > .hud-mod:nth-child(5) { animation-delay: 0.77s; }
+.hx-go .hud-rings { animation: hx-ignite 1.4s cubic-bezier(0.16, 1, 0.3, 1) 0.1s backwards; }
+.hx-go .hud-spoke { animation: hx-fade 0.6s ease backwards; animation-delay: calc(0.6s + var(--si, 0) * 70ms); }
+.hx-go .hud-ticker { animation: hx-fade 0.8s ease 0.9s backwards; }
+@keyframes hx-slide-l { from { opacity: 0; transform: translateX(-24px); filter: blur(6px); } }
+@keyframes hx-slide-r { from { opacity: 0; transform: translateX(24px); filter: blur(6px); } }
+@keyframes hx-ignite {
+  0% { opacity: 0; transform: scale(0.6) rotate(-20deg); filter: brightness(3) blur(10px); }
+  60% { opacity: 1; filter: brightness(1.4) blur(0); }
+  100% { opacity: 1; transform: none; filter: none; }
+}
+
+/* Clock seconds ring */
+.hud-dial .arc.sec { stroke: rgba(201, 242, 255, 0.85); stroke-width: 1.5; filter: drop-shadow(0 0 4px rgba(127, 220, 255, 0.9)); transition: none; }
+html.holo.pro .hud-dial .arc:not(.sec) { transition: stroke-dashoffset 1.6s cubic-bezier(0.16, 1, 0.3, 1); }
+html.holo.pro .hud-bar > i { transition: width 1.6s cubic-bezier(0.16, 1, 0.3, 1); }
+html.holo.pro .hud-bar > i::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  background-size: 40% 100%; background-repeat: no-repeat;
+  animation: hx-bar 2.6s ease-in-out infinite;
+}
+@keyframes hx-bar { from { background-position: -60% 0; } to { background-position: 160% 0; } }
+
+/* ── Reactor v2 ─────────────────────────────────────────────────────────── */
+html.holo.pro .hud-rings { width: min(440px, 50vh); perspective: 900px; }
+.hud-rings .pl { position: absolute; inset: 0; transition: transform 0.9s cubic-bezier(0.16, 1, 0.3, 1); will-change: transform; }
+.hud-rings .hud-core-face.pl { inset: 26%; border-radius: 50%; }
+html.holo.pro .hud-core-label { white-space: nowrap; }
+.hud-rings .pl > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hud-rings .r-ticks line { stroke: rgba(127, 205, 255, 0.28); stroke-width: 1; }
+.hud-rings .r-ticks line.maj { stroke: rgba(127, 220, 255, 0.7); stroke-width: 1.5; }
+.hud-rings .r-ticks { animation: hud-spin 120s linear infinite reverse; }
+.hud-rings .ring-amber { fill: none; stroke: #ffb64d; stroke-width: 3; filter: drop-shadow(0 0 6px rgba(255, 182, 77, 0.7)); }
+.hx-sweep {
+  inset: 7% !important; border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(127, 220, 255, 0.0) 0deg, rgba(127, 220, 255, 0.0) 300deg, rgba(127, 220, 255, 0.22) 358deg, rgba(201, 242, 255, 0.6) 360deg);
+  -webkit-mask: radial-gradient(circle, transparent 46%, #000 47%, #000 100%);
+          mask: radial-gradient(circle, transparent 46%, #000 47%, #000 100%);
+  animation: hud-spin 7s linear infinite;
+}
+.hx-orbit { position: absolute; inset: 15%; border-radius: 50%; border: 1px dashed rgba(127, 220, 255, 0.14); animation: hud-spin 80s linear infinite; }
+.hx-node {
+  position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+}
+.hx-node > b {
+  position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; cursor: default; transform: rotate(45deg);
+  background: #5ef0b7; box-shadow: 0 0 0 3px rgba(94, 240, 183, 0.15), 0 0 14px #5ef0b7;
+}
+.hx-node.warn > b { background: #ffb64d; box-shadow: 0 0 0 3px rgba(255, 182, 77, 0.15), 0 0 14px #ffb64d; }
+.hx-node.off > b { background: #4b5d6c; box-shadow: none; }
+.hx-node { pointer-events: auto; }
+.hx-node > span { opacity: 0; transition: opacity 0.25s; pointer-events: none; }
+.hx-node:hover > span { opacity: 1; }
+.hx-node > span {
+  position: absolute; left: 10px; top: -7px; white-space: nowrap;
+  font: 500 9px/1 "IBM Plex Mono", monospace; letter-spacing: 0.12em; text-transform: uppercase;
+  color: rgba(205, 243, 255, 0.85); animation: hud-spin 80s linear infinite reverse; transform-origin: -10px 7px;
+  padding: 3px 5px; background: rgba(3, 8, 12, 0.7); border: 1px solid rgba(127, 220, 255, 0.16);
+}
+.hud-rings.hx-focus .ring-seg { stroke: #c9f2ff; filter: drop-shadow(0 0 12px rgba(127, 220, 255, 0.95)); }
+.hud-rings.hx-focus .hx-sweep { animation-duration: 2.4s; }
+
+/* Spokes: data beam on hover */
+html.holo.pro .hud-spoke .ln {
+  background: linear-gradient(90deg, rgba(127, 220, 255, 0.4), rgba(127, 220, 255, 0.4));
+  background-size: 200% 100%;
+}
+html.holo.pro .hud-spoke:hover .ln {
+  background: repeating-linear-gradient(90deg, #c9f2ff 0 6px, transparent 6px 10px);
+  background-size: 20px 1px; animation: hx-beam 0.5s linear infinite; height: 1px;
+}
+html.holo.pro .hud-spokes.left .hud-spoke:hover .ln { animation-direction: reverse; }
+@keyframes hx-beam { to { background-position: 20px 0; } }
+html.holo.pro .hud-spoke .lbl { transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), text-shadow 0.3s; }
+html.holo.pro .hud-spoke:hover .lbl { text-shadow: 0 0 14px rgba(127, 220, 255, 0.8); }
+html.holo.pro .hud-spokes.left .hud-spoke:hover .lbl { transform: translateX(-4px); }
+html.holo.pro .hud-spokes:not(.left) .hud-spoke:hover .lbl { transform: translateX(4px); }
+
+html.holo.pro .hud-row { transition: background 0.2s; }
+html.holo.pro .hud-ticker { backdrop-filter: blur(10px); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   BOOT · PALETTE · TOASTS (built by hermes-fx.js)
+   ══════════════════════════════════════════════════════════════════════ */
+.hx-boot {
+  position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center;
+  background: radial-gradient(900px 600px at 50% 45%, #061019, #010305 70%);
+  font-family: "IBM Plex Mono", monospace; color: #cdf3ff;
+  transition: opacity 0.9s ease, transform 1.1s cubic-bezier(0.65, 0, 0.35, 1), filter 0.9s;
+}
+.hx-boot.out { opacity: 0; transform: scale(1.18); filter: blur(10px) brightness(1.8); pointer-events: none; }
+.hx-boot-inner { display: grid; justify-items: center; gap: 26px; width: min(520px, 86vw); }
+.hx-boot-mark { width: 150px; height: 150px; }
+.hx-boot-mark circle, .hx-boot-mark path { fill: none; stroke: #7fdcff; }
+.hx-boot-mark .d1 { stroke-width: 1; stroke-dasharray: 440; stroke-dashoffset: 440; animation: hx-dash 1.4s cubic-bezier(0.65, 0, 0.35, 1) forwards; opacity: 0.5; }
+.hx-boot-mark .d2 { stroke-width: 3; stroke-dasharray: 60 30 120 30 90 50; stroke-dashoffset: 380; animation: hx-dash 1.6s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards, hud-spin 8s linear 1.8s infinite; transform-origin: 75px 75px; filter: drop-shadow(0 0 8px #7fdcff); }
+.hx-boot-mark .d3 { stroke-width: 3.4; stroke-linecap: square; stroke: #eafaff; stroke-dasharray: 120; stroke-dashoffset: 120; animation: hx-dash 0.9s cubic-bezier(0.65, 0, 0.35, 1) 0.7s forwards; filter: drop-shadow(0 0 10px #7fdcff); }
+@keyframes hx-dash { to { stroke-dashoffset: 0; } }
+.hx-boot-word {
+  font-family: "Chakra Petch", sans-serif; font-weight: 600; font-size: 30px; letter-spacing: 0.62em; margin-right: -0.62em;
+  color: #f2fbff; text-shadow: 0 0 30px rgba(127, 220, 255, 0.55);
+}
+.hx-boot-word i { display: inline-block; font-style: normal; opacity: 0; animation: hx-letter 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+@keyframes hx-letter { from { opacity: 0; transform: translateY(10px); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+.hx-boot-sub { margin-top: -14px; font-size: 10.5px; letter-spacing: 0.32em; text-transform: uppercase; color: rgba(127, 220, 255, 0.6); opacity: 0; animation: hx-fade 0.8s ease 1.1s forwards; }
+.hx-boot-log { width: 100%; min-height: 128px; display: grid; gap: 7px; align-content: start; font-size: 11px; letter-spacing: 0.06em; }
+.hx-boot-log div { display: flex; gap: 10px; color: rgba(205, 243, 255, 0.82); animation: hx-rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+.hx-boot-log div::before { content: "›"; color: #7fdcff; }
+.hx-boot-log em { margin-left: auto; font-style: normal; color: #5ef0b7; letter-spacing: 0.14em; }
+.hx-boot-log em.warn { color: #ffb64d; }
+.hx-boot-bar { width: 100%; height: 2px; background: rgba(127, 220, 255, 0.12); position: relative; overflow: hidden; }
+.hx-boot-bar i { position: absolute; inset: 0 auto 0 0; width: 0; background: #7fdcff; box-shadow: 0 0 14px #7fdcff; transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+.hx-boot-skip { position: absolute; bottom: 26px; font-size: 9.5px; letter-spacing: 0.24em; text-transform: uppercase; color: rgba(139, 166, 187, 0.6); }
+
+.hx-pal-ov {
+  position: fixed; inset: 0; z-index: 9990; display: grid; justify-items: center; align-items: start; padding-top: 12vh;
+  background: rgba(1, 4, 7, 0.62); backdrop-filter: blur(6px);
+  animation: hx-fade 0.25s ease;
+}
+.hx-pal {
+  width: min(640px, 92vw); max-height: 70vh; display: flex; flex-direction: column;
+  background: linear-gradient(180deg, rgba(10, 19, 27, 0.97), rgba(5, 10, 15, 0.97));
+  border: 1px solid rgba(127, 220, 255, 0.4);
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7), 0 0 60px rgba(127, 220, 255, 0.12);
+  animation: hx-mat 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: "IBM Plex Sans", sans-serif; color: #e4f3fb;
+}
+.hx-pal-top { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid rgba(127, 220, 255, 0.16); color: #7fdcff; }
+.hx-pal-top input { flex: 1; background: none; border: 0; outline: none; color: #f2fbff; font: 400 16px/1.3 "IBM Plex Sans", sans-serif; }
+.hx-pal-top input::placeholder { color: rgba(139, 166, 187, 0.7); }
+.hx-pal-top kbd { font: 500 10px/1 "IBM Plex Mono", monospace; color: rgba(139, 166, 187, 0.9); border: 1px solid rgba(127, 220, 255, 0.2); padding: 4px 6px; }
+.hx-pal-list { overflow-x: hidden; overflow-y: auto; padding: 8px 0 10px; }
+.hx-pal-grp { padding: 12px 18px 6px; font: 600 9px/1 "IBM Plex Mono", monospace; letter-spacing: 0.24em; text-transform: uppercase; color: rgba(127, 220, 255, 0.55); }
+.hx-pal-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 18px; border: 0; background: none; text-align: left;
+  font: 400 14px/1.3 "IBM Plex Sans", sans-serif; color: #dceef8; cursor: pointer; position: relative;
+}
+.hx-pal-item .ic { width: 22px; height: 22px; flex: none; display: grid; place-items: center; color: #7fdcff; border: 1px solid rgba(127, 220, 255, 0.22); font: 600 10px/1 "IBM Plex Mono", monospace; }
+.hx-pal-item > span:nth-child(2) { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: 0; }
+.hx-pal-foot span { white-space: nowrap; }
+.hx-pal-item .meta { flex: none; white-space: nowrap; margin-left: auto; font: 500 10px/1 "IBM Plex Mono", monospace; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(139, 166, 187, 0.8); }
+.hx-pal-item.on { background: linear-gradient(90deg, rgba(127, 220, 255, 0.16), rgba(127, 220, 255, 0.02)); color: #fff; }
+.hx-pal-item.on::before { content: ""; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px; background: #7fdcff; box-shadow: 0 0 10px #7fdcff; }
+.hx-pal-empty { padding: 26px 18px; font: 500 11px/1.4 "IBM Plex Mono", monospace; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(139, 166, 187, 0.8); }
+.hx-pal-foot { display: flex; gap: 18px; padding: 10px 18px; border-top: 1px solid rgba(127, 220, 255, 0.12); font: 500 9.5px/1 "IBM Plex Mono", monospace; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(139, 166, 187, 0.75); }
+
+.hx-toasts { position: fixed; right: 22px; bottom: 22px; z-index: 9980; display: flex; flex-direction: column; gap: 10px; align-items: flex-end; pointer-events: none; }
+.hx-toast {
+  pointer-events: auto; width: 340px; max-width: calc(100vw - 44px); display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px;
+  background: linear-gradient(180deg, rgba(10, 19, 27, 0.96), rgba(5, 10, 15, 0.96));
+  border: 1px solid rgba(127, 220, 255, 0.3);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  font-family: "IBM Plex Sans", sans-serif; color: #e4f3fb;
+  animation: hx-toast-in 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.4s, transform 0.5s cubic-bezier(0.65, 0, 0.35, 1);
+  position: relative; overflow: hidden;
+}
+.hx-toast.warn { border-color: rgba(255, 182, 77, 0.45); }
+.hx-toast.bye { opacity: 0; transform: translateX(40px); }
+@keyframes hx-toast-in { from { opacity: 0; transform: translateX(40px); filter: blur(6px); } }
+.hx-toast .t-h { font: 600 10px/1 "IBM Plex Mono", monospace; letter-spacing: 0.2em; text-transform: uppercase; color: #7fdcff; }
+.hx-toast.warn .t-h { color: #ffb64d; }
+.hx-toast .t-b { margin-top: 6px; font-size: 13px; line-height: 1.5; color: rgba(220, 238, 248, 0.9); }
+.hx-toast .t-a { margin-top: 10px; display: flex; gap: 8px; }
+.hx-toast .t-a button {
+  padding: 7px 12px; cursor: pointer; font: 600 10px/1 "Chakra Petch", sans-serif; letter-spacing: 0.14em; text-transform: uppercase;
+  color: #eafaff; background: rgba(127, 220, 255, 0.1); border: 1px solid rgba(127, 220, 255, 0.35);
+}
+.hx-toast.warn .t-a button { color: #ffe0b0; background: rgba(255, 182, 77, 0.12); border-color: rgba(255, 182, 77, 0.4); }
+.hx-toast .t-a button:hover { filter: brightness(1.3); }
+.hx-toast .t-life { position: absolute; left: 0; bottom: 0; height: 2px; background: #7fdcff; animation: hx-life linear forwards; }
+.hx-toast.warn .t-life { background: #ffb64d; }
+@keyframes hx-life { from { width: 100%; } to { width: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  html.holo.pro *, .hx-boot *, .hx-boot { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+/* Card titles that wrap must not collide with the line below */
+html.pro .tk-card-name { line-height: 1.3; }
+html.pro .tk-card-sched, html.pro .tk-card-schedule { margin-top: 6px; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   AGENT · settings bar (moved out of the side panel so History owns it)
+   ══════════════════════════════════════════════════════════════════════ */
+.ab {
+  position: relative; z-index: 3; flex: none;
+  display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap;
+  padding: 10px 24px; border-bottom: 1px solid var(--ab-line, rgba(255, 255, 255, 0.08));
+  background: var(--ab-bg, rgba(11, 14, 20, 0.6)); backdrop-filter: blur(12px);
+}
+.ab-f, .ab-t { display: inline-flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; cursor: pointer; }
+.ab-k { font: 600 9.5px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ab-k, #9aa3b2); }
+.ab-f select {
+  appearance: none; -webkit-appearance: none; cursor: pointer; min-width: 0; max-width: 200px;
+  padding: 7px 28px 7px 10px; font: 500 12.5px/1.2 "Inter", "IBM Plex Sans", sans-serif; color: var(--ab-fg, #e8eaf0);
+  background: var(--ab-in, rgba(255, 255, 255, 0.04)) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239aa3b2' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;
+  border: 1px solid var(--ab-line, rgba(255, 255, 255, 0.1)); border-radius: var(--ab-r, 8px);
+  transition: border-color 0.2s, background-color 0.2s;
+}
+.ab-f select:hover { border-color: var(--ab-line-2, rgba(255, 255, 255, 0.2)); }
+.ab-f select:focus { outline: none; border-color: var(--ab-acc, #f5a623); box-shadow: 0 0 0 3px var(--ab-ring, rgba(245, 166, 35, 0.15)); }
+.ab-f select option { background: #141821; color: #e8eaf0; }
+.ab-sep { width: 1px; height: 22px; background: var(--ab-line, rgba(255, 255, 255, 0.1)); }
+.ab-t .tk-toggle { margin: 0; }
+.ab-v { min-width: 22px; font: 500 10.5px/1 "IBM Plex Mono", monospace; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ab-fg, #e8eaf0); }
+.ab-t:has(input:not(:checked)) .ab-v { color: var(--ab-k, #9aa3b2); }
+.ab-status { position: absolute; left: 24px; right: 24px; top: calc(100% + 6px); pointer-events: none; display: flex; justify-content: flex-end; }
+.ab-status .hint {
+  margin: 0; padding: 8px 12px; font-size: 12px; line-height: 1.4; color: var(--ab-fg, #e8eaf0);
+  background: var(--ab-pop, #151922); border: 1px solid var(--ab-line-2, rgba(255, 255, 255, 0.14)); border-radius: var(--ab-r, 8px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45); animation: hx-rise 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ab-status .hint.error { color: #fca5a5; border-color: rgba(248, 113, 113, 0.45); }
+@media (max-width: 760px) { .ab { padding: 8px 14px; gap: 8px 12px; } .ab-sep { display: none; } .ab-k { letter-spacing: 0.1em; } }
+
+/* History now owns the whole side panel */
+html.pro #panel-agent .history-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+html.pro #panel-agent .convos { flex: 1 1 auto; min-height: 0; }
+html.pro #panel-agent .apps-panel { margin-top: auto; }
+html.pro { --panel-w: 272px; }
+html.pro #convos li { padding: 0; }
+html.pro #convos .convo-open { padding: 10px 12px; }
+html.pro #convos .convo-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; overflow: hidden; line-height: 1.35; }
+html.pro #convos .convo-snippet { margin-top: 3px; }
+html.pro .apps-panel summary { white-space: nowrap; }
+html.pro .apps-panel .apps-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+html.pro .messages > * { flex-shrink: 0; }
+
+html.holo .ab {
+  --ab-bg: linear-gradient(180deg, rgba(6, 12, 18, 0.75), rgba(6, 12, 18, 0.45)); --ab-line: rgba(127, 205, 255, 0.16); --ab-line-2: rgba(127, 220, 255, 0.45);
+  --ab-k: rgba(127, 220, 255, 0.6); --ab-fg: #e4f3fb; --ab-in: rgba(4, 8, 12, 0.75); --ab-acc: #7fdcff; --ab-ring: rgba(127, 220, 255, 0.18); --ab-r: 0; --ab-pop: #08121a;
+}
+html.holo .ab-f select { clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px); font-family: "IBM Plex Sans", sans-serif; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237fdcff' stroke-width='1.5'/%3E%3C/svg%3E"); }
+html.holo .ab-f select option { background: #071018; }
+html.holo .ab::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: linear-gradient(90deg, rgba(127, 220, 255, 0.55), transparent 55%); pointer-events: none; }
+
+
+/* ═════════════════════════════════════════════════════════════════
+   HOME · dock + density pass
+   "Ask Hermes" docks at the bottom of Home; modules, dials and the
+   reactor are tightened so the screen reads lighter.
+   ═════════════════════════════════════════════════════════════════ */
+.hx-dock {
+  position: sticky; bottom: 0; z-index: 5; flex: none;
+  display: flex; justify-content: center;
+  padding: 18px 24px 32px;
+  background: linear-gradient(180deg, rgba(2, 5, 8, 0), rgba(2, 5, 8, 0.9) 45%);
+}
+html.pro .hx-dock .hx-ask { margin-top: 0; width: min(760px, 100%); padding: 5px 5px 5px 14px; }
+html.pro .hx-dock .hx-ask input { padding: 7px 0; font-size: 13.5px; }
+html.pro .hx-dock .hx-ask-go { padding: 9px 14px; }
+html.pro .home-view .hx-bar { padding: 10px 24px; }
+html.pro .home-view .hx-bar .hx-kbd { padding: 7px 10px; }
+html.pro .home-view .hud { gap: 18px; padding: 16px 24px 4px; }
+html.pro .home-view .hud-col { gap: 12px; }
+html.pro .home-view .hud-mod { padding: 11px 14px 12px; }
+html.pro .home-view .hud-mod h3 { margin-bottom: 9px; }
+html.pro .home-view .hud-clock { gap: 14px; }
+html.pro .home-view .hud-dial-wrap { width: 88px; height: 88px; }
+html.pro .home-view .hud-daynum { font-size: 24px; }
+html.pro .home-view .hud-time { font-size: 19px; }
+html.pro .home-view .hud-mini-wrap { width: 60px; height: 60px; }
+html.pro .home-view .hud-mini-val { font-size: 14px; }
+html.pro .home-view .hud-meter-val { font-size: 18px; }
+html.pro .home-view .hud-bar { margin-top: 9px; height: 6px; }
+html.pro .home-view .hx-bar { flex-wrap: nowrap; gap: 12px; min-width: 0; }
+html.pro .home-view .hx-bar .hx-status { min-width: 0; overflow: hidden; }
+html.pro .home-view .hx-bar .hx-status span { overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1180px) { html.pro .home-view .hx-date { display: none; } }
+@media (max-width: 900px) { html.pro .home-view .hx-bar .hx-status { display: none; } }
+
+html.pro .home-view .hud-core .hud-rings { width: min(290px, 36vh); }
+html.pro .home-view .hud-core-biz { font-size: 13px; }
+.hud-row-link { cursor: pointer; transition: background 0.2s; }
+.hud-row-link:hover { background: rgba(127, 220, 255, 0.06); }
+html.pro .home-view #hud-alerts .hud-row-sub { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
+html.pro .home-view .hud-core-label { font-size: 7.5px; letter-spacing: 0.18em; }
+html.pro .home-view .hud-core-face { padding: 0 6px; text-align: center; }
+html.pro .home-view .hud-core-biz { font-size: 11.5px; max-width: 120px; }
+
+html.pro .home-view .hud-core .hud-rings { width: min(380px, 46vh); }
+html.pro .home-view .hud-core-label { font-size: 8.5px; letter-spacing: 0.24em; }
+html.pro .home-view .hud-core-biz { font-size: 14px; max-width: 160px; }

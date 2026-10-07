@@ -91,9 +91,26 @@ def _call_anthropic(model_id: str, system: str, user_message: str, max_tokens: i
     )
 
 
+#: NIM models whose chat template takes an `enable_thinking` toggle (same set
+#: hermes.agent tunes). Left unset, Nemotron reasons by default and the
+#: reasoning lands in `content` — "Here's a thinking process: …" instead of the
+#: answer, which breaks both JSON parsing and guidance bullets. Background calls
+#: are short extraction/summary jobs, so reasoning is switched off explicitly.
+#: Models not listed (gpt-oss, Kimi) reason unconditionally and reject the key.
+_THINKING_TOGGLE = frozenset({
+    "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "google/gemma-4-31b-it",
+    "google/diffusiongemma-26b-a4b-it",
+})
+
+
 def _call_openai_protocol(
     provider: str, model_id: str, system: str, user_message: str, max_tokens: int
 ) -> str:
+    extra = (
+        {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+        if provider == "nvidia" and model_id in _THINKING_TOGGLE else {}
+    )
     resp = _openai_compatible(provider, model_id).chat.completions.create(
         model=model_id,
         max_tokens=max_tokens,
@@ -101,6 +118,7 @@ def _call_openai_protocol(
             {"role": "system", "content": system},
             {"role": "user", "content": user_message},
         ],
+        **extra,
     )
     return resp.choices[0].message.content or ""
 
@@ -120,6 +138,16 @@ def call_json(
     background job whose output gets stored, and inventing an empty result would
     quietly write a wrong record.
     """
+    text = call_text(system=system, user_message=user_message, max_tokens=max_tokens, model=model)
+    return _parse(text, fallback_key)
+
+
+def call_text(
+    *, system: str, user_message: str, max_tokens: int, model: str | None = None,
+) -> str:
+    """Same model routing as call_json — background policy, credit and
+    retired-model fallthrough — for callers that want the reply as plain text
+    (e.g. meeting guidance bullets) rather than a JSON object."""
     requested = model or Config.GUIDANCE_MODEL
     # Background policy: NVIDIA only. A requested Anthropic/OpenAI model is
     # overridden rather than honoured — see models.background_model().
@@ -127,7 +155,7 @@ def call_json(
     if not candidates:
         raise credits.CreditsExhausted(next(iter(models.BACKGROUND_PROVIDERS)))
     if candidates[0] != requested:
-        log.info("background JSON call: %s -> %s", requested, candidates[0])
+        log.info("background model call: %s -> %s", requested, candidates[0])
 
     last_exc: Exception | None = None
     for model_id in candidates:
@@ -135,23 +163,25 @@ def call_json(
         scope = credits.scope_for(provider, model_id)
         try:
             if provider == "anthropic":
-                text = _call_anthropic(model_id, system, user_message, max_tokens)
-            else:
-                text = _call_openai_protocol(
-                    provider, model_id, system, user_message, max_tokens
-                )
-            return _parse(text, fallback_key)
+                return _call_anthropic(model_id, system, user_message, max_tokens)
+            return _call_openai_protocol(provider, model_id, system, user_message, max_tokens)
         except (openai.APITimeoutError, openai.RateLimitError, openai.APIConnectionError) as exc:
             # Free-tier NIM saturates and throttles; that says nothing about the
             # next model, which has its own endpoint and its own key.
             last_exc = exc
-            log.warning("background JSON call: %s unavailable (%s), trying next.",
+            log.warning("background model call: %s unavailable (%s), trying next.",
                         model_id, type(exc).__name__)
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
+            if getattr(exc, "status_code", None) in (404, 410):
+                # Model not deployed / retired by the provider (NIM answers 410
+                # Gone at end of life). The next model has its own endpoint.
+                log.warning("background model call: %s is gone (HTTP %s), trying next.",
+                            model_id, exc.status_code)
+                continue
             if not credits.note_failure(scope, exc):
                 raise  # a real bug — surface it rather than cycling models
-            log.warning("background JSON call: %s out of credit, trying next.", model_id)
+            log.warning("background model call: %s out of credit, trying next.", model_id)
 
     # Every permitted model refused. Deliberately raises rather than returning a
     # fallback value: callers store what they get back, and a fabricated empty

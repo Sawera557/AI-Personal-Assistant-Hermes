@@ -162,7 +162,7 @@ class Config:
     # an old value in a deployed .env can't drag background spend back onto a
     # metered account.
     GUIDANCE_MODEL: str = os.getenv(
-        "HERMES_GUIDANCE_MODEL", "deepseek-ai/deepseek-v4-flash-0731"
+        "HERMES_GUIDANCE_MODEL", "google/diffusiongemma-26b-a4b-it"
     )
 
     WEB_SEARCH: bool = _bool(os.getenv("HERMES_WEB_SEARCH"), True)
@@ -234,7 +234,6 @@ class Config:
         "google/gemma-4-31b-it": os.getenv("NVIDIA_GEMMA_API_KEY", "").strip(),
         "google/diffusiongemma-26b-a4b-it": os.getenv("NVIDIA_DIFFUSIONGEMMA_API_KEY", "").strip(),
         "moonshotai/kimi-k3": os.getenv("NVIDIA_KIMI_API_KEY", "").strip(),
-        "deepseek-ai/deepseek-v4-flash-0731": os.getenv("NVIDIA_DEEPSEEK_API_KEY", "").strip(),
     }
     NVIDIA_BASE_URL: str = os.getenv(
         "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
