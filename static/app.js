@@ -862,10 +862,6 @@ connectBtn.addEventListener("click", async () => {
 (async function init() {
   showGreeting();
   await HermesBiz.load(); // populate the business list once, up front
-  HermesBiz.bind(
-    document.getElementById("hermes-biz-select-agent"),
-    document.getElementById("hermes-biz-badge-agent")
-  );
   // Switching the global business re-filters which past chats are shown, and
   // may reveal a mismatch with the open chat's actual lock.
   HermesBiz.onChange(() => { loadConversations(); updateLockNote(); });

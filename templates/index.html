@@ -195,12 +195,7 @@
 
         <!-- AI Agent panel: conversation history + settings -->
         <div class="panel-section visible" id="panel-agent">
-          <div class="panel biz-scope-panel">
-            <h2>Business</h2>
-            <select id="hermes-biz-select-agent" class="voice-select" aria-label="Active business"></select>
-            <p class="biz-not-connected" id="hermes-biz-badge-agent" hidden></p>
-            <p class="chat-lock-note" id="chat-lock-note" hidden></p>
-          </div>
+          <p class="chat-lock-note" id="chat-lock-note" hidden></p>
 
           <button id="reset-btn" class="ghost new-convo">＋ New conversation</button>
 
@@ -304,12 +299,6 @@
 
         <!-- Scheduled Tasks panel: sidebar metadata for the Tasks section -->
         <div class="panel-section" id="panel-tasks">
-          <div class="panel biz-scope-panel">
-            <h2>Business</h2>
-            <select id="hermes-biz-select-tasks" class="voice-select" aria-label="Active business"></select>
-            <p class="biz-not-connected" id="hermes-biz-badge-tasks" hidden></p>
-          </div>
-
           <button id="task-new-btn" class="ghost new-convo">＋ New task</button>
 
           <div class="panel push-bottom">
@@ -317,14 +306,8 @@
           </div>
         </div>
 
-        <!-- File Explorer panel: business selector + folder tree -->
+        <!-- File Explorer panel: folder tree (business comes from the top bar) -->
         <div class="panel-section" id="panel-files">
-          <div class="panel biz-scope-panel">
-            <h2>Business</h2>
-            <select id="hermes-biz-select-files" class="voice-select" aria-label="Active business"></select>
-            <p class="biz-not-connected" id="hermes-biz-badge-files" hidden></p>
-          </div>
-
           <button id="files-refresh-btn" class="ghost new-convo">↻ Refresh</button>
 
           <div class="panel files-tree-panel">

@@ -177,9 +177,16 @@ body {
 
 .app.panel-collapsed .content-panel { width: 0; }
 
-/* Settings has no per-view sidebar — collapse the content panel entirely so the
-   main pane goes full-width (no blank sidebar area). */
-.app[data-view="settings"] .content-panel { width: 0; border-right: 0; }
+/* These views have no per-view sidebar (business comes from the top bar and
+   each main view has its own New/Refresh buttons) — collapse the content panel
+   entirely so the main pane goes full-width (no blank sidebar area). */
+.app[data-view="settings"]  .content-panel,
+.app[data-view="bills"]     .content-panel,
+.app[data-view="context"]   .content-panel,
+.app[data-view="tasks"]     .content-panel,
+.app[data-view="jobs"]      .content-panel,
+.app[data-view="artefacts"] .content-panel,
+.app[data-view="pricing"]   .content-panel { width: 0; border-right: 0; }
 
 /* Each panel-section stays at the full panel width so it clips cleanly
    during the collapse animation rather than reflowing. */
@@ -799,12 +806,12 @@ body {
   margin: 8px 0 0; font-size: 11px; font-weight: 600; color: var(--accent);
 }
 
-/* Warns when the open chat's actual business lock differs from the dropdown
-   above — switching the dropdown never changes an already-started chat, so
+/* Warns when the open chat's actual business lock differs from the top-bar
+   business selector — switching it never changes an already-started chat, so
    without this the mismatch is invisible and messages silently save under
    the wrong (or no) business. */
 .chat-lock-note {
-  margin: 8px 0 0; font-size: 11px; line-height: 1.4; color: var(--accent);
+  margin: 0 0 12px; font-size: 11px; line-height: 1.4; color: var(--accent);
   background: rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 7px 9px;
 }
 
