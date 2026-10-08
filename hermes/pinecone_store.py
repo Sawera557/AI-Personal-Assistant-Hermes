@@ -135,7 +135,7 @@ def query(
         if query_vector is None:
             if not (query_text or "").strip():
                 return []
-            query_vector = embed([query_text])[0]
+            query_vector = embed([query_text], task="query")[0]
     except Exception:  # noqa: BLE001 — no embedding, no external matches this turn
         log.warning("Pinecone query skipped: embedding failed", exc_info=True)
         return []

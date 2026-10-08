@@ -48,6 +48,26 @@ MODEL_OPTIONS: list[dict[str, str]] = [
         "label": "OpenAI · GPT-5.4-mini (faster, cost-efficient)",
     },
     {
+        # Google's OpenAI-compatible endpoint, billed to GEMINI_API_KEY. Ranked
+        # ahead of NIM in the credit fallback: 1.4s to a correct tool call on
+        # 2026-10-07 while the free NIM endpoints were timing out.
+        "id": "gemini-3.5-flash",
+        "provider": "gemini",
+        "label": "Google · Gemini 3.5 Flash (fast, low-cost)",
+    },
+    # Free-tier Gemini quotas are per model (5 req/min on 3.5 Flash), so these
+    # give the credit fallback somewhere to go mid-conversation.
+    {
+        "id": "gemini-3-flash-preview",
+        "provider": "gemini",
+        "label": "Google · Gemini 3 Flash Preview (fast)",
+    },
+    {
+        "id": "gemini-3.5-flash-lite",
+        "provider": "gemini",
+        "label": "Google · Gemini 3.5 Flash-Lite (fastest, lowest cost)",
+    },
+    {
         "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
         "provider": "nvidia",
         "label": "NVIDIA · Nemotron 3.5 Lightning 30B (reasoning, low-cost)",
@@ -82,7 +102,15 @@ _KNOWN_IDS = {m["id"] for m in MODEL_OPTIONS}
 
 # Per-model price in USD per 1,000,000 tokens. `input` is the uncached prompt
 # remainder, `output` the generated tokens, `cache_read` the (cheaper) tokens
-# served from Anthropic's prompt cache. Edit these when provider rates change.
+# served from a prompt cache (Anthropic's, or OpenAI's automatic one). Edit
+# these when provider rates change.
+#
+# A `cache_read` of 0.0 means "not confirmed", NOT "cache hits are free": the
+# Gemini, NIM and gpt-5.4-mini entries are placeholders. For those models the
+# OpenAI-protocol path keeps billing every prompt token at the full `input`
+# rate even when the provider reports some as cached (see bills_cache_reads) —
+# subtracting them at a made-up rate of 0 would make a turn read cheaper than
+# it really was.
 MODEL_PRICING: dict[str, dict[str, float]] = {
     "claude-opus-4-8": {"input": 5.0, "output": 25.0, "cache_read": 0.50},
     "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0, "cache_read": 0.10},
@@ -91,6 +119,10 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "gpt-4o-mini": {"input": 0.15, "output": 0.60, "cache_read": 0.075},
     # TODO: confirm real rate — gpt-5.4-mini has no published price yet; placeholder.
     "gpt-5.4-mini": {"input": 0.25, "output": 2.0, "cache_read": 0.0},
+    # TODO: confirm real rate — placeholder so a turn never reads as free.
+    "gemini-3.5-flash": {"input": 0.30, "output": 2.50, "cache_read": 0.0},
+    "gemini-3-flash-preview": {"input": 0.30, "output": 2.50, "cache_read": 0.0},
+    "gemini-3.5-flash-lite": {"input": 0.10, "output": 0.40, "cache_read": 0.0},
     # TODO: confirm real rate — NVIDIA's hosted NIM endpoint doesn't publish a
     # per-token price for this model; placeholder so a turn never reads as free.
     # NIM has no prompt cache, hence cache_read 0.
@@ -171,6 +203,20 @@ def price_of(
     return round(cost, 6)
 
 
+def bills_cache_reads(model_id: str) -> bool:
+    """Whether `model_id` has a CONFIRMED, non-zero cache-read rate — i.e.
+    whether prompt tokens a provider reports as served from its cache may be
+    priced at `cache_read` instead of the full `input` rate (TURN_COST_PLAN
+    step 0.5; applied in agent._billed_usage).
+
+    False for every 0.0 placeholder (Gemini, NIM, gpt-5.4-mini) and for
+    unknown models: their cached tokens stay in `input`, billed exactly as
+    they were before the cached count was ever read. Today that makes it True
+    for the Claude family and gpt-4o-mini only."""
+    rates = _rates_for(model_id)
+    return bool(rates) and (rates.get("cache_read") or 0.0) > 0.0
+
+
 _lock = threading.Lock()
 _override: str | None = None  # process-global fallback when there's no DB
 
@@ -194,6 +240,8 @@ def provider_of(model_id: str) -> str:
         "qwen/", "deepseek-ai/", "moonshotai/",
     )):
         return "nvidia"
+    if model_id.startswith("gemini-"):
+        return "gemini"
     return "openai" if model_id.startswith(("gpt-", "o1", "o3", "o4")) else "anthropic"
 
 
@@ -311,9 +359,41 @@ def with_credit(model_id: str) -> str:
     if is_available(model_id):
         return model_id
     return next(
-        (m["id"] for m in MODEL_OPTIONS if m["id"] != model_id and is_available(m["id"])),
+        (m for m in _fallback_order() if m != model_id and is_available(m)),
         model_id,
     )
+
+
+def _fallback_order() -> list[str]:
+    """MODEL_OPTIONS with the NVIDIA tier re-ranked by BACKGROUND_MODELS'
+    measured speed. List order alone put Nemotron first, which on 2026-10-07
+    took >140s on a tool-using voice turn that DiffusionGemma answered in 58s."""
+    rank = {m: i for i, m in enumerate(BACKGROUND_MODELS)}
+    return sorted(
+        (m["id"] for m in MODEL_OPTIONS),
+        # Stable sort: Claude/OpenAI keep their order and stay ahead of NIM.
+        key=lambda i: (provider_of(i) == "nvidia", rank.get(i, len(rank))),
+    )
+
+
+def resolve_active_model() -> tuple[str, str]:
+    """(configured, effective): the model someone chose, and the model the
+    next agent turn should actually use — see active_model() for why they can
+    differ. One read of the stored setting for both.
+
+    The agent loop takes both so its per-call telemetry (TURN_COST_PLAN step
+    0.5) can flag a call served by a credit fallback — including the quiet
+    case where the configured model was already benched before the turn
+    began, which a mid-turn comparison alone would never see (fact 7: a
+    Gemini free-tier 429 re-bills the next greetings on Claude)."""
+    chosen = _configured()
+    substitute = with_credit(chosen)
+    if substitute != chosen:
+        log.warning(
+            "%s is out of credit; using %s for now (the stored setting is unchanged).",
+            chosen, substitute,
+        )
+    return chosen, substitute
 
 
 def active_model() -> str:
@@ -326,14 +406,7 @@ def active_model() -> str:
     itself once the account is topped up — the stored preference is left alone
     and comes back on its own.
     """
-    chosen = _configured()
-    substitute = with_credit(chosen)
-    if substitute != chosen:
-        log.warning(
-            "%s is out of credit; using %s for now (the stored setting is unchanged).",
-            chosen, substitute,
-        )
-    return substitute
+    return resolve_active_model()[1]
 
 
 def set_active_model(model_id: str) -> None:

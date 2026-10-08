@@ -581,7 +581,10 @@
       const r = await fetch(`/api/scheduled-tasks/${detailTask.task_id}/run`, { method: "POST" });
       const j = await r.json();
       if (!r.ok) { $("tk-detail-msg").textContent = j.error || "Run failed."; return; }
-      $("tk-detail-msg").textContent = j.status === "error" ? "Run finished with an error." : "Run complete.";
+      // "skipped" carries its reason — e.g. "Apps access is off" (the run was
+      // recorded but the agent never ran; see hermes/scheduler.py).
+      $("tk-detail-msg").textContent = j.status === "error" ? "Run finished with an error."
+        : j.status === "skipped" ? `Skipped: ${j.reason || "not run"}.` : "Run complete.";
       // Refresh the run list (and the card's last-run stamp behind the modal).
       const rr = await fetch(`/api/scheduled-tasks/${detailTask.task_id}/runs`);
       const jj = await rr.json();

@@ -80,7 +80,7 @@ html.pro .strip-tabs {
 }
 html.pro .strip-tabs::-webkit-scrollbar { display: none; }
 html.pro .strip-tab { padding-top: 7px !important; padding-bottom: 7px !important; flex: none; }
-html.pro .v2-strip-foot { flex: none; display: flex; flex-direction: column; align-items: center; padding: 6px 0; border-top: 1px solid var(--hair, rgba(127,205,255,.12)); }
+html.pro .v2-strip-foot { flex: none; width: 100%; display: flex; flex-direction: column; align-items: center; padding: 6px 0; border-top: 1px solid var(--hair, rgba(127,205,255,.12)); }
 html.pro .v2-strip-foot .strip-tab { width: 100%; }
 
 /* one primary action per screen */
@@ -151,7 +151,7 @@ html.pro .hud-rings { cursor: pointer; }
 html.pro .hud-core-face { transition: transform .2s ease, filter .2s ease; }
 html.pro .hud-rings:hover .hud-core-face { filter: brightness(1.08); }
 html.pro .hud-core-face:focus-visible { outline: 2px solid #7fdcff; outline-offset: 6px; border-radius: 50%; }
-html.pro .hud-core-cap::after { content: " · click to chat"; }
+html.pro .hud-core-cap::after { content: " · click to talk"; }
 
 /* ── Pass 3 fixes ── */
 html.pro .app { overflow: hidden; }

@@ -55,4 +55,4 @@ The one exception: once a chat `session_id` has messages, the server locks *that
 3. Save the `session_id` from the response — send it on every follow-up in the same conversation.
 4. `GET /api/conversations?entity_id=...` to list past chats; `GET /api/conversations/{session_id}` to reopen one.
 
-Full field-by-field reference for every endpoint is inline in each Postman request's Documentation tab, and also in [`../API_ENDPOINTS.md`](../API_ENDPOINTS.md) at the repo root if you'd rather read it as one doc.
+Full field-by-field reference for every endpoint is inline in each Postman request's Documentation tab, and also in [`../API_ENDPOINTS.md`](../docs/architecture/API_ENDPOINTS.md) at the repo root if you'd rather read it as one doc.

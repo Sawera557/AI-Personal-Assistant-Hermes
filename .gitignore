@@ -38,3 +38,7 @@ instance/
 HERMES_CONTEXT_PACKS.md
 HERMES_PLAYBOOKS.md
 blank_bills_backup_*.json
+
+# Local backups and script output (may hold PII) — never commit
+backups/
+scripts/output/

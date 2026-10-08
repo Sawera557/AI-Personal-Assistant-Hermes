@@ -147,7 +147,9 @@
     const face = $(".hud-core-face"), rings = $("#hud-rings");
     if (!face || !rings || rings.dataset.v2) return;
     rings.dataset.v2 = "1";
+    // With Gemini Live configured the orb is a voice button; otherwise it opens chat.
     const go = () => {
+      if (window.HermesLive) return window.HermesLive.toggle();
       const t = $('.strip-tab[data-view="agent"]');
       if (t) t.click();
       setTimeout(() => { const i = $("#input"); if (i) i.focus(); }, 250);
@@ -155,8 +157,9 @@
     [face, rings].forEach((el) => { el.style.cursor = "pointer"; });
     face.setAttribute("role", "button");
     face.setAttribute("tabindex", "0");
-    face.setAttribute("aria-label", "Open Agent chat");
-    face.title = "Open Agent chat";
+    const label = window.HermesLive ? "Talk to Hermes" : "Open Agent chat";
+    face.setAttribute("aria-label", label);
+    face.title = label;
     rings.addEventListener("click", (e) => {
       const r = rings.getBoundingClientRect();
       const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);

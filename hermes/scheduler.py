@@ -9,7 +9,9 @@ Two responsibilities, deliberately separate from storage (hermes/db/scheduled_ta
 * **What** — `run_task` executes one run through the SAME Hermes agent the chat
   uses (`run_turn`), with the task's business locked, its allowed apps as the
   only tools, and an autonomy guardrail prepended so an unattended run can't
-  send/modify anything the user didn't explicitly authorize.
+  send/modify anything the user didn't explicitly authorize. While the Apps
+  access switch is off a run is skipped and recorded as such; the Business
+  context switch never applies to it (unattended runs always get full context).
 
 Firing is pull-based: something (a cron hitting /api/scheduled-tasks/run-due, or
 a manual "Run now") asks the DB layer for due tasks and calls `run_task` on each.
@@ -356,7 +358,51 @@ def build_run_prompt(task: dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
-def run_task(task: dict[str, Any]) -> dict[str, Any]:
+#: Why a run was skipped when the Apps access switch is off — stored as the
+#: run's reply and returned in the run summary's `reason`. The same words as
+#: hermes.apps_access.OFF_REASON, which meeting notes return when they skip
+#: (tests/test_scheduler_switches.py pins the two together).
+APPS_OFF_REASON = "Apps access is off"
+
+
+def _apps_off_result() -> dict[str, Any]:
+    """The result of a run that did NOT happen because Apps access is off.
+
+    Shaped like a real agent result (zero usage, no tool calls) so every caller
+    and the run history render it as an ordinary run, with `skipped` set so
+    execute_and_record records it as a 'skipped' run rather than a 'success'."""
+    return {
+        "reply": (
+            f"Skipped: {APPS_OFF_REASON}. Scheduled tasks don't run while Apps access "
+            "is switched off in Settings, because they would run without the tools "
+            "they were written for. Turn Apps access back on and the task runs at "
+            "its next scheduled time."
+        ),
+        "thinking": None,
+        "tool_calls": [],
+        "stop_reason": "skipped",
+        "usage": {
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+        },
+        "cost_usd": 0.0,
+        "model_used": None,
+        "skipped": APPS_OFF_REASON,
+    }
+
+
+def _apps_on() -> bool:
+    """The Apps access switch (hermes.apps_access). Fails OPEN like the switch
+    itself: a settings hiccup must not silently stop every scheduled task."""
+    try:
+        from . import apps_access
+
+        return apps_access.enabled()
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def run_task(task: dict[str, Any], *, apps_on: bool | None = None) -> dict[str, Any]:
     """Execute one run of a task through the Hermes agent and return its result
     dict ({reply, thinking, tool_calls, stop_reason}).
 
@@ -365,7 +411,31 @@ def run_task(task: dict[str, Any]) -> dict[str, Any]:
     guardrail prepended. Runs under a throwaway, per-run session key so it never
     shows up in the chat history sidebar or leaks into a real conversation's
     working memory.
+
+    The two Settings switches (TURN_COST_PLAN step 0.3, owner decision §8 Q2):
+      * Apps access OFF: the turn is NOT run. A task was written for its tools;
+        run without them it would "succeed" with an answer that never looked
+        anything up. The switch doubles as an emergency stop for unattended
+        sends, so it returns an explicit skipped result instead.
+      * Business context is ignored: the agent gives an unattended turn
+        (interactive=False) full context whatever the switch says — making chat
+        cheaper must not quietly strip a task of the owner's rules.
+
+    `apps_on` is the switch as execute_and_record already read it for this fire
+    (None — a direct caller such as scripts/_run_nh_all.py — reads it here).
+    The switch is read ONCE per fire and that one reading decides everything:
+    whether the run happens, and (passed on to run_turn) whether the agent gets
+    its tools. A second read could disagree with the first if the owner flips
+    the switch in between: a windowed task would have its day claimed for a run
+    that then skips (that day never processed), or a run the scheduler chose to
+    execute would go out tool-less on the ADVISOR prompt and be delivered as a
+    "success" saying apps access is off.
     """
+    if apps_on is None:
+        apps_on = _apps_on()
+    if not apps_on:
+        return _apps_off_result()
+
     from .agent import run_turn
     from .memory import store
 
@@ -390,6 +460,8 @@ def run_task(task: dict[str, Any]) -> dict[str, Any]:
             # from a readonly or draft run. Passing it here is what arms that gate.
             interactive=False,
             autonomy=(task.get("autonomy") or "readonly"),
+            # The reading that decided this run happens at all — see above.
+            apps_on=True,
         )
     finally:
         # Never let a scheduled run accumulate working memory across fires.
@@ -410,11 +482,24 @@ def execute_and_record(task: dict[str, Any], trigger: str = "schedule") -> dict[
     to its next slot before the multi-minute agent run), so the same still-due
     task can't be re-selected and fired again by every poll in that window, and
     concurrent pollers can't both grab it. If another poll already claimed it we
-    return a 'skipped' summary without running. A manual run never claims."""
+    return a 'skipped' summary without running. A manual run never claims.
+
+    With Apps access off, the fire is still claimed (so the schedule moves on
+    instead of retrying every poll) and recorded as a 'skipped' run whose reply
+    says "Apps access is off" — the agent never runs and nothing is delivered."""
     from .db import scheduled_tasks as repo
 
     task_id = task.get("task_id")
     windowed = bool(task.get("window_pace"))
+    # Apps access off = this fire is recorded as skipped, not run (see run_task).
+    # Read ONCE here, before the claim: a windowed task must not have a day
+    # claimed (its cursor advanced) for a run that is then skipped — that day
+    # would never be processed. So while Apps is off a windowed fire takes the
+    # plain claim instead: next_run_at moves on, the window cursor stays put,
+    # and the backfill resumes on the same day once Apps is back on. The same
+    # reading is handed to run_task (and from there to the agent), so nothing
+    # downstream re-reads the switch and contradicts the claim made here.
+    apps_on = _apps_on()
 
     # Claim before running (scheduled only). This is the fix for the re-entrancy
     # multi-fire: next_run_at moves forward up front, atomically, guarding the
@@ -422,7 +507,7 @@ def execute_and_record(task: dict[str, Any], trigger: str = "schedule") -> dict[
     if trigger == "schedule":
         next_run = compute_next_run(task.get("schedule") or {}, task.get("timezone")) \
             if task.get("enabled") else None
-        if windowed:
+        if windowed and apps_on:
             # A windowed fire also advances the date cursor atomically and tells us
             # which single day it claimed, so we can scope the run to that day.
             claimed_day = repo.claim_due_window(task_id, next_run)
@@ -442,7 +527,19 @@ def execute_and_record(task: dict[str, Any], trigger: str = "schedule") -> dict[
     # next_run_at is already advanced (at claim, for scheduled) or intentionally
     # left alone (manual), so finish_run never touches it here.
     try:
-        result = run_task(task)
+        result = run_task(task, apps_on=apps_on)
+        if result.get("skipped"):
+            # Recorded, so the run history says why nothing happened — but not
+            # delivered: Apps off is also the stop for anything outbound, and a
+            # "nothing ran" email is noise the run history already answers.
+            repo.finish_run(
+                run_id, task_id, status="skipped", reply=result.get("reply"),
+                tool_calls=[], set_next=False,
+            )
+            return {
+                "task_id": task_id, "run_id": run_id, "status": "skipped",
+                "reason": result["skipped"], "reply": result.get("reply"),
+            }
         status = "error" if result.get("stop_reason") == "refusal" else "success"
         repo.finish_run(
             run_id, task_id,

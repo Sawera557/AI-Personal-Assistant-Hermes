@@ -571,11 +571,27 @@ def generate_ai_notes(*, business_slug: str, business_name: str, meeting_title: 
     Runs in a fresh, throwaway conversation — nothing is added to the regular
     chat history sidebar; the caller decides whether/where to persist the
     result (see hermes.db.meetings.save_ai_notes).
+
+    While Apps access is off (TURN_COST_PLAN step 0.3, owner decision §8 Q2)
+    the agent is NOT called: the result is {"notes": "", "tool_calls": [],
+    "skipped": "Apps access is off"} and the caller must not save it. These
+    notes exist to read Gmail and Drive live; run without tools the agent
+    could only answer from the ADVISOR prompt ("apps access is switched off")
+    or from indexed context with no Drive links — and that reply, saved, would
+    overwrite the meeting's good notes. It also keeps the switch a real
+    emergency stop: no paid provider call happens behind it. The switch is
+    read once and that reading is handed to run_turn (`apps_on`), so a flip
+    between the check and the agent can't produce the very reply this guards
+    against.
     """
     import uuid as _uuid
 
+    from . import apps_access
     from .agent import run_turn  # local import: keep this module's normal
     # (non-tool-use) path free of the agent's heavier import chain
+
+    if not apps_access.enabled():
+        return {"notes": "", "tool_calls": [], "skipped": apps_access.OFF_REASON}
 
     prompt = (
         f'Fetch all relevant information regarding "{meeting_title}" from my Gmail, '
@@ -585,7 +601,16 @@ def generate_ai_notes(*, business_slug: str, business_name: str, meeting_title: 
         f"files from Drive."
     )
     throwaway_session = str(_uuid.uuid4())
-    result = run_turn(throwaway_session, prompt, voice=False, active_business=business_slug)
+    # An unattended, read-only job (B19). Nobody answers inside this throwaway
+    # session, yet the turn reads untrusted Gmail and Drive content — run as a
+    # chat turn it carried every write tool, so an instruction planted in an
+    # email could send, delete or rewrite scheduled tasks with nobody watching
+    # (with confirmations off, at once). Read-only autonomy removes the write
+    # tools and refuses them at dispatch; notes only ever needed to read.
+    result = run_turn(
+        throwaway_session, prompt, voice=False, active_business=business_slug, apps_on=True,
+        interactive=False, autonomy="readonly",
+    )
     return {
         "notes": result.get("reply") or "",
         "tool_calls": result.get("tool_calls") or [],

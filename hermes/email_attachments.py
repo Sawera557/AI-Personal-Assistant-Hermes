@@ -9,7 +9,11 @@ Flow (identical every call):
   * confirm omitted/false   -> generate/collect attachments, build the message,
     save it as a Gmail draft, return draft_id + preview. Nothing is sent.
   * confirm=true + draft_id  -> send exactly that reviewed draft (byte-for-byte).
-  * confirm=true, no draft_id -> build and send fresh (fallback).
+  * confirm=true, no draft_id -> refused; nothing is built or sent (B4 in
+    docs/architecture/TURN_COST_PLAN.md — it used to rebuild and send unreviewed).
+
+In a live chat the send also needs the approval_token handed out with the
+draft, on a later turn than the prepare (hermes.guardrails draft gate).
 
 Any single attachment over ~25 MB is uploaded to Drive and linked in the body
 instead of attached, so the send never fails on size.
@@ -42,6 +46,11 @@ def _mime_split(media_type: str) -> tuple[str, str]:
     return main.strip(), sub
 
 
+#: Header on a prepared draft listing the Drive files its body links to, which
+#: are shared only when that draft is actually sent (see _drive_upload).
+DRIVE_FILES_HEADER = "X-Hermes-Drive-Files"
+
+
 def _build_mime(
     *,
     to: list[str],
@@ -49,6 +58,7 @@ def _build_mime(
     body: str,
     cc: list[str] | None,
     attachments: list[tuple[str, str, bytes]],
+    drive_file_ids: list[str] | None = None,
 ) -> str:
     """Build a multipart RFC 2822 message with file attachments and base64url-
     encode it for Gmail's `raw` field. `attachments` is a list of
@@ -58,6 +68,8 @@ def _build_mime(
     msg["To"] = ", ".join(to)
     if cc:
         msg["Cc"] = ", ".join(cc)
+    if drive_file_ids:
+        msg[DRIVE_FILES_HEADER] = ",".join(drive_file_ids)
     msg["Subject"] = subject
     msg.set_content(body)
     for filename, media_type, raw in attachments:
@@ -147,12 +159,19 @@ def _resolve_attachments(
     return out
 
 
-def _drive_upload_link(
+def _drive_upload(
     client: MatonClient, filename: str, media_type: str, raw: bytes
-) -> str:
-    """Upload an oversized attachment to Google Drive, grant anyone-with-link
-    read access, and return the shareable webViewLink. Only used for files too
-    big to attach to a Gmail message, so the send never fails on size."""
+) -> tuple[str, str]:
+    """Upload an oversized attachment to Google Drive, PRIVATELY, and return
+    (file_id, webViewLink). Only used for files too big to attach to a Gmail
+    message, so the send never fails on size.
+
+    This runs in the PREPARE step, before the user has approved anything, so it
+    grants nobody access. It used to make the file readable by anyone with the
+    link right here — public before the send was even confirmed, and for good
+    if it never was. The file is shared in the SEND step instead
+    (_share_drive_files), once the reviewed draft actually goes out; the draft
+    carries the file ids in DRIVE_FILES_HEADER so the send can find them."""
     up = client.upload_binary(
         "google-drive", "POST", "upload/drive/v3/files",
         data=raw, content_type=media_type or "application/octet-stream",
@@ -168,29 +187,63 @@ def _drive_upload_link(
         raise MatonError(f"Drive upload of {filename!r} returned no file id.")
     # A media upload creates the file as 'Untitled' — give it the real name.
     client.request("google-drive", "PATCH", f"drive/v3/files/{file_id}", body={"name": filename})
-    # Anyone-with-the-link read access so the recipient can actually open it.
-    client.request(
-        "google-drive", "POST", f"drive/v3/files/{file_id}/permissions",
-        body={"role": "reader", "type": "anyone"},
-    )
     meta = client.request(
         "google-drive", "GET", f"drive/v3/files/{file_id}", query={"fields": "webViewLink"}
     )
     link = (meta.get("data") or {}).get("webViewLink")
     if not link:
-        raise MatonError(f"Uploaded {filename!r} to Drive but couldn't get a shareable link.")
-    return link
+        raise MatonError(f"Uploaded {filename!r} to Drive but couldn't get its link.")
+    return file_id, link
+
+
+def _draft_drive_files(client: MatonClient, draft_id: str) -> list[str]:
+    """The Drive file ids a prepared draft links to (its DRIVE_FILES_HEADER)."""
+    result = _gmail_request(
+        client, "GET", f"/gmail/v1/users/me/drafts/{draft_id}",
+        None, query={"format": "metadata", "metadataHeaders": DRIVE_FILES_HEADER},
+    )
+    if not result.get("ok"):
+        raise MatonError(
+            f"Couldn't read draft {draft_id} before sending (status {result.get('status')}). "
+            "Nothing was sent."
+        )
+    message = (result.get("data") or {}).get("message") or {}
+    headers = (message.get("payload") or {}).get("headers") or []
+    value = next(
+        (h.get("value") for h in headers
+         if isinstance(h, dict) and str(h.get("name", "")).lower() == DRIVE_FILES_HEADER.lower()),
+        "",
+    )
+    return [f.strip() for f in str(value or "").split(",") if f.strip()]
+
+
+def _share_drive_files(client: MatonClient, file_ids: list[str]) -> None:
+    """Share a sent draft's linked Drive files: anyone with the link may read,
+    as before — now only once the reviewed email is actually going out. Link
+    access (not per-person grants) because Drive refuses silent person grants
+    to addresses without a Google account, which most external clients are."""
+    for file_id in file_ids:
+        granted = client.request(
+            "google-drive", "POST", f"drive/v3/files/{file_id}/permissions",
+            body={"role": "reader", "type": "anyone"},
+        )
+        if not granted.get("ok"):
+            raise MatonError(
+                f"Couldn't share the linked Drive file {file_id} (status {granted.get('status')}). "
+                "Nothing was sent."
+            )
 
 
 def _gmail_request(
-    client: MatonClient, method: str, path: str, body: dict[str, Any]
+    client: MatonClient, method: str, path: str, body: dict[str, Any] | None,
+    query: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A google-mail request that turns a Gmail 429 (Google's 'user-rate limit
     exceeded', a temporary per-account throttle) into a clean, truthful
     MatonError — so it's reported as a plain 'try again shortly' message with
     the retry-after time, never as a raw JSON blob the model has to paraphrase
     (and can mislabel). Any other response is returned unchanged."""
-    result = client.request("google-mail", method, path, body=body)
+    result = client.request("google-mail", method, path, query=query, body=body)
     if result.get("status") == 429:
         data = result.get("data")
         msg = ((data.get("error") or {}).get("message") or "") if isinstance(data, dict) else ""
@@ -222,6 +275,9 @@ def run(
     # SEND stage — send exactly the reviewed draft. Deterministic happy path:
     # no rebuild, so what goes out is byte-for-byte what was approved.
     if confirm and draft_id:
+        # Files too big to attach were uploaded privately at prepare; they are
+        # shared now, with the approved send, and not a moment earlier.
+        _share_drive_files(client, _draft_drive_files(client, draft_id))
         result = _gmail_request(
             client, "POST", "/gmail/v1/users/me/drafts/send", {"id": draft_id}
         )
@@ -229,13 +285,33 @@ def run(
         return {**result, "data": {**data, "sent": result.get("ok", False),
                                    "draft_id": draft_id, "to": to}}
 
-    # Build the message (for a fresh confirmed send or for the prepare draft).
+    # A send must reference a reviewed draft. There used to be a fallback here
+    # that, given confirm=true and no draft_id, rebuilt the message from the
+    # arguments and sent it straight away — an email nobody had reviewed, from
+    # a tool whose whole contract is "a review always happens first" (B4). It
+    # is refused before anything is generated or uploaded.
+    if confirm:
+        return {
+            "status": 400,
+            "ok": False,
+            "error": (
+                "confirm=true needs the draft_id from a prepare call. Call "
+                "email_with_attachment WITHOUT confirm first: it saves a Gmail draft and returns "
+                "a preview. In a live chat, show the user that preview and send only after they "
+                "approve it on their next message; in an unattended run, send the prepared draft "
+                "straight away with confirm=true and its draft_id. Nothing was sent."
+            ),
+        }
+
+    # Build the message for the prepare draft.
     attachments = _resolve_attachments(tool_input, active_business)
     inline: list[tuple[str, str, bytes]] = []
     linked: list[tuple[str, int, str]] = []
+    drive_file_ids: list[str] = []
     for filename, media_type, raw in attachments:
         if len(raw) > MAX_ATTACH_BYTES:
-            link = _drive_upload_link(client, filename, media_type, raw)
+            file_id, link = _drive_upload(client, filename, media_type, raw)
+            drive_file_ids.append(file_id)
             linked.append((filename, len(raw), link))
         else:
             inline.append((filename, media_type, raw))
@@ -246,7 +322,10 @@ def run(
             lines.append(f"  - {filename} ({size // (1024 * 1024)} MB): {link}")
         body = body + "\n".join(lines)
 
-    raw_msg = _build_mime(to=to, subject=subject, body=body, cc=cc, attachments=inline)
+    raw_msg = _build_mime(
+        to=to, subject=subject, body=body, cc=cc, attachments=inline,
+        drive_file_ids=drive_file_ids,
+    )
     preview = {
         "to": to,
         "cc": cc or [],
@@ -256,14 +335,6 @@ def run(
             {"filename": f, "size_bytes": s, "link": lk} for f, s, lk in linked
         ],
     }
-
-    # SEND stage (fallback) — confirm=true but no draft_id to reference.
-    if confirm:
-        result = _gmail_request(
-            client, "POST", "/gmail/v1/users/me/messages/send", {"raw": raw_msg}
-        )
-        data = result.get("data") if isinstance(result.get("data"), dict) else {}
-        return {**result, "data": {**data, "sent": result.get("ok", False), **preview}}
 
     # PREPARE stage — hold as a Gmail draft; do NOT send.
     result = _gmail_request(

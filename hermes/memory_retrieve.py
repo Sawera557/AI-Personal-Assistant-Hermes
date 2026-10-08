@@ -80,7 +80,7 @@ def build_memory_block(*, active_business: str | None, latest_user_text: str) ->
     vector: list[float] | None = None
     if text:
         try:
-            vector = embed([text])[0]
+            vector = embed([text], task="query")[0]
         except Exception:  # noqa: BLE001 — no relevance search this turn, always-inject still runs
             vector = None
     if vector is not None:
@@ -94,7 +94,47 @@ def build_memory_block(*, active_business: str | None, latest_user_text: str) ->
         futures = {name: pool.submit(fn) for name, fn in tasks.items()}
         for name, fut in futures.items():
             results[name] = fut.result()
+    return _format_block(results)
 
+
+def _db_off() -> bool:
+    """HERMES_DISABLE_DB set, or no database configured. Memories live only in
+    Postgres, so there is nothing to read — and trying would only stall the
+    turn on connection retries before failing open to "no memory" anyway."""
+    if os.getenv("HERMES_DISABLE_DB", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    return not os.getenv("DBRDS_HOST", "").strip()
+
+
+def build_always_block(*, active_business: str | None) -> str:
+    """Only the ALWAYS tier: the owner's and the locked business's standing
+    rules/preferences (always_inject rows). Query-independent, so no embedding
+    and no relevance search — the same two cheap indexed lookups
+    build_memory_block starts with.
+
+    Used by the standing-rules core (TURN_COST_PLAN step 0.3) on a turn that
+    offers tools while Business context is off: the semantic tier, RAG and
+    recall are dropped with the context, but a standing rule the owner saved
+    ("never contact tenants by text", "CC me on every invoice email") has to
+    keep travelling with the tools that could break it.
+
+    Project-scope always rows are deliberately left out: they are fetched with
+    no business filter (TURN_COST_PLAN B15), so in a locked turn they could
+    carry another business's rules in."""
+    if not Config.MEMORY_EXTRACT_ENABLED or _db_off():
+        return ""
+    entity_id = _resolve_entity_id(active_business)
+    results: dict[str, list[dict]] = {"owner_always": _always("owner")}
+    if entity_id:
+        results["business_always"] = _always("business", entity_id=entity_id)
+    return _format_block(results)
+
+
+def _format_block(results: dict[str, list[dict]]) -> str:
+    """Render fetched memory rows (keyed `<scope>_always` / `<scope>_semantic`)
+    as the grouped, de-duplicated, length-capped block the prompt carries.
+    Shared by the full block and the always-only block so the two can't drift
+    into two different shapes for the same rows."""
     seen: set[str] = set()
     groups: dict[str, list[str]] = {"Standing rules & preferences": [], "Business": [], "Project": []}
     for key, always_label, semantic_label in (

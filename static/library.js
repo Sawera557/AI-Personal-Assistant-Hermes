@@ -57,7 +57,7 @@
   // ── Files sub-list ─────────────────────────────────────────────────────────
   async function loadFiles() {
     const listEl = $("files-list");
-    const emptyEl = $("files-empty");
+    const emptyEl = $("lib-files-empty");
     if (!listEl) return;
     listEl.innerHTML = spinner("Loading files…");
     let files = [];
@@ -79,6 +79,10 @@
     listEl.innerHTML = files.map(fileCard).join("");
   }
 
+  // Long filenames have no spaces to wrap at — allow breaks after _ - . so they
+  // wrap at word boundaries instead of mid-word.
+  const breakable = (name) => esc(name).replace(/([_.\-])/g, "$1<wbr>");
+
   function fileCard(f) {
     const dl = `/api/generated-files/${encodeURIComponent(f.file_id)}/download`;
     const size = f.size_bytes != null ? `<span class="tk-chip">${esc(fmtBytes(f.size_bytes))}</span>` : "";
@@ -86,13 +90,13 @@
       <div class="tk-card" data-id="${esc(f.file_id)}">
         <div class="tk-card-main">
           <div class="tk-card-top">
-            <div class="tk-card-name">${fileIcon(f.content_type, f.filename)} ${esc(f.filename)}</div>
+            <div class="tk-card-name">${fileIcon(f.content_type, f.filename)} ${breakable(f.filename)}</div>
           </div>
           <div class="tk-card-chips">${bizChip(f.business)}${size}</div>
           <div class="tk-card-foot"><span class="tk-last">Created ${esc(fmtWhen(f.created_at))}</span></div>
         </div>
         <div class="tk-card-actions">
-          <a class="tk-btn" href="${dl}" target="_blank" rel="noopener">Open ↗</a>
+          <a class="tk-btn" href="${dl}" target="_blank" rel="noopener" data-uri="${esc(f.s3_uri || "")}" data-name="${esc(f.filename)}">Open ↗</a>
           <button class="tk-btn tk-danger" type="button" data-delfile="${esc(f.file_id)}">Delete</button>
         </div>
       </div>`;

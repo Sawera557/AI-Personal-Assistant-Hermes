@@ -182,6 +182,18 @@ class Config:
     # per-business via hermes_settings. Default on.
     GUARDRAIL_BUSINESS_ISOLATION: bool = _bool(os.getenv("HERMES_GUARDRAIL_BUSINESS_ISOLATION"), True)
 
+    # Guardrail #3: block secrets in outbound actions. A send or external write
+    # whose arguments carry a credential (API key, private key, access token) or
+    # a payment card number is refused outright — in live chat AND unattended
+    # runs, where a prompt-injected email could otherwise exfiltrate one.
+    GUARDRAIL_SECRET_EGRESS: bool = _bool(os.getenv("HERMES_GUARDRAIL_SECRET_EGRESS"), True)
+
+    # Guardrail #4: cap sends and deletes per turn. Stops a looping model (or an
+    # injected "email everyone in this list") from mass-sending or mass-deleting
+    # in one turn, including unattended runs where nobody approves each action.
+    GUARDRAIL_SEND_LIMIT: bool = _bool(os.getenv("HERMES_GUARDRAIL_SEND_LIMIT"), True)
+    GUARDRAIL_MAX_SENDS_PER_TURN: int = int_env("HERMES_GUARDRAIL_MAX_SENDS_PER_TURN", 10)
+
     # ---- Voice layer (speech-to-text + text-to-speech) --------------------
     # The agent "brain" stays Claude (`run_turn`), so the voice agent keeps the
     # EXACT same app functionality as the typed chat. The voice provider only
@@ -219,6 +231,13 @@ class Config:
     GROQ_TTS_VOICES: tuple[str, ...] = (
         "autumn", "diana", "hannah", "austin", "daniel", "troy",
     )
+
+    # Gemini Live — real-time voice on the Home orb (hermes/gemini_live.py).
+    # Gemini does the speaking/listening; questions about the user's data still
+    # go to the Claude agent through its `ask_hermes` tool.
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
+    GEMINI_LIVE_MODEL: str = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.8-live").strip()
+    GEMINI_LIVE_VOICE: str = os.getenv("GEMINI_LIVE_VOICE", "Sulafat").strip()
 
     # NVIDIA NIM — a CHAT provider, not a voice one. Its API is OpenAI-shaped
     # (the `openai` SDK talks to it unchanged) but it needs its own key and
@@ -450,6 +469,143 @@ class Config:
         """Whether finished turns are recorded into conversation_memory."""
         return _bool(os.getenv("HERMES_CONVO_MEMORY_WRITE"), False)
 
+    # ---- Apps / Business-context split (TURN_COST_PLAN step 0.3) -----------
+    # Both read the environment on every call (not once at import), like the
+    # conversation-memory switches above, so a test can flip one for itself
+    # without reloading the module. Both default OFF, and anything that isn't a
+    # recognised "on" value reads as off — an unknown value must fall back to
+    # today's behaviour, never into the new state.
+
+    @classmethod
+    def split_toggles(cls) -> bool:
+        """HERMES_SPLIT_TOGGLES: whether Business context OFF with Apps access ON
+        keeps the tools (the new state — tools on, retrieval blocks off, the
+        standing-rules core injected in their place).
+
+        Off (the default) keeps the legacy coupling for interactive chat:
+        Context off also strips every tool and answers from the plain prompt,
+        exactly as before the split. It ships only together with the
+        standing-rules core, because tools without the pack would otherwise
+        lose the owner's hard rules (money only from live data, security)."""
+        return _bool(os.getenv("HERMES_SPLIT_TOGGLES"), False)
+
+    @classmethod
+    def standing_rules_core(cls) -> bool:
+        """HERMES_STANDING_RULES_CORE: whether a turn with Business context ON
+        but an EMPTY context-pack block (the `context_packs` table missing or
+        empty — TURN_COST_PLAN B24) still carries the standing-rules core next
+        to its tools.
+
+        Separate from split_toggles() on purpose: it changes the payload of
+        today's default state (+~377 tokens per call wherever the pack is
+        absent), which is an owner decision (§8 Q5). The Context-off + Apps-on
+        state always carries the core and does not consult this switch."""
+        return _bool(os.getenv("HERMES_STANDING_RULES_CORE"), False)
+
+    # ---- Provider reasoning-effort values (TURN_COST_PLAN step 0.4) --------
+
+    @classmethod
+    def provider_effort(cls) -> bool:
+        """HERMES_PROVIDER_EFFORT: whether a `light` provider call (the CHAT and
+        LIGHT tiers — never a FULL turn) carries the per-model reasoning_effort
+        values in hermes.agent._REASONING (Kimi, gpt-oss, gpt-5.x, Gemini).
+
+        Off by default and meant to stay off until the owner-run probes in step
+        2.3 have shown each value is accepted and actually lowers reasoning
+        tokens: none of them has been sent to a provider yet. The proven
+        switches — Anthropic thinking omitted, the NIM boolean thinking toggles
+        flipped to False — do not depend on this flag. Read per call, like the
+        switches above, so a test can flip it for itself."""
+        return _bool(os.getenv("HERMES_PROVIDER_EFFORT"), False)
+
+    # ---- Per-turn router (TURN_COST_PLAN Phase 1, hermes/turn_router.py) ---
+    # All read per call, like the switches above, and all fail to today's
+    # behaviour: an unknown mode is "off", a garbage number is the default
+    # (int_env / float_env), an out-of-range one is clamped. Hard invariant 9:
+    # a misconfigured router must route FULL, never cheaper.
+
+    ROUTER_MODES: tuple[str, ...] = ("off", "shadow", "on")
+    ROUTER_LIGHT_MODES: tuple[str, ...] = ("off", "shadow", "strict")
+
+    @classmethod
+    def router_mode(cls) -> str:
+        """HERMES_ROUTER_MODE: off | shadow | on (default off).
+
+        off    — the router is bypassed; every turn is FULL (today's path).
+        shadow — the router decides and logs the would-be tier, but the turn
+                 still runs FULL (step 1.6's measurement week).
+        on     — CHAT-tier turns actually run on the tool-free CHAT path
+                 (and, from step 1.5, only while auto_trim_enabled is also on).
+
+        Anything else — a typo, "true", "1" — reads as off. "on" is spelled out
+        on purpose: a boolean-looking value must not switch routing on."""
+        raw = (os.getenv("HERMES_ROUTER_MODE") or "").strip().lower()
+        return raw if raw in cls.ROUTER_MODES else "off"
+
+    @classmethod
+    def router_chat_max_tokens(cls) -> int:
+        """HERMES_ROUTER_CHAT_MAX_TOKENS (default 1024): the output cap for a
+        CHAT-tier call — applied only where reasoning is switched off on that
+        call (step 1.2), because NIM bills reasoning against max_tokens and a
+        capped Kimi-at-"max" greeting would escalate on every turn. A value
+        below 1 falls back to the default rather than producing a 0-token cap."""
+        value = int_env("HERMES_ROUTER_CHAT_MAX_TOKENS", 1024)
+        return value if value >= 1 else 1024
+
+    @classmethod
+    def router_lite_history(cls) -> int:
+        """HERMES_ROUTER_LITE_HISTORY (default 2): how many trailing CHAT
+        exchanges a CHAT turn may replay. Never negative; 0 means none."""
+        return max(0, int_env("HERMES_ROUTER_LITE_HISTORY", 2))
+
+    @classmethod
+    def router_lite_history_chars(cls) -> int:
+        """HERMES_ROUTER_LITE_HISTORY_CHARS (default 600): per-message char
+        budget for that replayed CHAT history. Never negative."""
+        return max(0, int_env("HERMES_ROUTER_LITE_HISTORY_CHARS", 600))
+
+    @classmethod
+    def router_extra_terms(cls) -> tuple[str, ...]:
+        """HERMES_ROUTER_EXTRA_TERMS (default empty): comma-separated extra
+        proper nouns — tenants, staff, vendors, project names — that force FULL
+        whenever a message contains one, on top of the business names and app
+        words the router already knows. Matched case-insensitively as whole
+        words/phrases. Blank entries are ignored."""
+        raw = os.getenv("HERMES_ROUTER_EXTRA_TERMS") or ""
+        return tuple(t.strip() for t in raw.split(",") if t.strip())
+
+    @classmethod
+    def router_shadow_sample(cls) -> float:
+        """HERMES_ROUTER_SHADOW_SAMPLE (default 0.0): in shadow mode, the share
+        (0.0–1.0) of would-be-CHAT turns that also run — and discard — the CHAT
+        call, so the escalation rate is measured before go-live (step 1.6).
+        Clamped to [0, 1]; NaN reads as 0."""
+        value = float_env("HERMES_ROUTER_SHADOW_SAMPLE", 0.0)
+        if value != value:  # NaN
+            return 0.0
+        return min(1.0, max(0.0, value))
+
+    @classmethod
+    def router_light(cls) -> str:
+        """HERMES_ROUTER_LIGHT: off | shadow | strict (default off) — the Phase 3
+        LIGHT tier (general-knowledge questions on a strict allow-list).
+
+        Only "strict" lets the router return LIGHT, and only for a model listed
+        in HERMES_ROUTER_LIGHT_MODELS. "shadow" evaluates the LIGHT rule and
+        records `light:shadow` on the decision while the turn stays FULL.
+        Anything else reads as off."""
+        raw = (os.getenv("HERMES_ROUTER_LIGHT") or "").strip().lower()
+        return raw if raw in cls.ROUTER_LIGHT_MODES else "off"
+
+    @classmethod
+    def router_light_models(cls) -> tuple[str, ...]:
+        """HERMES_ROUTER_LIGHT_MODELS (default empty): comma-separated model
+        ids that passed the `need_context` smoke test (step 3.2). LIGHT is never
+        chosen for a model outside this list, so the default — empty — keeps
+        LIGHT off even with HERMES_ROUTER_LIGHT=strict."""
+        raw = os.getenv("HERMES_ROUTER_LIGHT_MODELS") or ""
+        return tuple(m.strip() for m in raw.split(",") if m.strip())
+
     # ---- NuExtract (bill / invoice OCR, document text extraction) ----------
     # Calls go through the official `numind` SDK (hermes/bills.py), which targets
     # https://nuextract.ai by default. NUEXTRACT_BASE_URL is an OPTIONAL host
@@ -495,7 +651,10 @@ class Config:
         problems = []
         if not cls.ANTHROPIC_API_KEY:
             problems.append("ANTHROPIC_API_KEY is not set")
-        if not cls.OPENAI_API_KEY:
+        if os.getenv("EMBED_PROVIDER", "openai").strip().lower() == "gemini":
+            if not cls.GEMINI_API_KEY:
+                problems.append("GEMINI_API_KEY is not set — needed for embeddings (EMBED_PROVIDER=gemini)")
+        elif not cls.OPENAI_API_KEY:
             problems.append(
                 "OPENAI_API_KEY is not set — needed for embeddings (pgvector search, memory "
                 "extraction/retrieval, document ingestion) regardless of which chat model is "

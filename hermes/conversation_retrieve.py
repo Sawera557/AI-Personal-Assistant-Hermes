@@ -80,7 +80,7 @@ def build_history_block(
         return ""
 
     try:
-        vec = query_vector if query_vector is not None else embed([text])[0]
+        vec = query_vector if query_vector is not None else embed([text], task="query")[0]
     except Exception:  # noqa: BLE001 — no embedding => no recall this turn
         log.warning("conversation recall: embedding failed", exc_info=True)
         return ""

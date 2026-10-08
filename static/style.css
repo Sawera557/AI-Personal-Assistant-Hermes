@@ -15,7 +15,7 @@
   --err: #f87171;
   --radius: 16px;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  --strip-w: 64px;
+  --strip-w: 92px;
   --panel-w: 236px;
 }
 
@@ -100,7 +100,7 @@ body {
 }
 
 .strip-tab {
-  width: 50px;
+  width: calc(100% - 10px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -184,6 +184,7 @@ body {
 .app[data-view="bills"]     .content-panel,
 .app[data-view="context"]   .content-panel,
 .app[data-view="tasks"]     .content-panel,
+.app[data-view="multiagents"] .content-panel,
 .app[data-view="jobs"]      .content-panel,
 .app[data-view="artefacts"] .content-panel,
 .app[data-view="pricing"]   .content-panel { width: 0; border-right: 0; }
@@ -540,6 +541,7 @@ body {
 .meeting-view { display: none; }
 .context-view { display: none; }
 .tasks-view   { display: none; }
+.multiagents-view { display: none; }
 .files-view   { display: none; }
 .jobs-view    { display: none; }
 .artefacts-view { display: none; }
@@ -550,6 +552,7 @@ body {
 .app[data-view="meeting"] .meeting-view { display: flex; }
 .app[data-view="context"] .context-view { display: flex; }
 .app[data-view="tasks"]   .tasks-view   { display: flex; }
+.app[data-view="multiagents"] .multiagents-view { display: flex; }
 .app[data-view="files"]   .files-view   { display: flex; }
 .app[data-view="jobs"]    .jobs-view    { display: flex; }
 .app[data-view="artefacts"] .artefacts-view { display: flex; }
@@ -1622,6 +1625,31 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 }
 .meeting-box-body[hidden] { display: none; }
 
+/* Brief + AI notes: two panels side by side in one row, each opening on its
+   own. While either is open (meeting.js syncDocs → .has-open) the row fills
+   the visible height of the Live view and each open panel scrolls its own
+   content, so both can be read top to bottom at the same time; the Live view
+   scrolls, and Notes & Transcript / Guidance sit below. One panel alone (no
+   brief yet) takes the full width. */
+.meeting-docs {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px;
+  margin-bottom: 10px; flex-shrink: 0; align-items: start;
+}
+.meeting-docs[hidden], .meeting-docs > [hidden] { display: none !important; }
+.meeting-docs > .meeting-brief-box, .meeting-docs > .meeting-ai-notes-box { margin-bottom: 0; min-width: 0; }
+.meeting-docs .meeting-box-head { flex-wrap: wrap; row-gap: 8px; min-height: 52px; box-sizing: border-box; flex-shrink: 0; }
+.meeting-docs .meeting-box-title { flex: 1 1 auto; min-width: 0; }
+.meeting-docs .meeting-box-head-actions { flex-wrap: wrap; justify-content: flex-end; }
+#meeting-sub-live.docs-open { overflow-y: auto; }
+.meeting-docs.has-open { flex: 0 0 100%; min-height: 0; align-items: stretch; }
+.meeting-docs.has-open > :not(.is-collapsed):not([hidden]) {
+  display: flex; flex-direction: column; min-height: 0;
+}
+.meeting-docs.has-open > .is-collapsed { align-self: start; }
+.meeting-docs.has-open .meeting-box-body { flex: 1 1 auto; max-height: none; min-height: 0; }
+#meeting-sub-live.docs-open .meeting-grid { flex: 0 0 auto; min-height: 520px; }
+.meeting-docs .meeting-ai-notes-body, .meeting-docs .meeting-brief-bg { overflow-wrap: anywhere; }
+
 .meeting-pdf-btn {
   font-size: 10.5px; font-weight: 700; color: var(--muted); background: var(--surface-2);
   border: 1px solid var(--border); border-radius: 7px; padding: 4px 9px; cursor: pointer;
@@ -1661,6 +1689,12 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 .meeting-ai-notes-body ul, .meeting-ai-notes-body ol { margin: 6px 0; padding-left: 20px; }
 .meeting-ai-notes-body li { margin: 3px 0; }
 .meeting-ai-notes-body a { color: var(--accent); }
+/* The notes are agent markdown: without these its # / ## headings fell back to
+   the browser's 2em / 1.5em and took half the panel for one title. */
+.meeting-ai-notes-body h1 { font-size: 15px; line-height: 1.35; margin: 2px 0 10px; }
+.meeting-ai-notes-body h2 { font-size: 13.5px; line-height: 1.35; margin: 14px 0 6px; }
+.meeting-ai-notes-body :is(h3, h4, h5, h6) { font-size: 12.5px; line-height: 1.35; margin: 12px 0 4px; }
+.meeting-ai-notes-body > :first-child { margin-top: 0; }
 .meeting-ai-notes-body strong { color: var(--text); }
 
 @media (max-width: 820px) {
@@ -1848,7 +1882,13 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 .tk-group-count { display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--bg-3);
   color: var(--text-dim); font-size: 11px; font-weight: 600; letter-spacing: 0; }
-.tk-card {
+/* Library sub-tab wrappers: fill the page height so the .tasks-list inside
+   scrolls (a plain block lets the list grow and get clipped by the page).
+   :not([hidden]) so the sub-tab toggle's hidden attribute still wins. */
+#lib-artefacts:not([hidden]), #lib-files:not([hidden]) {
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
+}
+.tk-card { min-width: 0;
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
   transition: border-color .15s, background .15s, transform .12s;
 }
@@ -1856,7 +1896,7 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 .tk-card-off { opacity: .62; }
 .tk-card-main { padding: 15px 16px; cursor: pointer; }
 .tk-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.tk-card-name { font-size: 14.5px; font-weight: 650; letter-spacing: -.2px; }
+.tk-card-name { font-size: 14.5px; font-weight: 650; letter-spacing: -.2px; min-width: 0; overflow-wrap: anywhere; }
 .tk-card-sched { font-size: 12px; color: var(--tk-2); margin-top: 6px; font-weight: 550; }
 .tk-card-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .tk-card-foot { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 11px;
@@ -2209,6 +2249,11 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
 }
 .files-view-toggle button:hover { background: var(--surface); color: var(--text); }
 .files-view-toggle button.active { background: var(--accent); color: #fff; }
+.files-toolbar-actions { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.files-group-toggle button { gap: 6px; font: inherit; font-size: 12.5px; font-weight: 600; }
+
+/* Type-group icons in the left tree (Organize by: Types) */
+.ftree-row .file-icon { width: 16px; height: 16px; flex-shrink: 0; }
 
 /* ---- Right content: tiles or list ---- */
 .files-content { flex: 1; overflow: auto; padding-bottom: 24px; }
@@ -2267,6 +2312,7 @@ a.meeting-source-chip:hover { color: var(--accent); border-color: var(--accent);
   .files-page { padding: 14px 14px 0; }
   .files-content.tiles { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   .files-folder-tree { max-height: none; }
+  .files-group-toggle button span { display: none; }
 }
 
 /* Business Context switch (sidebar) — the guardrail-row layout is built for the

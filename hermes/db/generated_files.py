@@ -86,23 +86,39 @@ def record_file(
     content_type: str | None,
     s3_uri: str,
     size_bytes: int | None,
+    created_at: datetime | str | None = None,
 ) -> str | None:
     """Insert a generated-file row and return its file_id (or None on failure).
-    Best-effort: the caller must never let a failure here break file creation."""
+    Best-effort: the caller must never let a failure here break file creation.
+    `created_at` defaults to now(); the storage backfill passes the S3 object's
+    LastModified so old files sort where they belong."""
     try:
         with cursor() as cur:
             owner = _owner(cur)
             ent = _resolve_entity_id(cur, entity_slug)
             cur.execute(
                 """INSERT INTO generated_files
-                       (user_id, entity_id, business_slug, filename, content_type, s3_uri, size_bytes)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       (user_id, entity_id, business_slug, filename, content_type, s3_uri,
+                        size_bytes, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, now()))
                    RETURNING file_id;""",
-                (owner, ent, business_slug, filename, content_type, s3_uri, size_bytes),
+                (owner, ent, business_slug, filename, content_type, s3_uri, size_bytes, created_at),
             )
             return str(cur.fetchone()[0])
     except Exception as exc:  # noqa: BLE001
         log.warning("record_file failed: %s", exc)
+        return None
+
+
+def indexed_s3_uris() -> set[str] | None:
+    """Every s3_uri already indexed (any owner), or None if the query failed —
+    callers must treat None as "unknown" and not backfill on it."""
+    try:
+        with cursor(commit=False) as cur:
+            cur.execute("SELECT s3_uri FROM generated_files;")
+            return {r[0] for r in cur.fetchall()}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("indexed_s3_uris failed: %s", exc)
         return None
 
 
