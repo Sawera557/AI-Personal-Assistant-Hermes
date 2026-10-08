@@ -4,7 +4,8 @@ Drop-in replacement for the in-memory ConversationStore. Same public methods, so
 app.py and agent.py don't change:
 
     get(key)                          -> prior turns as Claude messages (agent memory)
-    set(key, messages)                -> no-op (persistence happens in record_turn)
+    get_with_state(key)               -> (get(key), TurnState) in one query (hermes/turn_state.py)
+    set(key, messages)               -> no-op (persistence happens in record_turn)
     reset(key)                        -> delete the conversation
     record_turn(key, entity_id, session_id, user_text, result)
     conversations(entity_id)          -> sidebar list (newest first)
@@ -31,7 +32,7 @@ import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from ..config import int_env
+from ..turn_state import FAILED, TELEMETRY_FIELDS, TurnState, history_limit, state_from_rows
 from .connection import cursor
 
 log = logging.getLogger("hermes.db.conversations")
@@ -148,6 +149,15 @@ class PostgresConversationStore:
         except Exception as exc:  # noqa: BLE001 — degrade gracefully
             log.warning("get(%s) failed: %s", session_id, exc)
             return []
+        return self._to_messages(rows)
+
+    @staticmethod
+    def _to_messages(rows) -> list[dict[str, Any]]:
+        """`(role, content)` rows, oldest first -> Claude messages.
+
+        Shared by get() and get_with_state() so the history the model sees is
+        byte-identical whichever one a caller uses."""
+        rows = list(rows)
         # The conversation Claude sees must begin with a user turn.
         while rows and rows[0][0] != "user":
             rows.pop(0)
@@ -155,6 +165,58 @@ class PostgresConversationStore:
             {"role": role, "content": [{"type": "text", "text": content or ""}]}
             for role, content in rows
         ]
+
+    def get_with_state(self, key: str) -> tuple[list[dict[str, Any]], TurnState]:
+        """get() plus the previous reply's persisted state, in ONE round-trip
+        (TURN_COST_PLAN step 0.6).
+
+        Same window, same ordering and the same messages as get() — the SELECT
+        only adds columns: the per-row `metadata->'tool_calls'`, `->'route'`,
+        `->>'stop_reason'` and `->'pending'` (B6) (NULL on user rows, whose metadata is the '{}'
+        default from 0003), plus one uncorrelated scalar subquery counting the
+        conversation's user rows. Postgres runs that subquery once (an
+        InitPlan), on `messages_session_idx (session_id, seq)` from 0001, so
+        it is one extra index scan inside the same statement — not a second
+        query.
+
+        Failure is EXPLICIT, unlike get(): a DB error returns `([], FAILED)`
+        (ok=False) so the caller can tell "no rows" from "read failed" (B23).
+        A non-uuid key is not a failure — there is genuinely nothing stored
+        under it, exactly as get() reports."""
+        session_id = _session_id_from_key(key)
+        if not _is_uuid(session_id):
+            return [], TurnState()
+        limit = self._history_limit()
+        try:
+            with cursor(commit=False) as cur:
+                cur.execute(
+                    "SELECT role, content, "
+                    "metadata->'tool_calls', metadata->'route', metadata->>'stop_reason', "
+                    "metadata->'pending', "
+                    "(SELECT count(*) FROM hermes_messages u "
+                    " WHERE u.session_id = %s AND u.role = 'user') "
+                    "FROM hermes_messages "
+                    "WHERE session_id = %s AND role IN ('user', 'assistant') "
+                    "ORDER BY seq DESC LIMIT %s;",
+                    (session_id, session_id, limit),
+                )
+                rows = list(reversed(cur.fetchall()))
+        except Exception as exc:  # noqa: BLE001 — degrade gracefully, but say so
+            log.warning("get_with_state(%s) failed: %s", session_id, exc)
+            return [], FAILED
+        messages = self._to_messages((row[0], row[1]) for row in rows)
+        try:
+            # Every row carries the same count; no rows means no user turns.
+            user_turns = int(rows[-1][6]) if rows else 0
+            state = state_from_rows(
+                ((role, content, tool_calls, stop_reason, route, pending)
+                 for role, content, tool_calls, route, stop_reason, pending, _ in rows),
+                user_turns,
+            )
+        except Exception as exc:  # noqa: BLE001 — history is fine; the state is unknown
+            log.warning("get_with_state(%s) state decode failed: %s", session_id, exc)
+            state = FAILED
+        return messages, state
 
     def attachments(self, key: str) -> list[dict[str, Any]]:
         """Files shared into this conversation and stored in S3, newest first.
@@ -183,10 +245,9 @@ class PostgresConversationStore:
 
     @staticmethod
     def _history_limit() -> int:
-        try:
-            return max(2, int_env("HERMES_HISTORY_MESSAGES", 40))
-        except ValueError:
-            return 40
+        # One definition for both stores (see hermes/turn_state.history_limit):
+        # the in-memory store derives its TurnState from the same window.
+        return history_limit()
 
     def set(self, key: str, messages: list[dict[str, Any]]) -> None:
         """No-op: persistence happens in record_turn (which has the clean text).
@@ -253,11 +314,27 @@ class PostgresConversationStore:
             "thinking": result.get("thinking"),
             "tool_calls": result.get("tool_calls") or [],
             "stop_reason": result.get("stop_reason"),
+            # How the reply was routed (CHAT/LIGHT/FULL, TURN_COST_PLAN step
+            # 1.2) — read back by get_with_state() as TurnState.last_route.
+            # Absent until the router ships, so today's rows are unchanged
+            # (None is dropped below).
+            "route": result.get("route"),
+            # Actions this reply held for the user's confirmation (B6): read back
+            # by get_with_state() so an explicit "yes" next turn gets its token.
+            # Deliberately NOT returned by transcript() — never sent to the UI.
+            "pending": result.get("pending"),
             # Persist per-response usage so the token/cost line replays from history.
             "usage": usage or None,
             "cost_usd": cost_usd,
+            # Per-turn telemetry (TURN_COST_PLAN step 0.5): the provider calls
+            # (model, tokens, fallback flag), the prompt breakdown and the
+            # reasoning/cached totals — numbers and model ids only, never
+            # text. A result from before 0.5 has none of them and its row is
+            # unchanged (None is dropped below).
+            **{field: result.get(field) for field in TELEMETRY_FIELDS},
         }
         meta = {k: v for k, v in meta.items() if v not in (None, [], "")}
+        telemetry = {k: meta[k] for k in TELEMETRY_FIELDS if k in meta}
         model = result.get("model_used") or os.getenv("HERMES_MODEL", "claude-opus-4-8")
         title = (user_text or "").strip()[:60] or "New conversation"
 
@@ -308,7 +385,7 @@ class PostgresConversationStore:
         # applied yet, so ai_runs lacks the cost columns) must never roll back
         # the conversation itself — it's analytics, not the reply.
         if usage:
-            self._record_usage(session_id, ent, owner, model, usage, cost_usd)
+            self._record_usage(session_id, ent, owner, model, usage, cost_usd, telemetry)
 
     def _record_usage(
         self,
@@ -318,6 +395,7 @@ class PostgresConversationStore:
         model: str,
         usage: dict[str, Any],
         cost_usd: float | None,
+        telemetry: dict[str, Any] | None = None,
     ) -> None:
         """Write one ai_runs row for the Usage tab, isolated so its failure
         can't affect message persistence.
@@ -325,11 +403,14 @@ class PostgresConversationStore:
         Uses only columns present in the base schema (0001) — cost and cache
         tokens go into the existing `metadata` jsonb — so this works with NO
         extra migration. The 0016 columns, if applied, are simply left unused.
+        The step 0.5 telemetry rides in the same jsonb, so the cost reports
+        can read per-call models and the fallback rate straight off ai_runs.
         """
         run_meta = {
             "cost_usd": cost_usd,
             "cache_read_tokens": int(usage.get("cache_read_input_tokens") or 0),
             "cache_creation_tokens": int(usage.get("cache_creation_input_tokens") or 0),
+            **(telemetry or {}),
         }
         try:
             with cursor() as cur:
@@ -474,6 +555,9 @@ class PostgresConversationStore:
                     "usage": meta.get("usage"),
                     "cost_usd": meta.get("cost_usd"),
                     "model_used": model_used,
+                    # Step 0.5 telemetry for the footer tooltip; None on rows
+                    # written before it, which the UI renders without.
+                    **{field: meta.get(field) for field in TELEMETRY_FIELDS},
                 })
             else:
                 out.append({"role": role, "text": content or ""})

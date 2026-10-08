@@ -3,7 +3,7 @@
   "use strict";
   const ROUTES = {
     home: "", agent: "agent", schema: "system", bills: "billing", meeting: "meetings", context: "context",
-    tasks: "tasks", files: "files", jobs: "jobs", artefacts: "artifacts", pricing: "usage", settings: "settings",
+    tasks: "tasks", multiagents: "multi-agents", files: "files", jobs: "jobs", artefacts: "artifacts", pricing: "usage", settings: "settings",
   };
   const BY_SLUG = Object.fromEntries(Object.entries(ROUTES).map(([v, s]) => [s, v]));
   ["artefacts", "pricing", "bills", "schema", "meeting"].forEach((v) => (BY_SLUG[v] = v));

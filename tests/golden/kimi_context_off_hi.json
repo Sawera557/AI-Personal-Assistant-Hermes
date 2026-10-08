@@ -1,0 +1,85 @@
+{
+  "scenario": "kimi_context_off_hi",
+  "description": "Context off: plain prompt, tools NOT_GIVEN on NIM.",
+  "caller": "stream_turn",
+  "inputs": {
+    "messages": [
+      "hi"
+    ],
+    "active_business": "all",
+    "voice": false,
+    "context_mode": false,
+    "retrieval_blocks": true,
+    "allowed_apps": null,
+    "interactive": true,
+    "autonomy": null
+  },
+  "provider": "nvidia",
+  "model": "moonshotai/kimi-k3",
+  "frozen_date": "2026-10-07",
+  "env_fingerprint": {
+    "HERMES_APPS": [
+      "quickbooks",
+      "pdf-co",
+      "google-contacts",
+      "fathom",
+      "google-meet",
+      "google-forms",
+      "google-sheets",
+      "google-docs",
+      "google-drive",
+      "google-calendar",
+      "google-mail",
+      "zoom",
+      "jira"
+    ],
+    "connected_business_slugs": [
+      "afk",
+      "gak",
+      "gif",
+      "gakc",
+      "nh",
+      "per"
+    ],
+    "HERMES_WEB_SEARCH": true,
+    "HERMES_MAX_TOKENS": 16000,
+    "HERMES_OUTPUT_CAP": 0,
+    "HERMES_EFFORT": "medium",
+    "NVIDIA_REASONING_BUDGET": 16384,
+    "NVIDIA_TEMPERATURE": 1.0,
+    "NVIDIA_TOP_P": 0.95
+  },
+  "calls": [
+    {
+      "client": "nvidia",
+      "endpoint": "chat.completions.create",
+      "kwargs": {
+        "model": "moonshotai/kimi-k3",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are Hermes, a capable AI assistant. Answer directly and concisely from your own knowledge.\n\nYou currently have NO tools and NO access to the user's apps, documents, saved memory or business data — business context is switched off for speed and cost. Never claim to have looked something up, never invent specifics about their business, and never describe or narrate a tool call. If a request genuinely needs their data or apps, say plainly that business context is turned off and they can re-enable it in Settings.\nToday's date is 2026-10-07."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "tools": "<NotGiven>",
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "temperature": 1.0,
+        "extra_body": {
+          "reasoning_effort": "max"
+        }
+      }
+    }
+  ]
+}

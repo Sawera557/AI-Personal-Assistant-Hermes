@@ -285,8 +285,8 @@ html.pro:not(.holo) .schema-view { --ax: 245, 166, 35; --ax-amber: 251, 113, 133
 .ax-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; padding: 28px 32px 0; }
 .ax-head .vx-lede { max-width: 640px; }
 .ax-board { position: relative; margin: 26px 32px 0; }
-.ax-grid { position: relative; display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 2.15fr) minmax(0, 1fr) minmax(0, 1fr); gap: 30px; align-items: stretch; }
-.ax-zone { position: relative; display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.1fr); gap: 30px; padding: 34px 16px 16px; border: 1px dashed rgba(var(--ax), 0.24); background: rgba(var(--ax), 0.025); border-radius: 4px; }
+.ax-grid { position: relative; display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 3.1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 30px; align-items: stretch; }
+.ax-zone { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr); gap: 30px; padding: 34px 16px 16px; border: 1px dashed rgba(var(--ax), 0.24); background: rgba(var(--ax), 0.025); border-radius: 4px; }
 .ax-sub { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 30px 10px 10px; border: 1px dashed rgba(var(--ax), 0.24); background: rgba(var(--ax), 0.025); border-radius: 4px; }
 .ax-tag { position: absolute; top: 11px; left: 14px; font: 600 8.5px/1 "IBM Plex Mono", monospace; letter-spacing: 0.22em; text-transform: uppercase; color: rgba(var(--ax), 0.75); }
 .ax-sub .ax-tag { left: 10px; }
@@ -317,6 +317,10 @@ html.pro:not(.holo) .schema-view { --ax: 245, 166, 35; --ax-amber: 251, 113, 133
 .ax-off { margin-left: auto; padding: 3px 5px; font: 600 8.5px/1 "IBM Plex Mono", monospace; letter-spacing: 0.14em; color: rgb(var(--ax-amber)); border: 1px solid rgba(var(--ax-amber), 0.4); border-radius: 2px; }
 .ax-chips { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 5px; }
 .ax-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; font: 500 9.5px/1.1 "IBM Plex Mono", monospace; color: var(--ax-ink); opacity: 0.88; background: rgba(var(--ax), 0.06); border: 1px solid rgba(var(--ax), 0.14); border-radius: 2px; white-space: nowrap; }
+.ax-routes { margin-top: 10px; display: flex; flex-direction: column; gap: 3px; }
+.ax-route { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 7px; background: rgba(var(--ax), 0.05); border: 1px solid rgba(var(--ax), 0.12); border-left: 2px solid rgba(var(--ax), 0.45); border-radius: 2px; }
+.ax-route code { font: 500 10px/1.15 "IBM Plex Mono", monospace; color: var(--ax-ink); opacity: 0.9; overflow-wrap: anywhere; min-width: 0; }
+.ax-route i { flex: none; font: 500 9px/1 "IBM Plex Mono", monospace; font-style: normal; color: rgba(var(--ax), 0.7); }
 .ax-led { width: 5px; height: 5px; flex: none; border-radius: 50%; background: #5be49b; box-shadow: 0 0 6px #5be49b; }
 .ax-led.off { background: rgba(160, 175, 190, 0.45); box-shadow: none; }
 .ax-led.warn { background: #ffb64d; box-shadow: 0 0 6px #ffb64d; }

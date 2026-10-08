@@ -300,7 +300,7 @@ and the agent can pull one up mid-conversation.
 There is no separate skills API. A skill is an ordinary document tagged
 `source_system = "business_skill"`, which is the only thing distinguishing it
 from a Context file (`business_context`) — see the
-[`source_system` table](API_ENDPOINTS.md#source_system--what-the-context-pages-sub-tabs-filter-on).
+[`source_system` table](docs/architecture/API_ENDPOINTS.md#source_system--what-the-context-pages-sub-tabs-filter-on).
 Because it goes through the normal ingest path it is chunked and embedded too,
 so `search_business_knowledge` can reach it like any other document.
 

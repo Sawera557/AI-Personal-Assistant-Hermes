@@ -9,7 +9,7 @@ Two separately-deployable FastAPI services live in this repo:
 
 Both are plain JSON REST APIs (a few multipart-upload and one SSE-streaming endpoint) — call them from any frontend or service. Interactive Swagger docs are auto-available at `/docs` on each running service.
 
-A ready-to-import collection is at [postman/Hermes_API.postman_collection.json](postman/Hermes_API.postman_collection.json), with an environment at [postman/Hermes_Local.postman_environment.json](postman/Hermes_Local.postman_environment.json).
+A ready-to-import collection is at [postman/Hermes_API.postman_collection.json](../../postman/Hermes_API.postman_collection.json), with an environment at [postman/Hermes_Local.postman_environment.json](../../postman/Hermes_Local.postman_environment.json).
 
 ---
 
@@ -40,8 +40,20 @@ A ready-to-import collection is at [postman/Hermes_API.postman_collection.json](
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| POST | `/api/chat` | JSON or multipart: `session_id?, entity_id?, message?, voice?, attachment_ids?[], files?[]` | Runs one turn through the agent. JSON response includes `reply, session_id, entity_id, ...`. Multipart needed only when attaching new files. |
+| POST | `/api/chat` | JSON or multipart: `session_id?, entity_id?, message?, voice?, attachment_ids?[], files?[], agent_id?, agent_mode?` | Runs one turn through the agent. JSON response includes `reply, session_id, entity_id, ...`. Multipart needed only when attaching new files. With `agent_id` (uuid or slug) the turn runs as that Multi-agents agent: its prompt + mode, only its tools, the mode's autonomy/apps; a business-bound agent overrides `entity_id`. Unknown agent → 404, switched-off → 400. |
 | POST | `/api/chat/stream` | same as `/api/chat` | Server-Sent Events (`text/event-stream`): `{"type":"text","text":...}`, `{"type":"tool_call",...}`, final `{"type":"done", ...same fields as /api/chat}` |
+
+### Multi-agents (the Multi-agents tab) — `hermes/agents_api.py`
+
+| Method | Path | Body/Query | Notes |
+|---|---|---|---|
+| GET | `/api/agents` | `entity_id?` | Roster. Built-ins (`hermes/agent_presets.py`) are seeded on first read. With a business, returns its agents + all-business ones |
+| GET | `/api/agents/tool-catalog` | — | `{groups:[{group, tools:[{name, description}]}], autonomies, apps}` for the editor |
+| POST | `/api/agents` | `{name, system_prompt, business?, description?, icon?, tools[], modes[], default_mode?, enabled?}` | Mode: `{label, instructions?, autonomy: readonly\|draft\|full, tools?[], allowed_apps?[]}` — `key` is derived from the label |
+| GET | `/api/agents/{id}` | — | `id` is the uuid or the slug |
+| PATCH | `/api/agents/{id}` | any POST field | Validated against the merged agent (mode tools ⊆ agent tools) |
+| DELETE | `/api/agents/{id}` | — | Custom agents only; built-ins → 400 (switch off or reset instead) |
+| POST | `/api/agents/{id}/reset` | — | Built-ins only: restore the shipped prompt, tools and modes |
 
 ### Conversations
 
@@ -82,7 +94,7 @@ endpoints above:
 | Sub-tab | `source_system` | What it holds |
 |---|---|---|
 | Files | `business_context` | Notes and reference documents |
-| Skills | `business_skill` | Reusable markdown playbooks — see [skills/README.md](skills/README.md) |
+| Skills | `business_skill` | Reusable markdown playbooks — see [skills/README.md](../../skills/README.md) |
 
 Anything ingested another way (chat uploads, Drive sync, …) carries its own tag
 and defaults to `upload`. The tag affects listing and provenance only — every
@@ -120,7 +132,7 @@ curl -X POST "$BASE/api/documents" \
 | GET | `/api/meetings/sessions` | `business?, statuses?` (csv) | History sidebar list |
 | GET | `/api/meetings/upcoming` | `business` (required), `days?` (default 14) | Calendar events annotated with copilot status |
 | POST | `/api/meetings/prepare` | `{business, event_id, title, start?, description?, attendees?}` | Pre-meeting AI brief |
-| POST | `/api/meetings/sessions/{session_id}/ai-notes` | `{business, meeting_title}` | Deep notes via live Gmail/Drive search |
+| POST | `/api/meetings/sessions/{session_id}/ai-notes` | `{business, meeting_title}` | Deep notes via live Gmail/Drive search. **409** `{error, skipped: "Apps access is off"}` while Apps access is off: the agent isn't called and the saved notes are left unchanged |
 | GET | `/api/meetings/sessions/{session_id}` | — | Full meeting replay |
 | POST | `/api/meetings/sessions/{session_id}/end` | — | Generates post-meeting summary + Fathom link |
 | POST | `/api/meetings/sessions/{session_id}/fathom` | `{url}` | Manually attach recording link |
@@ -191,7 +203,7 @@ All routes below except `/api/health` require the `X-Cron-Secret` or `Authorizat
 
 ## Files added
 
-- [postman/Hermes_API.postman_collection.json](postman/Hermes_API.postman_collection.json) — full collection, both services, organized into folders
-- [postman/Hermes_Local.postman_environment.json](postman/Hermes_Local.postman_environment.json) — `base_url`, `ingestion_url`, `entity_id`, `session_id`, `cron_secret`, etc.
+- [postman/Hermes_API.postman_collection.json](../../postman/Hermes_API.postman_collection.json) — full collection, both services, organized into folders
+- [postman/Hermes_Local.postman_environment.json](../../postman/Hermes_Local.postman_environment.json) — `base_url`, `ingestion_url`, `entity_id`, `session_id`, `cron_secret`, etc.
 
 Import both into Postman (Import → File), select the **Hermes Local** environment in the top-right dropdown, then fill in `cron_secret` / `internal_api_token` if you need the ingestion service's protected routes.

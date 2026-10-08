@@ -88,7 +88,7 @@ def federated_search(
 
     if query_vector is None:
         try:
-            query_vector = embed([text])[0]
+            query_vector = embed([text], task="query")[0]
         except Exception:  # noqa: BLE001 — no embedding => no retrieval this turn
             log.warning("federated_search: embedding failed", exc_info=True)
             return []

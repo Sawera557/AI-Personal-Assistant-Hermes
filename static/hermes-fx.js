@@ -356,7 +356,7 @@
   /* ── Command palette ─────────────────────────────────────────────────── */
   const VIEWS = [
     ["home", "Home", "Operating picture"], ["agent", "AI Agent", "Chat"], ["schema", "How it works", "Schematic"], ["bills", "Billing & Invoices", "Register"],
-    ["meeting", "Meeting Copilot", "Briefs"], ["context", "Business Context", "Files · memories · skills"], ["tasks", "Scheduled Tasks", "Automations"],
+    ["meeting", "Meeting Copilot", "Briefs"], ["context", "Business Context", "Files · memories · skills"], ["tasks", "Scheduled Tasks", "Automations"], ["multiagents", "Multi-agents", "Specialist agents"],
     ["files", "File Explorer", "Drive"], ["jobs", "Jobs", "Pipelines"], ["artefacts", "Artifacts", "Live views & files"],
     ["pricing", "Usage & Cost", "Spend"], ["settings", "Settings", "Guardrails"],
   ];
@@ -373,6 +373,7 @@
       { g: "Actions", ic: "+", label: "New conversation", meta: "Agent", run: click("reset-btn", "agent") },
       { g: "Actions", ic: "+", label: "New meeting", meta: "Meeting", run: click("meeting-new-btn", "meeting") },
       { g: "Actions", ic: "+", label: "New scheduled task", meta: "Tasks", run: click("task-new-btn", "tasks") },
+      { g: "Actions", ic: "+", label: "New agent", meta: "Multi-agents", run: click("ma-new-btn", "multiagents") },
       { g: "Actions", ic: "◐", label: "Start voice call", meta: "Agent", run: click("voice-btn", "agent") },
       { g: "Actions", ic: "↻", label: "Refresh jobs", meta: "Jobs", run: click("jobs-refresh-btn", "jobs") },
       { g: "Actions", ic: "⇄", label: "Toggle business context", meta: "Agent", run: flip("context-toggle-input", "Business context") },

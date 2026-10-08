@@ -5,6 +5,7 @@ import base64
 import copy
 import json
 import logging
+import re
 import uuid
 from email.message import EmailMessage
 from typing import Any
@@ -74,11 +75,24 @@ _WRITE_TOOLS = _SEND_TOOLS | frozenset({
     "set_guardrail",
 })
 
+# Tools only a live chat turn may use, whatever the autonomy tier: authoring
+# standing scheduled tasks and switching guardrails. An unattended run has no
+# human to confirm with, so it must never spawn or rewrite tasks or turn a
+# guardrail off — a FULL-autonomy task with no allowed_apps used to be offered
+# all four (B13), and the guardrail gate no-ops when interactive=False.
+_INTERACTIVE_ONLY_TOOLS = frozenset({
+    "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task",
+    "set_guardrail",
+})
+
 _READ_METHODS = frozenset({"GET", "HEAD"})
 
 # The one write a `draft` run may make through the raw gateway: creating a Gmail
-# draft. Matched on the path so sending (/messages/send) can never qualify.
-_DRAFT_PATH_MARKER = "/drafts"
+# draft. It used to be any POST whose path merely CONTAINED "/drafts", which
+# also let through `.../drafts/send` (sending a draft) and a send path with a
+# "#/drafts" fragment, which never reaches the wire. Now only a POST to the
+# Gmail drafts collection itself qualifies: no fragment, no query, no sub-path.
+_DRAFT_CREATE_PATH = re.compile(r"/?gmail/v1/users/[^/?#]+/drafts/?")
 
 
 def _restrict_writes(tools: list[dict[str, Any]], autonomy: str) -> list[dict[str, Any]]:
@@ -111,11 +125,38 @@ def _restrict_writes(tools: list[dict[str, Any]], autonomy: str) -> list[dict[st
     return out
 
 
+_RAW_GMAIL_SEND = re.compile(r"/(?:messages|drafts)/send\b")
+
+
+def _is_raw_gmail_send(tool_input: dict[str, Any]) -> bool:
+    return (
+        str(tool_input.get("app") or "").strip().lower() == "google-mail"
+        and str(tool_input.get("method") or "GET").strip().upper() == "POST"
+        and bool(_RAW_GMAIL_SEND.search(str(tool_input.get("path") or "").lower()))
+    )
+
+
 def write_blocked_reason(name: str, tool_input: dict[str, Any], autonomy: str | None) -> str | None:
     """Why this tool call is refused under `autonomy`, or None if it's allowed.
 
     The enforcement point. `autonomy` is None for interactive chat, which is
     unchanged — a human is there to approve."""
+    if name == "maton_request" and _is_raw_gmail_send(tool_input):
+        # Sending through the raw gateway hid the recipients inside a base64
+        # MIME blob (or a draft id), so the approval summary the user saw could
+        # not show who the email went to. Email goes out through send_email /
+        # email_with_attachment, whose summaries name every recipient.
+        return (
+            "Refused: send email with send_email (or email_with_attachment for files), "
+            "not a raw Gmail send through maton_request — the dedicated tools show the user "
+            "exactly who it goes to before it is sent."
+        )
+    if autonomy is not None and name in _INTERACTIVE_ONLY_TOOLS:
+        return (
+            f"Refused: `{name}` is only available in a live chat with the user. A "
+            "scheduled run cannot create, change or delete scheduled tasks or change "
+            "guardrails. Report what you would change instead."
+        )
     if autonomy not in _NO_WRITE_AUTONOMY:
         return None
     if name in _WRITE_TOOLS:
@@ -130,7 +171,11 @@ def write_blocked_reason(name: str, tool_input: dict[str, Any], autonomy: str | 
         if method in _READ_METHODS:
             return None
         path = str(tool_input.get("path") or "")
-        if autonomy == "draft" and method == "POST" and _DRAFT_PATH_MARKER in path.lower():
+        if (
+            autonomy == "draft" and method == "POST"
+            and str(tool_input.get("app") or "").strip().lower() == "google-mail"
+            and _DRAFT_CREATE_PATH.fullmatch(path.strip())
+        ):
             return None
         return (
             f"Refused: this scheduled run is {autonomy}-only, so maton_request may only "
@@ -278,7 +323,8 @@ def build_tools(
                 "Leave FALSE/omitted to PREPARE: generate the attachment(s) and hold the "
                 "email as a Gmail draft for the user to review — this does NOT send. After "
                 "the user explicitly approves, call again with confirm=true AND the "
-                "draft_id returned by the prepare step to send exactly what was reviewed."
+                "draft_id and approval_token returned by the prepare step to send exactly "
+                "what was reviewed."
             ),
         },
         "draft_id": {
@@ -655,8 +701,11 @@ def build_tools(
                 "STEP 1 — PREPARE (confirm omitted): generates the attachment(s), builds the "
                 "email, and saves it as a Gmail DRAFT. It does NOT send. Returns a draft_id and "
                 "a preview; show the user what will go out and ask them to approve.\n"
-                "STEP 2 — SEND (confirm=true + the returned draft_id): sends exactly that "
-                "reviewed draft. Only do this after the user explicitly approves.\n"
+                "STEP 2 — SEND (confirm=true + the returned draft_id, plus the approval_token "
+                "when one is returned): sends exactly that reviewed draft. In a live chat only "
+                "after the user explicitly approves, in a later message; the prepare result's "
+                "next_step says when it may go straight away. A send without a prepared draft "
+                "is refused.\n"
                 "Any single attachment larger than ~25 MB is automatically uploaded to Google "
                 "Drive and linked in the email body instead of attached, so the send never fails "
                 "on size."
@@ -1064,7 +1113,9 @@ def build_tools(
     # Scheduled-task authoring from chat. Deliberately NOT offered on a restricted
     # (scheduled/unattended) run — only a live chat turn, where the user is present
     # to command it, may create standing recurring tasks. So an unattended run can
-    # never spawn more tasks. See SCHEDULED_TASKS.md.
+    # never spawn more tasks. See docs/features/SCHEDULED_TASKS.md. `restricted`
+    # alone missed a FULL-autonomy task with no allowed_apps (B13); the
+    # _INTERACTIVE_ONLY_TOOLS filter at the end of this function closes that.
     if not restricted:
         tools.append({
             "name": "create_scheduled_task",
@@ -1269,6 +1320,9 @@ def build_tools(
                 "verified to belong to the business in scope and cross-business results are dropped; "
                 "when off, results are trusted by namespace only. (This protects against data leaks "
                 "— only disable it if the user clearly asks.)\n"
+                "- 'secret_egress': when on, any send or external write containing an API key, "
+                "access token, private key or card number is refused.\n"
+                "- 'send_limit': when on, at most a fixed number of sends/deletes run per turn.\n"
                 "`enabled`=false turns the guardrail off, true turns it on. `business` optionally "
                 "scopes the change to one entity (afk | gak | gif | gakc | nh | per); omit it to "
                 "change the global default. Never call this on your own initiative — only on the "
@@ -1287,8 +1341,8 @@ def build_tools(
 
     # Guardrail #1 plumbing: give tools the generic gate can hold a place to echo
     # the approval_token back on the confirming re-call. Optional and ignored on
-    # the first call. email_with_attachment is excluded — it self-gates via its
-    # own confirm/draft_id flow. See hermes.guardrails.
+    # the first call. email_with_attachment self-gates through its own draft, so
+    # its field describes the draft token instead. See hermes.guardrails.
     for _t in tools:
         if _t.get("name") in guardrails.APPROVAL_TOKEN_TOOLS:
             _t["input_schema"]["properties"]["approval_token"] = {
@@ -1299,12 +1353,26 @@ def build_tools(
                     "exact approval_token it gave you to proceed. Never invent one."
                 ),
             }
+        elif _t.get("name") in guardrails.DRAFT_TOKEN_TOOLS:
+            _t["input_schema"]["properties"]["approval_token"] = {
+                "type": "string",
+                "description": (
+                    "Only with confirm=true: the approval_token returned by the prepare call "
+                    "together with draft_id. Sending needs it, and the user's approval of the "
+                    "preview on a later message. Never invent one."
+                ),
+            }
 
     if restricted:
         tools = _restrict_tools(tools, allowed_set)
 
     if autonomy in _NO_WRITE_AUTONOMY:
         tools = _restrict_writes(tools, autonomy)
+
+    if autonomy is not None:
+        # Any unattended run, FULL autonomy included (B13). Mirrored at dispatch
+        # by write_blocked_reason.
+        tools = [t for t in tools if t.get("name") not in _INTERACTIVE_ONLY_TOOLS]
 
     return tools
 
@@ -1404,6 +1472,18 @@ def _resolve_client(tool_input: dict[str, Any], active_business: str | None) -> 
     another business's key.
     """
     slug = tool_input.get("business") or None
+    if (
+        slug and active_business and active_business != ALL_BUSINESSES
+        and str(slug).strip().lower() != str(active_business).strip().lower()
+    ):
+        # A conversation locked to one business never offers a `business`
+        # argument, so one arriving here came from a confused model or a prompt
+        # injection. Honouring it used a DIFFERENT business's account from a
+        # locked chat — and skipped that business's own guardrail setting.
+        raise MatonError(
+            f"This conversation is locked to '{active_business}'; it can't act on "
+            f"'{slug}'. Ask the user to switch business if they meant that."
+        )
     if not slug:
         if active_business == ALL_BUSINESSES:
             raise MatonError(
@@ -2449,6 +2529,10 @@ _GUARDRAIL_STATE_LABELS = {
                        "OFF — writes/sends run without asking"),
     "business_isolation": ("ON — cross-business knowledge results are dropped",
                            "OFF — knowledge results trusted by namespace only"),
+    "secret_egress": ("ON — sends/writes carrying secrets or card numbers are refused",
+                      "OFF — secrets are no longer screened out of sends/writes"),
+    "send_limit": ("ON — sends and deletes are capped per turn",
+                   "OFF — no cap on sends and deletes per turn"),
 }
 
 
@@ -2502,6 +2586,14 @@ def dispatch(
     if blocked:
         log.warning("autonomy=%s blocked tool %s", autonomy, name)
         return blocked, True, None, None
+
+    # Multi-agents' agent-only tools (offered only to an agent that lists them;
+    # see hermes/agent_tools.py). Read-only, so nothing above ever blocks them.
+    from . import agent_tools as _agent_tools
+
+    if name in _agent_tools.NAMES:
+        content, is_error = _agent_tools.dispatch(name, tool_input, active_business)
+        return content, is_error, None, None
 
     try:
         if name == "maton_create_connection":
@@ -2659,6 +2751,8 @@ def dispatch(
 # one tool serving every connected app, so its message is keyed by the `app`
 # argument instead, via _MATON_APP_STATUS.
 _TOOL_STATUS: dict[str, str] = {
+    "reviews_data": "⭐ Analysing the Google-reviews data…",
+    "weather_forecast": "🌦️ Checking the weather forecast…",
     "maton_list_connections": "🔌 Checking what's connected…",
     "maton_create_connection": "🔌 Setting up a new connection…",
     "drive_read_file": "📁 Opening that file from Drive…",

@@ -1,0 +1,119 @@
+/* Hermes · Multi-agents tab. Reuses the Tasks tab's tk-* card/modal skin (so
+   every theme in hermes-holo/pro/stock/v2 applies); this file only adds what
+   the agents view needs on top: card mode picker, chat drawer, editor parts. */
+
+/* Fill the whole main area (like .tasks-view) — without flex:1 the view
+   shrank to its content and the roster's scrollbar sat mid-screen. */
+.multiagents-view { position: relative; flex: 1 1 0%; flex-direction: column;
+  min-width: 0; min-height: 0; width: 100%; }
+.ma-page { flex: 1; min-height: 0; }
+.ma-page-msg { color: #f87171; margin: 0 0 10px; }
+
+/* ── Cards ─────────────────────────────────────────────── */
+.ma-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.ma-card .tk-card-main { cursor: default; display: flex; flex-direction: column; height: 100%; }
+.ma-card-title { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.ma-card-icon { font-size: 20px; line-height: 1; flex-shrink: 0; }
+.ma-builtin { font-size: 10px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; flex-shrink: 0; }
+.ma-card-desc { margin: 8px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--text-dim, var(--muted)); flex: 1; }
+.ma-card-mode { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.ma-card-mode label { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+.ma-card-select { padding: 7px 10px; font-size: 12.5px; cursor: pointer; }
+.ma-card-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.ma-card-actions .tk-btn { padding: 7px 14px; font-size: 12.5px; }
+.ma-card-actions .tk-btn[disabled] { opacity: .45; cursor: not-allowed; }
+.ma-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--muted); cursor: pointer; user-select: none; }
+.ma-toggle input { accent-color: var(--tk, #8b5cf6); cursor: pointer; }
+
+/* ── Chat drawer ───────────────────────────────────────── */
+.ma-drawer { position: absolute; top: 0; right: 0; bottom: 0; z-index: 40;
+  width: min(600px, 100%); display: flex; flex-direction: column;
+  background: var(--bg-2); border-left: 1px solid var(--border-strong);
+  box-shadow: -18px 0 50px rgba(0,0,0,.35); }
+.ma-drawer[hidden] { display: none; }
+/* Wide screens: the roster stays usable beside the drawer instead of under it. */
+@media (min-width: 1280px) {
+  .multiagents-view.ma-chat-open .ma-page { margin-right: 600px; }
+}
+.ma-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+.ma-drawer-title { display: flex; align-items: center; gap: 9px; font-size: 15.5px; font-weight: 700; min-width: 0; }
+.ma-drawer-icon { font-size: 20px; }
+.ma-drawer-actions { display: flex; gap: 2px; }
+.ma-drawer-sub { display: flex; align-items: center; gap: 8px; padding: 10px 16px 4px; flex-wrap: wrap; }
+.ma-mode-label { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+.ma-mode-select { width: auto; min-width: 200px; padding: 7px 10px; font-size: 13px; cursor: pointer; }
+.ma-chat-biz { margin-left: auto; font-size: 12px; color: var(--muted); }
+.ma-mode-desc { padding: 4px 16px 10px; font-size: 12px; line-height: 1.45; color: var(--muted);
+  border-bottom: 1px solid var(--border); }
+.ma-mode-desc .tk-chip { margin-right: 4px; }
+.ma-dim { color: var(--muted); opacity: .85; }
+
+.ma-chat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.ma-msg { max-width: 100%; font-size: 13.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.ma-sys { align-self: center; font-size: 11.5px; color: var(--muted); text-align: center; padding: 2px 8px; }
+.ma-user { align-self: flex-end; max-width: 85%; background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border); border-radius: 14px 14px 4px 14px; padding: 9px 12px; white-space: pre-wrap; }
+.ma-bot { align-self: stretch; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px 14px 14px 4px; padding: 10px 13px; }
+.ma-bot .ma-body > :first-child { margin-top: 0; }
+.ma-bot .ma-body > :last-child { margin-bottom: 0; }
+.ma-bot .ma-body table { border-collapse: collapse; width: 100%; font-size: 12.5px; margin: 8px 0; display: block; overflow-x: auto; }
+.ma-bot .ma-body th, .ma-bot .ma-body td { border: 1px solid var(--border); padding: 5px 7px; text-align: left; vertical-align: top; }
+.ma-bot .ma-body a { color: var(--tk, #8b5cf6); }
+.ma-tools-used { display: flex; flex-wrap: wrap; gap: 5px; }
+.ma-tools-used:not(:empty) { margin-bottom: 8px; }
+.ma-tool-chip { font-size: 11px; color: var(--muted); background: var(--bg-3, var(--surface-2));
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; }
+.ma-meta { font-size: 10.5px; color: var(--muted); margin-top: 8px; }
+.ma-meta:empty { display: none; }
+.ma-typing { color: var(--muted); animation: ma-pulse 1.4s ease-in-out infinite; }
+@keyframes ma-pulse { 50% { opacity: .4; } }
+.ma-err { color: #f87171; }
+
+.ma-composer { display: flex; gap: 8px; align-items: flex-end; padding: 12px 16px 14px; border-top: 1px solid var(--border); }
+.ma-composer textarea { flex: 1; resize: none; max-height: 160px; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; font: inherit; font-size: 13.5px; outline: none; }
+.ma-composer textarea:focus { border-color: var(--tk, #8b5cf6); }
+.ma-composer .tk-btn[disabled] { opacity: .5; cursor: progress; }
+
+/* ── Editor ────────────────────────────────────────────── */
+.ma-modal { max-width: 760px; }
+.ma-col-icon { width: 76px; flex-shrink: 0; }
+.ma-col-icon .tk-input { text-align: center; font-size: 18px; padding: 7px 6px; }
+.ma-tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.ma-tool-group { border: 1px solid var(--border); border-radius: 12px; padding: 9px 10px; background: var(--surface); }
+.ma-tool-group-name { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--muted); margin-bottom: 6px; }
+.ma-tool { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: start;
+  padding: 4px 2px; cursor: pointer; }
+.ma-tool input { margin-top: 3px; accent-color: var(--tk, #8b5cf6); grid-row: span 2; }
+.ma-tool-name { font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ma-tool-desc { font-size: 11px; color: var(--muted); line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ma-modes { display: flex; flex-direction: column; gap: 10px; }
+.ma-mode-row { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: var(--surface); }
+.ma-mode-row .tk-row { align-items: center; margin-bottom: 8px; }
+.ma-col-aut { width: 210px; flex-shrink: 0; }
+.ma-mode-del { flex-shrink: 0; }
+.ma-mode-note { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.ma-add-mode { margin-top: 10px; }
+#ma-reset[hidden], #ma-delete[hidden] { display: none; }
+
+/* ── Agent mode picker (Agent tab sidebar, under New conversation) ──
+   Look comes from the theme: it is a .panel with an h2 (styled like
+   HISTORY) and .voice-select dropdowns (styled by every skin). Layout only. */
+.agent-mode-bar { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; flex-shrink: 0; }
+.agent-mode-bar > h2 { margin-bottom: 2px; }
+.agent-mode-bar .voice-select { font-size: 14px; }   /* same size as the History search box */
+.agent-mode-bar .voice-select[hidden] { display: none; }
+.agent-mode-info { margin: 0; }
+.agent-mode-info:empty { display: none; }
+
+@media (max-width: 720px) {
+  .ma-drawer { width: 100%; }
+  .ma-col-aut { width: 150px; }
+  .ma-mode-select { min-width: 0; flex: 1; }
+}

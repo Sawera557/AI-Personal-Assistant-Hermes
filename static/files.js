@@ -1,7 +1,8 @@
 // File Explorer tab — two-pane file manager over the business's raw S3 objects.
 // Left (in the sidebar): a folders-only collapsible tree. Right (main area): the
 // contents of the selected folder — its subfolders + files — with a breadcrumb
-// and a list/tiles view toggle. Read-only: click a file to open it via a
+// and a list/tiles view toggle. "Organize by" switches the tree between the real
+// S3 folder layout and virtual file-type groups (PDFs, Images, …). Read-only: click a file to open it via a
 // short-lived presigned URL. Scoped by the shared HermesBiz business selector;
 // "All Businesses" groups the tree by business at the root.
 
@@ -10,6 +11,8 @@ const treeEmptyEl = document.getElementById("files-tree-empty");
 const contentEl = document.getElementById("files-content");
 const breadcrumbEl = document.getElementById("files-breadcrumb");
 const viewToggleEl = document.getElementById("files-view-toggle");
+const groupToggleEl = document.getElementById("files-group-toggle");
+const treeTitleEl = document.getElementById("files-tree-title");
 const filesEmptyEl = document.getElementById("files-empty");
 const filesLoadingEl = document.getElementById("files-loading");
 const filesRefreshBtn = document.getElementById("files-refresh-btn");
@@ -49,23 +52,34 @@ function fBizLabel(slug) {
 // A folder node = { name, children: Map<name, folder>, files: [{name, file}] }.
 // Files live in their own array (never mixed into `children`) so a file can
 // never shadow a folder and there are no synthetic child keys. In "all" mode
-// the first path segment is a synthetic per-business group label.
+// the first path segment is a synthetic per-business group label. In "types"
+// mode the tree is virtual: type group → (business, in "all" mode) → files, and
+// each leaf remembers the real folder it lives in (`where`).
 function makeFolder(name) { return { name, children: new Map(), files: [] }; }
 
-function buildTree(files, grouped) {
+function buildTree(files, grouped, byType) {
   const root = makeFolder("");
   for (const f of files) {
     const segs = f.key.split("/").filter(Boolean);
     if (!segs.length) continue;
-    const path = grouped ? [fBizLabel(f.business_slug), ...segs] : segs;
+    const base = segs[segs.length - 1];
+    const cat = byType ? fileCategory(base) : null;
+    const path = byType
+      ? [TYPE_LABEL[cat], ...(grouped ? [fBizLabel(f.business_slug)] : []), base]
+      : grouped ? [fBizLabel(f.business_slug), ...segs] : segs;
     let node = root;
     for (let i = 0; i < path.length - 1; i++) {
       const name = path[i];
       let child = node.children.get(name);
-      if (!child) { child = makeFolder(name); node.children.set(name, child); }
+      if (!child) {
+        child = makeFolder(name);
+        if (byType && i === 0) child.cat = cat;
+        node.children.set(name, child);
+      }
       node = child;
     }
-    node.files.push({ name: path[path.length - 1], file: f });
+    const where = byType ? segs.slice(0, -1).join("/") : "";
+    node.files.push({ name: base, file: f, where });
   }
   return root;
 }
@@ -101,8 +115,11 @@ function countLeaves(node) {
   return n;
 }
 
+// Type groups keep a fixed order (TYPE_ORDER, "Other" last); real folders sort by name.
 function sortedFolders(node) {
-  return [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return [...node.children.values()].sort((a, b) =>
+    (a.cat && b.cat) ? TYPE_ORDER.indexOf(a.cat) - TYPE_ORDER.indexOf(b.cat)
+                     : a.name.localeCompare(b.name));
 }
 function sortedFiles(node) {
   return node.files.slice().sort((a, b) => a.name.localeCompare(b.name));
@@ -151,6 +168,14 @@ function fileCategory(name) {
 }
 function fileIcon(name) { return ICONS[fileCategory(name)]; }
 
+// Display order + labels for the "Organize by: Types" groups.
+const TYPE_ORDER = ["pdf", "image", "doc", "sheet", "slides", "video", "audio", "archive", "generic"];
+const TYPE_LABEL = {
+  pdf: "PDFs", image: "Images", doc: "Documents", sheet: "Spreadsheets",
+  slides: "Presentations", video: "Videos", audio: "Audio", archive: "Archives",
+  generic: "Other",
+};
+
 const SPINNER = '<div class="files-spinner-wrap"><span class="files-spinner" role="status" aria-label="Loading"></span></div>';
 
 // In the grid (tiles) view, hard-cap the shown name so long keys/uuids don't
@@ -167,6 +192,7 @@ let expanded = new Set();
 let nodeById = new Map();
 let _nextId = 0;
 let viewMode = localStorage.getItem("hermesFilesView") || "tiles";
+let groupMode = localStorage.getItem("hermesFilesGroup") === "types" ? "types" : "folders";
 let loading = false;
 // Fetch every file once (entity_id=all) and cache it; switching business just
 // re-filters this list client-side. Refetch only on Refresh or after the TTL.
@@ -185,7 +211,7 @@ function renderFolderNode(node) {
     <div class="ftree-node${isOpen ? " open" : ""}">
       <div class="ftree-row ftree-folder${isSel ? " selected" : ""}" data-id="${node.id}" style="--depth:${node.path.length - 1}">
         ${kids.length ? CHEVRON : '<span class="ftree-chevron-spacer"></span>'}
-        ${FOLDER_ICON}
+        ${node.cat ? ICONS[node.cat] : FOLDER_ICON}
         <span class="ftree-name">${fEscape(node.name)}</span>
         <span class="ftree-meta">${countLeaves(node)}</span>
       </div>
@@ -213,10 +239,10 @@ function renderBreadcrumb() {
 // ---- Right content pane --------------------------------------------------
 function folderItemHtml(node) {
   const count = countLeaves(node);
-  const shown = viewMode === "tiles" ? gridName(node.name) : node.name;
+  const shown = viewMode === "tiles" && !node.cat ? gridName(node.name) : node.name;
   return `
     <button type="button" class="file-item folder" data-id="${node.id}" title="${fEscape(node.name)}">
-      <span class="file-item-icon">${ICONS.folder}</span>
+      <span class="file-item-icon">${ICONS[node.cat] || ICONS.folder}</span>
       <span class="file-item-body">
         <span class="file-item-name">${fEscape(shown)}</span>
         <span class="file-item-meta">${count} item${count === 1 ? "" : "s"}</span>
@@ -226,7 +252,10 @@ function folderItemHtml(node) {
 
 function fileItemHtml(leaf) {
   const f = leaf.file;
-  const meta = [fHumanSize(f.size), fHumanDate(f.last_modified)].filter(Boolean).join(" · ");
+  // Types mode: say which real folder the file lives in (tiles: just the last segment).
+  const where = viewMode === "tiles" ? leaf.where.split("/").pop() : leaf.where;
+  const meta = [where && `in ${where}`, fHumanSize(f.size), fHumanDate(f.last_modified)]
+    .filter(Boolean).join(" · ");
   const shown = viewMode === "tiles" ? gridName(leaf.name) : leaf.name;
   return `
     <button type="button" class="file-item file" data-uri="${fEscape(f.s3_uri)}" title="${fEscape(f.key)}">
@@ -276,6 +305,17 @@ function setViewMode(mode) {
   renderRight();
 }
 
+function setGroupMode(mode) {
+  groupMode = mode === "types" ? "types" : "folders";
+  localStorage.setItem("hermesFilesGroup", groupMode);
+  if (groupToggleEl) {
+    groupToggleEl.querySelectorAll("button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.group === groupMode));
+  }
+  if (treeTitleEl) treeTitleEl.textContent = groupMode === "types" ? "File types" : "Folders";
+  if (treeEmptyEl) treeEmptyEl.textContent = groupMode === "types" ? "No files yet." : "No folders yet.";
+}
+
 // ---- Load ----------------------------------------------------------------
 // Rebuild the tree for the active business from the cached all-files list.
 // "all" → grouped by business; a specific slug → just that business's files.
@@ -287,7 +327,7 @@ function applyView() {
     : allFiles.filter((f) => f.business_slug === slug);
   nodeById = new Map();
   _nextId = 0;
-  treeRoot = buildTree(files, grouped);
+  treeRoot = buildTree(files, grouped, groupMode === "types");
   annotate(treeRoot, []);
   expanded = new Set();
   selectPath([]); // start at the root
@@ -386,6 +426,16 @@ if (viewToggleEl) {
   });
 }
 
+// Organize-by toggle: rebuild the tree from the cache (no refetch).
+if (groupToggleEl) {
+  groupToggleEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-group]");
+    if (!btn || btn.dataset.group === groupMode) return;
+    setGroupMode(btn.dataset.group);
+    if (allFiles) applyView();
+  });
+}
+
 if (filesRefreshBtn) filesRefreshBtn.addEventListener("click", () => loadFiles(true));
 if (filesRefreshM) filesRefreshM.addEventListener("click", () => loadFiles(true));
 
@@ -394,7 +444,8 @@ let filesInited = false;
 window._filesInit = function () {
   if (!filesInited) {
     filesInited = true;
-    setViewMode(viewMode); // reflect persisted mode in the toggle buttons
+    setViewMode(viewMode); // reflect persisted modes in the toggle buttons
+    setGroupMode(groupMode);
     if (window.HermesBiz) {
       window.HermesBiz.onChange(() => { if (filesInited) loadFiles(); });
     }

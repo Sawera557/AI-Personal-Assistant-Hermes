@@ -74,15 +74,18 @@
     }, true);
   }
 
+  const TOGGLES = ["#files-view-toggle", "#files-group-toggle"];
   function pill() {
-    const tg = $("#files-view-toggle");
-    if (!tg) return;
-    let p = $(".ff-pill", tg);
-    if (!p) { p = document.createElement("span"); p.className = "ff-pill"; tg.prepend(p); }
-    const a = $("button.active", tg);
-    if (!a) { p.style.width = "0"; return; }
-    p.style.width = a.offsetWidth - 4 + "px";
-    p.style.transform = "translateX(" + (a.offsetLeft + 2) + "px)";
+    TOGGLES.forEach((sel) => {
+      const tg = $(sel);
+      if (!tg) return;
+      let p = $(".ff-pill", tg);
+      if (!p) { p = document.createElement("span"); p.className = "ff-pill"; tg.prepend(p); }
+      const a = $("button.active", tg);
+      if (!a) { p.style.width = "0"; return; }
+      p.style.width = a.offsetWidth - 4 + "px";
+      p.style.transform = "translateX(" + (a.offsetLeft + 2) + "px)";
+    });
   }
 
   function boot() {
@@ -99,8 +102,10 @@
       }
       decorate(content);
     }).observe(content, { childList: true });
-    const tg = $("#files-view-toggle");
-    if (tg) new MutationObserver(pill).observe(tg, { attributes: true, subtree: true, attributeFilter: ["class"] });
+    TOGGLES.forEach((sel) => {
+      const tg = $(sel);
+      if (tg) new MutationObserver(pill).observe(tg, { attributes: true, subtree: true, attributeFilter: ["class"] });
+    });
     new MutationObserver(() => requestAnimationFrame(pill)).observe($("#app") || document.body, { attributes: true, attributeFilter: ["data-view"] });
     addEventListener("resize", pill);
     decorate(content);

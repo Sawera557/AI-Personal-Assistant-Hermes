@@ -316,15 +316,52 @@ function renderThinking(thinking) {
 
 // Per-response token/cost footer, shown under each assistant reply.
 // `usage` = {input_tokens, output_tokens, ...}; `cost` = USD number.
-function renderUsage(usage, cost, model) {
+// `telemetry` (optional) is the turn result / transcript entry, read for the
+// per-turn telemetry of TURN_COST_PLAN step 0.5: `calls` (one per provider
+// call: model, input, output, reasoning, cached, fallback), `reasoning_tokens`
+// and `cached_tokens`. The visible line is unchanged; the detail lives in the
+// hover tooltip. Every field is optional — replies saved before 0.5 have none
+// of them, and the tooltip then shows what it can.
+function renderUsage(usage, cost, model, telemetry) {
   if (!usage) return "";
   const tokens = (usage.input_tokens || 0) + (usage.output_tokens || 0);
   if (!tokens && !cost) return "";
   const money = typeof cost === "number" ? ` · $${cost.toFixed(4)}` : "";
   const modelTag = model ? ` · ${escapeHtml(model)}` : "";
-  return `<div class="usage-line" title="${(usage.input_tokens || 0).toLocaleString()} in / ` +
-    `${(usage.output_tokens || 0).toLocaleString()} out">` +
+  const title = escapeHtml(usageTooltip(usage, cost, telemetry || {}));
+  return `<div class="usage-line" title="${title}">` +
     `🎫 ${tokens.toLocaleString()} tokens${money}${modelTag}</div>`;
+}
+
+// The footer's hover text, one fact per line. `in` is the whole prompt the
+// provider counted — cache hits included, since a confirmed-rate model reports
+// them in cache_read_input_tokens instead of input_tokens — and `cached` says
+// how much of it was a cache hit. Cost gets 6 decimals: toFixed(4) shows
+// $0.00005 as $0.0001, which hides exactly the small turns being measured.
+function usageTooltip(usage, cost, t) {
+  const n = (v) => (typeof v === "number" && isFinite(v) ? v : 0);
+  const fmt = (v) => n(v).toLocaleString();
+  const input = n(usage.input_tokens) + n(usage.cache_read_input_tokens) +
+    n(usage.cache_creation_input_tokens);
+  const counts = [`${fmt(input)} in`, `${fmt(usage.output_tokens)} out`];
+  if (typeof t.reasoning_tokens === "number") counts.push(`${fmt(t.reasoning_tokens)} reasoning`);
+  if (typeof t.cached_tokens === "number") counts.push(`${fmt(t.cached_tokens)} cached`);
+  const lines = [counts.join(" / ")];
+  const calls = Array.isArray(t.calls) ? t.calls.filter((c) => c && typeof c === "object") : [];
+  if (calls.length) {
+    lines.push(`${calls.length} provider call${calls.length === 1 ? "" : "s"}`);
+    // Models in first-use order; a model that only ever ran as a credit
+    // fallback is marked, so a free-tier turn re-billed on Claude stands out.
+    const seen = new Map();
+    calls.forEach((c) => {
+      const name = String(c.model || "unknown model");
+      seen.set(name, (seen.get(name) ?? true) && Boolean(c.fallback));
+    });
+    const used = [...seen].map(([name, fb]) => (fb ? `${name} (fallback)` : name));
+    lines.push(`Models: ${used.join(", ")}`);
+  }
+  if (typeof cost === "number" && isFinite(cost)) lines.push(`Cost: $${cost.toFixed(6)}`);
+  return lines.join("\n");
 }
 
 // Live, uncollapsed "Reasoning" view shown WHILE a turn is still fetching its
@@ -381,7 +418,7 @@ function renderAssistantTurn(turn) {
   const bubble = wrap.querySelector(".bubble");
   bubble.innerHTML =
     renderMarkdown(turn.text) + renderThinking(turn.thinking) +
-    renderToolTrace(turn.tool_calls) + renderUsage(turn.usage, turn.cost_usd, turn.model_used);
+    renderToolTrace(turn.tool_calls) + renderUsage(turn.usage, turn.cost_usd, turn.model_used, turn);
   highlightCode(bubble);
   hydrateMedia(bubble);
   enhanceArtefactLinks(bubble);
@@ -627,7 +664,7 @@ async function sendStreaming(body, bubble) {
   if (final) {
     bubble.innerHTML =
       renderMarkdown(final.reply) + renderThinking(final.thinking) +
-      renderToolTrace(final.tool_calls) + renderUsage(final.usage, final.cost_usd, final.model_used);
+      renderToolTrace(final.tool_calls) + renderUsage(final.usage, final.cost_usd, final.model_used, final);
     highlightCode(bubble);
     hydrateMedia(bubble);
     enhanceArtefactLinks(bubble);
@@ -677,6 +714,12 @@ form.addEventListener("submit", async (e) => {
   body.append("entity_id", entityIdForSend());
   body.append("message", text);
   body.append("effort", currentEffort());
+  // Agent mode (static/agent-mode.js): Hermes answers as the chosen agent.
+  const agentMode = window.HermesAgentMode && window.HermesAgentMode.current();
+  if (agentMode) {
+    body.append("agent_id", agentMode.agent_id);
+    body.append("agent_mode", agentMode.mode);
+  }
   pendingFiles.forEach((f) => body.append("files", f));
 
   input.value = "";
@@ -749,7 +792,7 @@ const openMobileNav  = () => appEl.classList.add("mobile-open");
 const closeMobileNav = () => appEl.classList.remove("mobile-open");
 
 // Wire up every hamburger button (chat topbar + bills topbar)
-["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context", "menu-btn-tasks", "menu-btn-files", "menu-btn-jobs", "menu-btn-pricing", "menu-btn-settings", "menu-btn-artefacts"].forEach((id) => {
+["menu-btn", "menu-btn-bills", "menu-btn-meeting", "menu-btn-context", "menu-btn-tasks", "menu-btn-files", "menu-btn-jobs", "menu-btn-pricing", "menu-btn-settings", "menu-btn-artefacts", "menu-btn-multiagents"].forEach((id) => {
   document.getElementById(id)?.addEventListener("click", openMobileNav);
 });
 
@@ -788,6 +831,9 @@ function setView(view) {
     window._contextInit();
   }
   // Lazy-init scheduled tasks on first open
+  if (view === "multiagents" && typeof window._multiAgentsInit === "function") {
+    window._multiAgentsInit();
+  }
   if (view === "tasks" && typeof window._tasksInit === "function") {
     window._tasksInit();
   }

@@ -1,0 +1,1544 @@
+{
+  "scenario": "opus5_all_hi",
+  "description": "Anthropic with adaptive thinking + output_config effort.",
+  "caller": "stream_turn",
+  "inputs": {
+    "messages": [
+      "hi"
+    ],
+    "active_business": "all",
+    "voice": false,
+    "context_mode": true,
+    "retrieval_blocks": true,
+    "allowed_apps": null,
+    "interactive": true,
+    "autonomy": null
+  },
+  "provider": "anthropic",
+  "model": "claude-opus-5",
+  "frozen_date": "2026-10-07",
+  "env_fingerprint": {
+    "HERMES_APPS": [
+      "quickbooks",
+      "pdf-co",
+      "google-contacts",
+      "fathom",
+      "google-meet",
+      "google-forms",
+      "google-sheets",
+      "google-docs",
+      "google-drive",
+      "google-calendar",
+      "google-mail",
+      "zoom",
+      "jira"
+    ],
+    "connected_business_slugs": [
+      "afk",
+      "gak",
+      "gif",
+      "gakc",
+      "nh",
+      "per"
+    ],
+    "HERMES_WEB_SEARCH": true,
+    "HERMES_MAX_TOKENS": 16000,
+    "HERMES_OUTPUT_CAP": 0,
+    "HERMES_EFFORT": "medium",
+    "NVIDIA_REASONING_BUDGET": 16384,
+    "NVIDIA_TEMPERATURE": 1.0,
+    "NVIDIA_TOP_P": 0.95
+  },
+  "calls": [
+    {
+      "client": "anthropic",
+      "endpoint": "messages.stream",
+      "kwargs": {
+        "model": "claude-opus-5",
+        "max_tokens": 16000,
+        "system": "You are Hermes, a capable AI executive assistant. You help the user get real work done across their connected business apps, the web, and their documents.\n\nConnected apps are reachable through the Maton gateway tools. Known app slugs:\n  - quickbooks: QuickBooks (accounting)\n  - pdf-co: PDF.co (PDF parsing / OCR / conversion)\n  - google-contacts: Google Contacts\n  - fathom: Fathom (meeting notes & recordings)\n  - google-meet: Google Meet\n  - google-forms: Google Forms\n  - google-sheets: Google Sheets\n  - google-docs: Google Docs\n  - google-drive: Google Drive\n  - google-calendar: Google Calendar\n  - google-mail: Gmail\n  - zoom: Zoom (your own meetings/recordings/webinars)\n  - jira: Jira (issues/tasks, assignment)\n\nOperating guidelines:\n- Use `maton_request` to read from and act on these apps via their native APIs.\n- If you're unsure whether an app is connected, call `maton_list_connections`. If it isn't connected, call `maton_create_connection` and give the user the returned OAuth link to authorize it.\n- Always discover record IDs with read-only GET calls before performing a write.\n- To email a Zoom meeting invite, use `zoom_send_invite` (not maton_request) — it pulls the real join link straight from Zoom so it's never mistyped, and it automatically CCs the user's own email too. Use `send_email` for a plain email with no attachment.\n- To email a file — whether the user gave you one or asked you to generate it (e.g. 'send Amal the renewal letter as a PDF') — use `email_with_attachment`, never hand-build attachments via maton_request. It runs a fixed two-step flow: first call it WITHOUT confirm to generate the file (PDF/DOCX/XLSX or text — you write the content), attach it, and hold the email as a Gmail draft; relay the returned preview and ask the user to approve; only after they explicitly approve, call it again with confirm=true and the returned draft_id to send exactly what they reviewed. Files over ~25MB are auto-shared via a Drive link instead of attached.\n- When asked what meetings/events are coming up, call BOTH `calendar_list_upcoming` and `zoom_list_meetings` (not maton_request) and merge the results into one answer — a meeting may only exist in one of the two (e.g. a Zoom call with no calendar invite, or a calendar event with no Zoom link). Only skip one if the user specifically asks about just Calendar or just Zoom.\n- For any write or destructive action (sending email, sending a WhatsApp/WATI message or file, assigning a WATI operator, creating/editing calendar events, modifying QuickBooks data, deleting Drive files, etc.), first clearly summarize exactly what you will do, then STOP and ask the user to confirm. Only perform the write after they explicitly approve. A safety guardrail enforces this: the first time you call such a tool it returns `status:\"awaiting_confirmation\"` with a `summary` and an `approval_token` INSTEAD of running. When that happens, show the user the summary and ask them to confirm; once they approve, call the SAME tool again with the SAME arguments plus `approval_token` set to the returned value. Never invent an approval_token, and never change the arguments between the two calls — any change needs a fresh confirmation. (If the guardrail is off, tools run directly; you should still confirm first as above unless the user has told you not to.)\n- Never substitute one business's data or connected account for another's. If a business isn't connected yet, tell the user plainly instead of guessing or using a different business's account.\n- Before saying you lack context on a business's specific rules, background, or policies, call `search_business_knowledge` — that's where manually-added business context (uploaded notes/files) lives, separate from the MEMORY section below.\n- When asked to generate a document, report, note, CSV, or any other file the user can download, write the full content yourself and call `create_file` to save it and get a real download link — never invent a URL, and always share the returned link back to the user in your reply.\n- When you use web search, cite the sources.\n- If a tool result is marked truncated (a `_truncation` key or a <<TRUNCATED>> marker), you have not seen the omitted part. Never describe, quote, count, or answer questions about content past the marker or beyond a listed cut — say the result was truncated and fetch the rest before answering.\n- GROUNDING & ATTRIBUTION (non-negotiable — the user demands zero fabrication and zero assumptions). You may be given several context blocks below; attribute each correctly and never blur them:\n    - BUSINESS CONTEXT PACK = standing configured facts about the business. Refer to these as standing context, NEVER as something the user just told you.\n    - MEMORY = durable saved facts; may be stale — confirm with a tool before stating as a current fact.\n    - EARLIER CONVERSATIONS = what was actually said in past chats. ONLY this block (or the user's current message) lets you say 'you told me', 'you said', 'we discussed', or 'as you mentioned' — and cite its date when you do.\n    - RETRIEVED CONTEXT / `search_business_knowledge` = documents retrieved this turn; refer to them as retrieved/from the document, never as memory or as something the user said.\n    - Live tool results = current truth.\n  Never present a context-pack or retrieved-document fact as something the user said or as a memory of your conversation. Do NOT state any specific — a name, address, amount, date, ID, or count — unless it appears in one of these blocks or a tool result THIS turn. If you have only part of a detail, give exactly that part and stop; never complete or fill in the rest from assumption, even if you are fairly confident. When you use a recalled or retrieved fact, say briefly where it came from so the user can tell recall from inference.\n- Lead with the answer; be concise and practical.\nToday's date is 2026-10-07.\n\nBusiness scope: the user has 'All Businesses' selected. Every Maton tool call must include a `business` argument naming which connected business's account to use — pick the one relevant to what's being asked, or ask the user to clarify if it's ambiguous.\n\nBUSINESS CONTEXT PACK (authoritative standing facts and rules — trust these over memory or retrieval; if a tool result contradicts them, say so explicitly):\nHard rules: money figures come only from live QuickBooks. (sample context pack; scope='all')\n\nMEMORY — saved facts from PAST conversations (preferences, business rules, standing decisions). Preferences and standing decisions are reliable. But anything here that can change over time — contact numbers, balances, message contents, current status, who said what — may be STALE: treat it as background, NOT as a live retrieval, and confirm it with a tool call before stating it as a current fact.\n- [owner] Prefers short, direct answers. (sample memory; scope='all')\n\nEARLIER CONVERSATIONS (sample; scope='all'):\n- 2026-10-01 user: remind me about rent on Mondays.\n\nRETRIEVED CONTEXT (sample; scope='all'):\n- [rent_roll.xlsx] Unit 4B rent due on the 1st.",
+        "tools": [
+          {
+            "name": "maton_request",
+            "description": "Call a connected third-party app through the Maton API gateway. Maton injects the OAuth token and proxies to the app's native REST API. Allowed app slugs: quickbooks, pdf-co, google-contacts, fathom, google-meet, google-forms, google-sheets, google-docs, google-drive, google-calendar, google-mail, zoom, jira. `path` is the native API path for that app (everything after the app slug). Examples: app='google-mail', path='/gmail/v1/users/me/messages'. To SEND an email, use the dedicated `send_email` tool instead of building the raw Gmail payload here yourself — hand-encoding the base64 MIME message risks mojibake and mistyped tokens. For a Zoom meeting invite specifically, use `zoom_send_invite` (it also auto-CCs the user). app='google-sheets', path='/v4/spreadsheets/{id}/values/Sheet1!A1:C10'. app='quickbooks', path='/quickbooks/v2/company/:realmId/query' (`:realmId` is auto-substituted). Notion (app='notion') — everything is JSON, no OCR/binary handling needed: search the whole workspace with method='POST', path='/v1/search', body={'query': '...', 'filter': {'value': 'page'|'database', 'property': 'object'}}. List/filter a database's rows with method='POST', path='/v1/databases/{database_id}/query', body={'filter': {...}, 'sorts': [...]} (get the database_id and its property schema first via method='GET', path='/v1/databases/{database_id}' so you use the right property names/types). Read a single page's properties with method='GET', path='/v1/pages/{page_id}'; read its body content with method='GET', path='/v1/blocks/{page_id}/children'. Read comments with method='GET', path='/v1/comments?block_id={page_or_block_id}'. Create a page/database row with method='POST', path='/v1/pages', body={'parent': {'database_id': '...'} or {'page_id': '...'}, 'properties': {...}} — each property value must match its type in the database schema, e.g. {'Name': {'title': [{'text': {'content': '...'}}]}}, {'Status': {'status': {'name': 'Done'}}}, {'Due': {'date': {'start': 'YYYY-MM-DD'}}}. Add content blocks to an existing page with method='PATCH', path='/v1/blocks/{page_id}/children', body={'children': [{'object': 'block', 'type': 'paragraph', 'paragraph': {'rich_text': [{'text': {'content': '...'}}]}}]}. Post a comment with method='POST', path='/v1/comments', body={'parent': {'page_id': '...'}, 'rich_text': [{'text': {'content': '...'}}]}. Update properties (incl. status/assignee/due date) or archive/delete a page with method='PATCH', path='/v1/pages/{page_id}', body={'properties': {...}} or body={'archived': true}. Zoom (app='zoom' for the connected user's own account; app='zoom-admin' for account-wide access to any user — same endpoints, but zoom-admin uses an explicit {userId} or email instead of 'me' and can also list/inspect other users). Get your profile: method='GET', path='/v2/users/me'. List upcoming meetings: method='GET', path='/v2/users/me/meetings', query={'type': 'upcoming'} (types: scheduled|live|upcoming|previous_meetings). Get one meeting's details: method='GET', path='/v2/meetings/{meetingId}'. Create a meeting: method='POST', path='/v2/users/me/meetings', body={'topic': '...', 'type': 2, 'start_time': 'YYYY-MM-DDTHH:MM:SSZ', 'duration': 30, 'timezone': 'UTC'} (type: 1=instant, 2=scheduled, 3=recurring no fixed time, 8=recurring fixed time). Update a meeting: method='PATCH', path='/v2/meetings/{meetingId}', body={...changed fields...}. Delete: method='DELETE', path='/v2/meetings/{meetingId}'. List a user's cloud recordings: method='GET', path='/v2/users/me/recordings' (optionally query={'from': 'YYYY-MM-DD', 'to': 'YYYY-MM-DD'}); recordings for one meeting: method='GET', path='/v2/meetings/{meetingId}/recordings'; delete with method='DELETE', path='/v2/meetings/{meetingId}/recordings'. Webinars (needs the Webinar add-on): list method='GET', path='/v2/users/me/webinars'; create/view/update/delete mirror the meetings endpoints with 'webinars' in place of 'meetings'. Registrants: list method='GET', path='/v2/meetings/{meetingId}/registrants'; add one with method='POST', path='/v2/meetings/{meetingId}/registrants', body={'email': '...', 'first_name': '...'}. Past-meeting details/participants: method='GET', path='/v2/past_meetings/{meetingId}' or path='/v2/past_meetings/{meetingId}/participants'. zoom-admin only — list every user in the account: method='GET', path='/v2/users'; a specific user's profile/settings: method='GET', path='/v2/users/{userId}' or path='/v2/users/{userId}/settings'; another user's meetings/recordings/webinars: same paths as above with '/v2/users/{userId}/...' instead of '/v2/users/me/...'; account-wide settings (paid plans only): method='GET', path='/v2/accounts/{accountId}/settings'. Jira (app='jira') — prefer the dedicated `jira_search_issues`, `jira_get_issue`, `jira_create_issue`, and `jira_assign_issue` tools for everyday work; they already resolve the Cloud id and any accountId lookups. Fall back to this raw tool only for things those don't cover (transitions, comments, custom fields). Every Jira path needs the site's Cloud id first: method='GET', path='/oauth/token/accessible-resources' returns a list with each site's `id` (the cloudId) — then every other call is path='/ex/jira/{cloudId}/rest/api/3/...', e.g. path='/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/transitions' to list or (POST) trigger a status transition, or path='/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/comment' (POST) to add a comment (body uses Atlassian's doc format: {'body': {'type': 'doc', 'version': 1, 'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': '...'}]}]}}). RESPONSE SIZE: very large responses are reduced to fit the context window. If the result carries a top-level `_truncation` key, or you see a <<TRUNCATED ...>> marker anywhere in it, you are NOT looking at the whole payload — do not describe, quote, count, or answer questions about content past a marker or beyond a listed cut. Re-request the missing part with a narrower query, a filter (e.g. Gmail `q=`), or the API's paging parameter (`pageToken`/`maxResults`/`startAt`). Always do read-only (GET) calls to discover IDs before any write. Do NOT call this for POST/PUT/PATCH/DELETE until the user has explicitly confirmed the change.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "app": {
+                  "type": "string",
+                  "description": "Maton app slug. One of: quickbooks, pdf-co, google-contacts, fathom, google-meet, google-forms, google-sheets, google-docs, google-drive, google-calendar, google-mail, zoom, jira"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE"
+                  ],
+                  "description": "HTTP method."
+                },
+                "path": {
+                  "type": "string",
+                  "description": "Native API path beginning with '/' (after the app slug)."
+                },
+                "query": {
+                  "type": "object",
+                  "description": "Optional query-string parameters.",
+                  "additionalProperties": true
+                },
+                "body": {
+                  "type": "object",
+                  "description": "Optional JSON request body for write methods.",
+                  "additionalProperties": true
+                },
+                "connection_id": {
+                  "type": "string",
+                  "description": "Optional Maton connection id when multiple exist for an app."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "app",
+                "method",
+                "path"
+              ]
+            }
+          },
+          {
+            "name": "maton_list_connections",
+            "description": "List the user's Maton app connections so you know which apps are connected before calling them. Optionally filter by app slug or status (ACTIVE | PENDING | FAILED).",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "app": {
+                  "type": "string",
+                  "description": "Optional app slug filter."
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ACTIVE",
+                    "PENDING",
+                    "FAILED"
+                  ],
+                  "description": "Optional status filter."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                }
+              }
+            }
+          },
+          {
+            "name": "maton_create_connection",
+            "description": "Begin connecting a new app. Returns an OAuth authorization URL the user must open in their browser to grant access. Use this when an app the user wants is not yet connected. Only works for a single scoped business — if the user has 'All Businesses' selected, ask them to pick a specific business first.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "app": {
+                  "type": "string",
+                  "description": "App slug to connect, e.g. 'quickbooks' or 'google-mail'."
+                }
+              },
+              "required": [
+                "app"
+              ]
+            }
+          },
+          {
+            "name": "drive_read_file",
+            "description": "Fetch a Google Drive file's actual bytes (PDF or image) and hand them to you to read directly — you read PDFs and images natively, no OCR step needed. Use this whenever you need to see what's INSIDE a Drive file, not just its name/metadata (which maton_request's `drive/v3/files` list already gives you, including the `id` this tool needs). Only PDF/JPEG/PNG content can be shown inline; other file types, or files the gateway can't proxy as binary, come back as metadata + a webViewLink instead.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "file_id": {
+                  "type": "string",
+                  "description": "The Drive file's `id`, from a prior maton_request call to app='google-drive', path='drive/v3/files'."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                }
+              },
+              "required": [
+                "file_id"
+              ]
+            }
+          },
+          {
+            "name": "read_document",
+            "description": "Read the text of a document that was previously shared into this conversation and stored in the file locker (S3) — e.g. a PDF, photo, or invoice a contact sent over WhatsApp. Fetches the file by its `s3_uri`, runs OCR on scanned pages and phone photos, and returns the extracted text so you can summarize or answer questions about it — with no need for the user to download and re-upload anything — including files you created yourself with `create_file` (pass the `s3_uri` it returned). The available files and their `s3_uri`s are listed under 'Files shared in this conversation' in your context. Supports PDF, JPEG/PNG images, Word (.docx), Excel (.xlsx), PowerPoint (.pptx), and text/CSV/JSON files.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "s3_uri": {
+                  "type": "string",
+                  "description": "The exact `s3://...` URI of the file to read. Use the URI listed under 'Files shared in this conversation' — copy it verbatim, never invent one."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                }
+              },
+              "required": [
+                "s3_uri"
+              ]
+            }
+          },
+          {
+            "name": "send_email",
+            "description": "Send an email through the connected Gmail account. The MIME message and base64 encoding are built in code from the plain `to`/`subject`/`body` you pass — any characters (em dashes, curly quotes, etc.) are encoded correctly, unlike hand-building the raw Gmail payload via maton_request, which risks encoding corruption.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "to": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Recipient email address(es)."
+                },
+                "cc": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Optional CC address(es)."
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "Plain-text email body."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "to",
+                "subject",
+                "body"
+              ]
+            }
+          },
+          {
+            "name": "email_with_attachment",
+            "description": "Send an email WITH one or more file attachments through the connected Gmail account, following a fixed prepare-then-send flow so a review always happens before anything leaves the outbox. Use this — not send_email or maton_request — whenever the user wants a file emailed, whether they supplied it or asked you to generate one (e.g. 'send Amal the renewal letter as a PDF'). You can attach files you generate on the fly (PDF/DOCX/XLSX or plain text — you write the content), files uploaded earlier in this chat (by attachment_id), or files you previously created (by s3_uri).\nSTEP 1 — PREPARE (confirm omitted): generates the attachment(s), builds the email, and saves it as a Gmail DRAFT. It does NOT send. Returns a draft_id and a preview; show the user what will go out and ask them to approve.\nSTEP 2 — SEND (confirm=true + the returned draft_id, plus the approval_token when one is returned): sends exactly that reviewed draft. In a live chat only after the user explicitly approves, in a later message; the prepare result's next_step says when it may go straight away. A send without a prepared draft is refused.\nAny single attachment larger than ~25 MB is automatically uploaded to Google Drive and linked in the email body instead of attached, so the send never fails on size.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "to": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Recipient email address(es)."
+                },
+                "cc": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Optional CC address(es)."
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "Plain-text email body."
+                },
+                "attachments": {
+                  "type": "array",
+                  "description": "Files to attach. Each item is ONE of three shapes:\n  • Generate a file: {\"filename\": \"renewal_letter.pdf\", \"content\": \"<full text you write>\"} — a .pdf/.docx/.xlsx filename is rendered into a real office file (.xlsx content is parsed as CSV rows); any other extension is saved as text.\n  • Attach a file already uploaded in this chat: {\"attachment_id\": \"<id>\"}.\n  • Attach a file you previously created/stored: {\"s3_uri\": \"s3://...\"}.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "filename": {
+                        "type": "string",
+                        "description": "File name with extension (for a generated file)."
+                      },
+                      "content": {
+                        "type": "string",
+                        "description": "Full text content to render into the generated file."
+                      },
+                      "content_type": {
+                        "type": "string",
+                        "description": "Optional MIME override for a non-office generated file."
+                      },
+                      "attachment_id": {
+                        "type": "string",
+                        "description": "Id of a file already uploaded in this chat."
+                      },
+                      "s3_uri": {
+                        "type": "string",
+                        "description": "s3:// URI of a previously created/stored file."
+                      }
+                    }
+                  }
+                },
+                "confirm": {
+                  "type": "boolean",
+                  "description": "Leave FALSE/omitted to PREPARE: generate the attachment(s) and hold the email as a Gmail draft for the user to review — this does NOT send. After the user explicitly approves, call again with confirm=true AND the draft_id and approval_token returned by the prepare step to send exactly what was reviewed."
+                },
+                "draft_id": {
+                  "type": "string",
+                  "description": "The draft id from the prepare step. Pass it together with confirm=true to send."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Only with confirm=true: the approval_token returned by the prepare call together with draft_id. Sending needs it, and the user's approval of the preview on a later message. Never invent one."
+                }
+              },
+              "required": [
+                "to",
+                "subject",
+                "body"
+              ]
+            }
+          },
+          {
+            "name": "zoom_send_invite",
+            "description": "Send a Zoom meeting invite by email. Fetches the meeting's real topic, time, and join link directly from Zoom and builds the email in code, so the join URL is always copied byte-for-byte — never retyped/hallucinated. Automatically also sends a copy to the user's own email.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "meeting_id": {
+                  "type": "string",
+                  "description": "The Zoom meeting's numeric id, from a prior maton_request call to app='zoom', path='/v2/users/me/meetings' (or app='zoom-admin')."
+                },
+                "to": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Recipient email address(es) to invite."
+                },
+                "note": {
+                  "type": "string",
+                  "description": "Optional extra note/context to include in the invite email."
+                },
+                "zoom_app": {
+                  "type": "string",
+                  "enum": [
+                    "zoom",
+                    "zoom-admin"
+                  ],
+                  "description": "Which Zoom connection owns this meeting. Defaults to 'zoom'."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "meeting_id",
+                "to"
+              ]
+            }
+          },
+          {
+            "name": "calendar_list_upcoming",
+            "description": "List a business's upcoming Google Calendar events (its primary calendar) — meetings, their time, location, and attendees. Use this whenever the user asks what meetings/events they have, today or in a coming window, instead of `maton_request` — it already handles the Calendar API's date-range query and returns a clean, flattened list instead of raw Google JSON. When the user asks generally 'what meetings do I have', also call `zoom_list_meetings` and combine both — a meeting may exist in only one of the two.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "days": {
+                  "type": "integer",
+                  "description": "How many days ahead to look, from now. Defaults to 14."
+                },
+                "max_results": {
+                  "type": "integer",
+                  "description": "Cap on the number of events returned. Defaults to 20."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "zoom_list_meetings",
+            "description": "List a business's Zoom meetings (scheduled/upcoming/live/past), with join links and meeting IDs — use this instead of `maton_request` for a clean flattened list instead of Zoom's raw paginated response. When the user asks generally 'what meetings do I have', also call `calendar_list_upcoming` and combine both — a meeting may exist in only one of the two (e.g. a Zoom call with no calendar invite, or a calendar event with no Zoom link).",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "scheduled",
+                    "live",
+                    "upcoming",
+                    "previous_meetings"
+                  ],
+                  "description": "Which meetings to list. Defaults to 'upcoming'."
+                },
+                "zoom_app": {
+                  "type": "string",
+                  "enum": [
+                    "zoom",
+                    "zoom-admin"
+                  ],
+                  "description": "Which Zoom connection to list from. Defaults to 'zoom'."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "jira_search_issues",
+            "description": "Search/list Jira issues (tasks, bugs, stories) via JQL. Pass a full `jql` query for anything specific, or use the `project`/`status`/`assignee_email` convenience filters to build a simple AND query for you. Handles the Jira Cloud id lookup and (for `assignee_email`) the accountId lookup internally.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "jql": {
+                  "type": "string",
+                  "description": "Full JQL query, e.g. \"project = ABC AND status = 'In Progress'\". When given, `project`/`status`/`assignee_email` below are ignored."
+                },
+                "project": {
+                  "type": "string",
+                  "description": "Project key filter, e.g. 'ABC'. Ignored if `jql` is given."
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Status name filter, e.g. 'In Progress'. Ignored if `jql` is given."
+                },
+                "assignee_email": {
+                  "type": "string",
+                  "description": "Filter to issues assigned to this person's email. Ignored if `jql` is given."
+                },
+                "max_results": {
+                  "type": "integer",
+                  "description": "Cap on results. Defaults to 20."
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Which fields to return. Defaults to summary, status, assignee, priority, created, updated."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "jira_get_issue",
+            "description": "Get a single Jira issue's full details by its key (e.g. 'ABC-123').",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "issue_key": {
+                  "type": "string",
+                  "description": "The issue key, e.g. 'ABC-123'."
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Optional: limit which fields come back."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                }
+              },
+              "required": [
+                "issue_key"
+              ]
+            }
+          },
+          {
+            "name": "jira_create_issue",
+            "description": "Create a new Jira issue (task, bug, story, ...). Optionally assign it to someone immediately via `assignee_email` — the accountId lookup is handled for you. Always confirm the project, summary, and assignee with the user before calling this, since it's a write.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "project_key": {
+                  "type": "string",
+                  "description": "The Jira project key to create the issue in, e.g. 'ABC'."
+                },
+                "summary": {
+                  "type": "string",
+                  "description": "Short issue title."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Optional longer description (plain text)."
+                },
+                "issue_type": {
+                  "type": "string",
+                  "description": "Issue type name, e.g. 'Task', 'Bug', 'Story'. Defaults to 'Task'."
+                },
+                "priority": {
+                  "type": "string",
+                  "description": "Optional priority name, e.g. 'High'."
+                },
+                "labels": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Optional labels to attach."
+                },
+                "assignee_email": {
+                  "type": "string",
+                  "description": "Optional: email of the person to assign this issue to immediately."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "project_key",
+                "summary"
+              ]
+            }
+          },
+          {
+            "name": "jira_assign_issue",
+            "description": "Assign (or reassign) an existing Jira issue to someone by email — looks up their Jira accountId for you. Pass `assignee_email='unassigned'` to remove the current assignee instead. Confirm the issue and the person with the user before calling this.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "issue_key": {
+                  "type": "string",
+                  "description": "The issue key to assign, e.g. 'ABC-123'."
+                },
+                "assignee_email": {
+                  "type": "string",
+                  "description": "Email of the person to assign. Pass 'unassigned' to remove the current assignee."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "issue_key",
+                "assignee_email"
+              ]
+            }
+          },
+          {
+            "name": "worldbank_data",
+            "description": "Fetch authoritative agriculture & livestock statistics from the World Bank Open Data API — reliable, machine-readable numbers to ground data-driven farming decisions (crop strategy, livestock benchmarking, export context) in real figures instead of guesses. Defaults to Kenya. Use this whenever the user wants a defensible number, a trend over time, or a country comparison for agriculture/livestock — prefer it over web_search for these, since it returns clean multi-year series you can cite.\n`indicators` accepts these curated keys (or any raw World Bank indicator code): crop_production_index, livestock_production_index, food_production_index, cereal_yield, cereal_production, agricultural_land_pct, arable_land_pct, irrigated_land_pct, fertilizer_use, agri_pct_gdp, agri_value_added_usd, employment_in_agri_pct, rural_population_pct, food_exports_pct, agri_raw_exports_pct.\n`countries` accepts names (e.g. 'kenya', 'ethiopia', 'netherlands') or ISO3 codes ('KEN'), plus aggregates 'world'/'WLD' and 'sub-saharan africa'/'SSF' — pass several to compare Kenya against peers or export markets. Omit for Kenya.\nUse `most_recent: 1` for 'the latest figure', or `start_year`/`end_year` for a trend. Data is annual and typically lags 1-2 years. Cite the source and year in your answer.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "indicators": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "One or more catalog keys or raw World Bank indicator codes."
+                },
+                "countries": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Country names/ISO3 codes or aggregates. Defaults to Kenya."
+                },
+                "start_year": {
+                  "type": "integer",
+                  "description": "Inclusive start year of the range."
+                },
+                "end_year": {
+                  "type": "integer",
+                  "description": "Inclusive end year of the range."
+                },
+                "most_recent": {
+                  "type": "integer",
+                  "description": "Keep only the N most recent non-null points per series (e.g. 1 for the latest)."
+                }
+              },
+              "required": [
+                "indicators"
+              ]
+            }
+          },
+          {
+            "name": "wati_list_contacts",
+            "description": "List WhatsApp contacts from the connected WATI account. Filter by name, creation date, or advanced attribute filters (e.g. lead stage, owner).",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Filter by contact name (partial match)."
+                },
+                "attribute_filters": {
+                  "type": "array",
+                  "description": "Advanced filters on custom attributes, e.g. [{\"name\": \"lead_stage\", \"operator\": \"==\", \"value\": \"hot\"}].",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "operator": {
+                        "type": "string",
+                        "enum": [
+                          "contain",
+                          "notContain",
+                          "exist",
+                          "notExist",
+                          "==",
+                          "!=",
+                          "valid",
+                          "invalid"
+                        ]
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "operator"
+                    ]
+                  }
+                },
+                "created_date": {
+                  "type": "string",
+                  "description": "Filter by contact creation date, e.g. 2026-07-01."
+                },
+                "page_size": {
+                  "type": "integer",
+                  "description": "Results per page."
+                },
+                "page_number": {
+                  "type": "integer",
+                  "description": "Page number, 1-based."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "wati_add_contact",
+            "description": "Add a new WhatsApp contact to the connected WATI account, with optional custom attributes.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "whatsapp_number": {
+                  "type": "string",
+                  "description": "Phone number in international format, digits only, no '+' or leading zeros — e.g. 919876543210."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Contact's display name."
+                },
+                "custom_params": {
+                  "type": "array",
+                  "description": "Custom attributes, e.g. [{\"name\": \"lead_stage\", \"value\": \"hot\"}].",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "value"
+                    ]
+                  }
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "whatsapp_number"
+              ]
+            }
+          },
+          {
+            "name": "wati_update_contact_attributes",
+            "description": "Update custom attributes on an existing WATI contact (e.g. lead stage, owner, deal value).",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "whatsapp_number": {
+                  "type": "string",
+                  "description": "The contact's phone number, digits only."
+                },
+                "custom_params": {
+                  "type": "array",
+                  "description": "Custom attributes, e.g. [{\"name\": \"lead_stage\", \"value\": \"hot\"}].",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "value"
+                    ]
+                  }
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "whatsapp_number",
+                "custom_params"
+              ]
+            }
+          },
+          {
+            "name": "wati_get_messages",
+            "description": "Get the WhatsApp message history for a contact.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "whatsapp_number": {
+                  "type": "string",
+                  "description": "The contact's phone number, digits only."
+                },
+                "page_size": {
+                  "type": "integer",
+                  "description": "Results per page."
+                },
+                "page_number": {
+                  "type": "integer",
+                  "description": "Page number, 1-based."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                }
+              },
+              "required": [
+                "whatsapp_number"
+              ]
+            }
+          },
+          {
+            "name": "wati_send_message",
+            "description": "Send a free-text WhatsApp session message to a contact. Only works within WATI's 24-hour customer session window (the contact must have messaged in the last 24h) — outside that window this call will fail and an approved template message is required instead. Always confirm the exact message text with the user before sending.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "whatsapp_number": {
+                  "type": "string",
+                  "description": "The contact's phone number, digits only."
+                },
+                "message_text": {
+                  "type": "string",
+                  "description": "Message to send (max 4096 chars)."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "whatsapp_number",
+                "message_text"
+              ]
+            }
+          },
+          {
+            "name": "wati_send_file",
+            "description": "Send a file (PDF, image, etc.) as a WhatsApp session message. Same 24-hour session window rule as wati_send_message. Provide either `attachment_id` (a file the user already uploaded in this chat) or `file_url` (an http(s) URL to fetch and forward). Always confirm with the user before sending.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "whatsapp_number": {
+                  "type": "string",
+                  "description": "The contact's phone number, digits only."
+                },
+                "attachment_id": {
+                  "type": "string",
+                  "description": "Id of a file already uploaded in this chat via the attachments endpoint."
+                },
+                "file_url": {
+                  "type": "string",
+                  "description": "An http(s) URL to fetch and forward instead of attachment_id."
+                },
+                "caption": {
+                  "type": "string",
+                  "description": "Optional caption sent with the file."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "whatsapp_number"
+              ]
+            }
+          },
+          {
+            "name": "wati_assign_operator",
+            "description": "Assign a human operator (agent) to handle a contact's WhatsApp conversation.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "whatsapp_number": {
+                  "type": "string",
+                  "description": "The contact's phone number, digits only."
+                },
+                "email": {
+                  "type": "string",
+                  "description": "Email address of the WATI operator/agent to assign."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "whatsapp_number",
+                "email"
+              ]
+            }
+          },
+          {
+            "name": "wati_get_media",
+            "description": "Download a media file (image, document, voice note, etc.) that a contact sent, or that was sent to them. Requires the media's `file_name`, typically found in a message record returned by wati_get_messages or an inbound webhook payload. When storage is configured, the file is saved for this business and shown inline in the chat — just report that you retrieved it and mention any caption/context; you don't need to describe or re-attach it.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "file_name": {
+                  "type": "string",
+                  "description": "The media file name, as referenced in a WATI message record."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gif",
+                    "gakc",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which connected business's account to use for this call. The user has 'All Businesses' selected, so you must pick one per call — you cannot query more than one business at once. Connected: ['afk', 'gak', 'gif', 'gakc', 'nh', 'per']."
+                }
+              },
+              "required": [
+                "file_name"
+              ]
+            }
+          },
+          {
+            "name": "search_business_knowledge",
+            "description": "Search a business's uploaded knowledge base (context files, documents, and notes ingested for it) by meaning, not exact keywords. Check here before saying you lack information about a business's specific rules, background, or policies — this is where manually-added business context lives. Returns the most relevant snippets with their source; if nothing relevant comes back, say so rather than guessing.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "What to look for, in plain language (meaning-based search, not exact keywords)."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gakc",
+                    "gif",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Required: which business's knowledge base to search. The user has 'All Businesses' selected, so you must pick one per call."
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "name": "create_file",
+            "description": "Create a new file from text you write and store it in S3, returning a download link. Use this whenever the user asks you to generate a document, report, note, CSV, or any other file they can download — write the full content yourself, then call this to persist it and get a real, working link. Always share the returned `download_url` in your reply EXACTLY as returned — copy it character for character, never shorten, tidy, or re-type it, and never invent or guess a URL yourself (a truncated link is a dead link). The result says whether it expires: if it returns `expires_in_hours`, tell the user the link only lasts that long; if it returns `link_expires: false`, the link is permanent and you shouldn't claim otherwise. If it returns `public_link: true`, the link needs no login — anyone it's forwarded to can open it, so say so plainly when the file holds anything sensitive. A `.pdf` filename is rendered into a REAL PDF automatically — but as plain text only: markdown syntax (#, **, etc.) is NOT interpreted/formatted, it just shows up as literal characters, so write clean prose for a PDF rather than markdown. Every other extension (.md, .txt, .csv, .json, .html, ...) is saved exactly as written.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "filename": {
+                  "type": "string",
+                  "description": "Name for the file, with extension, e.g. 'q3_summary.md' or 'notes.txt'."
+                },
+                "content": {
+                  "type": "string",
+                  "description": "The full text content to write into the file."
+                },
+                "content_type": {
+                  "type": "string",
+                  "description": "Optional MIME type, e.g. 'text/markdown' or 'text/csv'. If omitted, it's guessed from the filename's extension (falls back to text/plain)."
+                },
+                "business": {
+                  "type": "string",
+                  "enum": [
+                    "afk",
+                    "gak",
+                    "gakc",
+                    "gif",
+                    "nh",
+                    "per"
+                  ],
+                  "description": "Optional: which business to file this under, just for organizing in S3. Omit for a general file not tied to one business."
+                }
+              },
+              "required": [
+                "filename",
+                "content"
+              ]
+            }
+          },
+          {
+            "type": "web_search_20260209",
+            "name": "web_search",
+            "allowed_callers": [
+              "direct"
+            ]
+          },
+          {
+            "type": "web_fetch_20260209",
+            "name": "web_fetch",
+            "allowed_callers": [
+              "direct"
+            ]
+          },
+          {
+            "name": "create_scheduled_task",
+            "description": "Create a recurring Scheduled Task in the dashboard from the user's request, so Hermes runs a job automatically on a schedule (it appears in the Tasks tab and fires unattended). Use this whenever the user asks to schedule / automate / 'every day/week' / 'remind me to run' something — e.g. 'every morning at 7 give me a farm briefing', 'each Monday pull the rent arrears'. Write `prompt` as a complete standalone instruction the agent will run each time (as if the user typed it in chat), not a paraphrase. `frequency`: daily (every day at each time), weekdays (Mon–Fri), weekly (only the `days_of_week`), or hourly (every hour at the minute of the first time). `days_of_week` uses 0=Mon … 6=Sun and is required for weekly. `times` are 24h \"HH:MM\" wall-clock in `timezone`. `business` scopes it to one entity — one of: afk (Afro Farm), gak (GAK Properties), gif (GIF Properties), gakc (GAK Commodities), nh (Nour Hammam), per (Personal & Family) — or 'all' for cross-business; default is the conversation's current business. `allowed_apps` optionally limits which connected apps the task may use (Maton slugs like google-mail, google-calendar, quickbooks, google-drive; empty = all). `autonomy` is the safety ceiling for the UNATTENDED run: 'readonly' (default — read/analyze/report only), 'draft' (may also create Gmail drafts, never send), or 'full' (may actually send/modify — a standing authorization; only pick this if the user clearly said to act/send automatically, and confirm first). If the schedule, business, or autonomy is ambiguous, ask the user a quick clarifying question before creating; otherwise create it and report back the resulting schedule and next run.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Short display name for the task."
+                },
+                "prompt": {
+                  "type": "string",
+                  "description": "The full instruction the task runs each time, written as if asked in chat."
+                },
+                "frequency": {
+                  "type": "string",
+                  "enum": [
+                    "daily",
+                    "weekdays",
+                    "weekly",
+                    "hourly"
+                  ]
+                },
+                "times": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "24h wall-clock times, e.g. [\"07:00\",\"13:00\"]. Defaults to [\"09:00\"]."
+                },
+                "days_of_week": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "description": "For weekly: 0=Mon … 6=Sun."
+                },
+                "business": {
+                  "type": "string",
+                  "description": "afk | gak | gif | gakc | nh | per | all"
+                },
+                "allowed_apps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Optional Maton app slugs the task may use; empty = all."
+                },
+                "autonomy": {
+                  "type": "string",
+                  "enum": [
+                    "readonly",
+                    "draft",
+                    "full"
+                  ]
+                },
+                "timezone": {
+                  "type": "string",
+                  "description": "IANA tz, e.g. America/Chicago or Africa/Nairobi. Defaults to the app default."
+                },
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Whether it starts active (fires on schedule). Default true."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "name",
+                "prompt",
+                "frequency"
+              ]
+            }
+          },
+          {
+            "name": "list_scheduled_tasks",
+            "description": "List the user's existing Scheduled Tasks (task_id, name, schedule, business, autonomy, enabled, next run, last status). Use to answer 'what do I have scheduled?', or to find a task's `task_id` before editing/pausing/deleting it. Optional `business` slug (afk/gak/…/per or 'all') scopes the list; omit to use the conversation's current business.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "business": {
+                  "type": "string",
+                  "description": "afk | gak | gif | gakc | nh | per | all"
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "update_scheduled_task",
+            "description": "Edit an existing Scheduled Task — including pausing or resuming it. First get the `task_id` from `list_scheduled_tasks`. Only the fields you pass change; everything else stays. Set `enabled` false to PAUSE (it stops firing but is kept) or true to resume — prefer this over deleting when the user just wants it to stop. To change the schedule, pass the full new `frequency`/`times`/`days_of_week`. Changing schedule, timezone, or enabled recomputes the next run. Same field meanings as create_scheduled_task.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "task_id": {
+                  "type": "string",
+                  "description": "The task to edit (from list_scheduled_tasks)."
+                },
+                "name": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "type": "string"
+                },
+                "frequency": {
+                  "type": "string",
+                  "enum": [
+                    "daily",
+                    "weekdays",
+                    "weekly",
+                    "hourly"
+                  ]
+                },
+                "times": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "days_of_week": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "description": "0=Mon … 6=Sun"
+                },
+                "business": {
+                  "type": "string",
+                  "description": "afk | gak | gif | gakc | nh | per | all"
+                },
+                "allowed_apps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "autonomy": {
+                  "type": "string",
+                  "enum": [
+                    "readonly",
+                    "draft",
+                    "full"
+                  ]
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean",
+                  "description": "false = pause, true = resume."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "task_id"
+              ]
+            }
+          },
+          {
+            "name": "delete_scheduled_task",
+            "description": "Permanently delete a Scheduled Task and its run history. Get the `task_id` from list_scheduled_tasks first. This is IRREVERSIBLE — confirm with the user (name the task) before calling, and if they only want it to stop, pause it with update_scheduled_task(enabled=false) instead.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "task_id": {
+                  "type": "string",
+                  "description": "The task to delete (from list_scheduled_tasks)."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "task_id"
+              ]
+            }
+          },
+          {
+            "name": "create_artefact",
+            "description": "Create a live ARTEFACT — a saved, re-openable HTML view (a 'canvas') bound to a data source, that shows up in the Artefacts tab. Unlike create_file (a one-off download), an artefact RE-FETCHES its source and re-renders every time it's opened, so it always reflects the CURRENT data. Use this when the user wants a living dashboard/table/report from one of their documents — e.g. 'make a live view of this budget sheet', 'pin this doc as an artefact', 'keep this Drive report handy'. Pick `source_type`: 'sheets' (a Google Sheet — give `spreadsheet_id` and an A1 `range` like 'Sheet1!A1:F200'), 'drive' (a Drive file — give `file_id`), 'docs' (a Google Doc — give `document_id`), or 'reviews' (wrap the review-intelligence report for a `date`). Get the id from a prior maton_request/drive_read_file listing. `render`: 'dashboard' (RICH — KPI cards + live charts drawn from the sheet; prefer this for anything numeric/financial so the user gets graphs, not just a grid), 'table' (default for sheets — first row treated as a header), 'kv' (key/value from a 2-column sheet), or 'raw' (a doc's text or a Drive file embed). For render='dashboard' you may add `kpis` (headline stat cards) and `charts` (bar / doughnut / line), plus `table:true` to append the full table and `description` for an intro line. Charts aggregate LIVE sheet columns — reference columns by their header name. A chart = {type:'bar'|'doughnut'|'line', title, group_by:<column to group by>, value:<numeric column to sum>, agg:'sum'|'count'|'avg'|'max'|'min', bucket:'month' (only for a date group_by → monthly trend), limit:<top N>}. A kpi = {label, column:<numeric column>, agg:'sum'|'avg'|'max'|'min'|'count'}. Charts only reflect columns that EXIST in the sheet, so if you want e.g. spend-by-category, make sure the sheet has a Category column. `business` scopes it (afk/gak/gif/gakc/nh/per) and defaults to the conversation's current business — the source is read with that business's connection every time it opens, so it must be the business that owns the document. After creating, share the returned `url` so the user can open the artefact; if `warning` is set, the source couldn't be read yet — tell the user.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "Short display name for the artefact."
+                },
+                "source_type": {
+                  "type": "string",
+                  "enum": [
+                    "sheets",
+                    "drive",
+                    "docs",
+                    "reviews"
+                  ]
+                },
+                "spreadsheet_id": {
+                  "type": "string",
+                  "description": "For source_type=sheets: the Google Sheet id."
+                },
+                "range": {
+                  "type": "string",
+                  "description": "For source_type=sheets: an A1 range, e.g. 'Sheet1!A1:F200'. Defaults to A1:Z1000."
+                },
+                "file_id": {
+                  "type": "string",
+                  "description": "For source_type=drive: the Drive file id."
+                },
+                "document_id": {
+                  "type": "string",
+                  "description": "For source_type=docs: the Google Doc id."
+                },
+                "date": {
+                  "type": "string",
+                  "description": "For source_type=reviews: the report date 'YYYY-MM-DD'."
+                },
+                "render": {
+                  "type": "string",
+                  "enum": [
+                    "dashboard",
+                    "table",
+                    "kv",
+                    "raw"
+                  ],
+                  "description": "How to render the data. 'dashboard' gives KPI cards + charts. Defaults to table for sheets."
+                },
+                "columns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Optional: for a table, only show these columns (by header name)."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "For render=dashboard: an intro line shown under the heading."
+                },
+                "kpis": {
+                  "type": "array",
+                  "description": "For render=dashboard: headline stat cards.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "column": {
+                        "type": "string",
+                        "description": "Numeric column to aggregate (omit for agg=count)."
+                      },
+                      "agg": {
+                        "type": "string",
+                        "enum": [
+                          "sum",
+                          "avg",
+                          "max",
+                          "min",
+                          "count"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "label"
+                    ]
+                  }
+                },
+                "charts": {
+                  "type": "array",
+                  "description": "For render=dashboard: charts drawn from live sheet columns.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "bar",
+                          "doughnut",
+                          "line"
+                        ]
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "group_by": {
+                        "type": "string",
+                        "description": "Column to group rows by (a date column with bucket='month' for a trend)."
+                      },
+                      "value": {
+                        "type": "string",
+                        "description": "Numeric column to aggregate (omit for agg=count)."
+                      },
+                      "agg": {
+                        "type": "string",
+                        "enum": [
+                          "sum",
+                          "count",
+                          "avg",
+                          "max",
+                          "min"
+                        ]
+                      },
+                      "bucket": {
+                        "type": "string",
+                        "enum": [
+                          "month"
+                        ],
+                        "description": "Only for a date group_by → monthly buckets."
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "description": "Keep only the top N groups (by value)."
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "group_by"
+                    ]
+                  }
+                },
+                "table": {
+                  "type": "boolean",
+                  "description": "For render=dashboard: also append the full data table."
+                },
+                "business": {
+                  "type": "string",
+                  "description": "afk | gak | gif | gakc | nh | per (the business whose connection owns the source)."
+                }
+              },
+              "required": [
+                "title",
+                "source_type"
+              ]
+            }
+          },
+          {
+            "name": "set_guardrail",
+            "description": "Turn a safety guardrail on or off — ONLY when the user explicitly asks (e.g. 'stop asking me to confirm before sending', 'don't ask for approval on emails anymore', 're-enable confirmations', or 'turn off business data isolation'). Guardrails:\n- 'confirm_writes': when on, Hermes pauses for the user's confirmation before any external send/write (email, WhatsApp, Zoom invite, Jira, mutating maton_request); when off, those run without asking.\n- 'business_isolation': when on, knowledge retrieved from the vector store is verified to belong to the business in scope and cross-business results are dropped; when off, results are trusted by namespace only. (This protects against data leaks — only disable it if the user clearly asks.)\n- 'secret_egress': when on, any send or external write containing an API key, access token, private key or card number is refused.\n- 'send_limit': when on, at most a fixed number of sends/deletes run per turn.\n`enabled`=false turns the guardrail off, true turns it on. `business` optionally scopes the change to one entity (afk | gak | gif | gakc | nh | per); omit it to change the global default. Never call this on your own initiative — only on the user's clear instruction — and afterwards tell them exactly what you changed.",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "guardrail": {
+                  "type": "string",
+                  "enum": [
+                    "business_isolation",
+                    "confirm_writes",
+                    "secret_egress",
+                    "send_limit"
+                  ]
+                },
+                "enabled": {
+                  "type": "boolean",
+                  "description": "false = turn the guardrail off; true = turn it on."
+                },
+                "business": {
+                  "type": "string",
+                  "description": "afk | gak | gif | gakc | nh | per — omit for the global default."
+                },
+                "approval_token": {
+                  "type": "string",
+                  "description": "Leave unset on the first call. If a prior call returned status='awaiting_confirmation', re-call with the SAME arguments plus the exact approval_token it gave you to proceed. Never invent one."
+                }
+              },
+              "required": [
+                "guardrail",
+                "enabled"
+              ]
+            }
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "summarized"
+        },
+        "output_config": {
+          "effort": "low"
+        }
+      }
+    }
+  ]
+}

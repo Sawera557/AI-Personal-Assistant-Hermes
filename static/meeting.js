@@ -41,6 +41,7 @@
   const upcomingEmptyEl = document.getElementById("meeting-upcoming-empty");
   const briefBoxEl = document.getElementById("meeting-brief-box");
   const aiNotesBoxEl = document.getElementById("meeting-ai-notes-box");
+  const docsEl = document.getElementById("meeting-docs");
   const summaryBoxEl = document.getElementById("meeting-summary-box");
   const endBtn = document.getElementById("meeting-end-btn");
   const notesClearBtn = document.getElementById("meeting-notes-clear-btn");
@@ -106,6 +107,7 @@
     if (briefBoxEl) { briefBoxEl.hidden = true; briefBoxEl.innerHTML = ""; }
     if (aiNotesBoxEl) { aiNotesBoxEl.hidden = true; aiNotesBoxEl.innerHTML = ""; }
     if (summaryBoxEl) { summaryBoxEl.hidden = true; summaryBoxEl.innerHTML = ""; }
+    syncDocs();
     renderSessionsList(); // just re-highlight active (none) — list itself unchanged
   }
   newBtn?.addEventListener("click", () => {
@@ -162,6 +164,23 @@
   }
 
   // ══════════════════════════════════════════════════════════════════════
+  // Brief + AI notes sit side by side in one row (#meeting-docs). Each opens
+  // on its own, so both can be read at once. While either is open the row
+  // fills the visible height of the Live view and each panel scrolls its own
+  // content; Notes & Transcript / Guidance move below it (scroll down to
+  // them). With both closed the row is just two headers and the live grid
+  // gets the screen back.
+  // ══════════════════════════════════════════════════════════════════════
+  function syncDocs() {
+    if (!docsEl) return;
+    const visible = [briefBoxEl, aiNotesBoxEl].filter((b) => b && !b.hidden);
+    docsEl.hidden = visible.length === 0;
+    const anyOpen = visible.some((b) => !b.classList.contains("is-collapsed"));
+    docsEl.classList.toggle("has-open", anyOpen);
+    if (subLiveEl) subLiveEl.classList.toggle("docs-open", anyOpen);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
   // Collapsible info box — shared shell for brief / AI notes / summary.
   // Collapsed by default so Notes & Transcript / Guidance keep the screen;
   // click the header to expand. `expanded: true` shows it open right away
@@ -187,11 +206,14 @@
     body.className = "meeting-box-body";
     body.hidden = !expanded;
     chevron.classList.toggle("is-collapsed", !expanded);
+    boxEl.classList.toggle("is-collapsed", !expanded);
 
     head.addEventListener("click", (ev) => {
       if (rightRow.contains(ev.target)) return; // let PDF/build buttons handle their own clicks
       body.hidden = !body.hidden;
       chevron.classList.toggle("is-collapsed", body.hidden);
+      boxEl.classList.toggle("is-collapsed", body.hidden);
+      syncDocs();
     });
 
     boxEl.appendChild(head);
@@ -276,13 +298,14 @@
     if (!briefBoxEl) return;
     const brief = session && session.brief;
     const hasContent = brief && (brief.background || (brief.sources || []).length);
-    if (!hasContent) { briefBoxEl.hidden = true; briefBoxEl.innerHTML = ""; return; }
+    if (!hasContent) { briefBoxEl.hidden = true; briefBoxEl.innerHTML = ""; syncDocs(); return; }
     briefBoxEl.hidden = false;
     const { rightRow, body } = buildCollapsibleBox(briefBoxEl, "Pre-meeting brief");
     rightRow.appendChild(createPdfButton(() => downloadPdf(
       pdfFilename(session.title, "Brief"), "Pre-Meeting Brief — " + (session.title || ""), briefToPdfLines(brief),
     )));
     renderBriefContent(body, brief);
+    syncDocs();
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -347,7 +370,11 @@
   // entirely when empty). `opts.expanded` opens it right after a fresh build
   // so the result is immediately visible instead of collapsed.
   function renderAiNotesBox(session, opts = {}) {
-    if (!aiNotesBoxEl || !session || !session.session_id) { if (aiNotesBoxEl) aiNotesBoxEl.hidden = true; return; }
+    if (!aiNotesBoxEl || !session || !session.session_id) {
+      if (aiNotesBoxEl) aiNotesBoxEl.hidden = true;
+      syncDocs();
+      return;
+    }
     const biz = session.business || HermesBiz.current;
     aiNotesBoxEl.hidden = false;
     const { rightRow, body } = buildCollapsibleBox(aiNotesBoxEl, "AI Meeting Notes", { expanded: !!opts.expanded });
@@ -366,6 +393,7 @@
     rightRow.appendChild(buildBtn);
 
     renderAiNotesContent(body, session.ai_notes, session.ai_notes_generated_at);
+    syncDocs();
   }
 
   function renderSummaryBox(session) {

@@ -35,15 +35,22 @@
     ingest: '<path d="M12 3v12M7 10l5 5 5-5M4 19h16"/>',
     bills: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>',
     notify: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+    agents: '<circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.7 7.2L6.3 15.8M13.3 7.2l4.4 8.6M7.5 18h9"/>',
+    model: '<path d="M4 7h11M4 17h7"/><circle cx="18" cy="7" r="2.5"/><circle cx="14" cy="17" r="2.5"/><path d="M20.5 7H21M16.5 17H21"/>',
+    mem: '<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a3 3 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/>',
+    skills: '<path d="M5 4h10l4 4v12H5z"/><path d="M15 4v4h4M8.5 13l2 2 4-4.5"/>',
   };
   const icon = (k) => '<span class="ax-ic"><svg viewBox="0 0 24 24" width="15" height="15" ' + P + '>' + IC[k] + '</svg></span>';
   const ENTITY = { afk: "afro_farm", gak: "gak_properties", gif: "gif_properties", gakc: "gak_commodities", nh: "nour_hammam", per: "personal" };
   // [from, to, tag]  tag: ctx = needs Business context · apps = needs Apps access · gate = passes guardrails · v = vertical route
+  //                  · side = vertical route that bows out along the left edge, past the nodes stacked between
   const EDGES = [
     ["web", "api"], ["voice", "api"], ["meet", "api"],
     ["api", "core"], ["api", "pg"],
-    ["core", "ctx", "ctx v"], ["core", "guard", "gate v"],
-    ["ctx", "pg", "ctx"], ["ctx", "pine", "ctx"], ["core", "s3"], ["core", "llm"],
+    ["agents", "core", "v"], ["core", "model", "v"], ["core", "guard", "gate side"],
+    ["core", "mem", "ctx"], ["core", "skills", "ctx"], ["core", "ctx", "ctx"],
+    ["mem", "pg", "ctx"], ["skills", "pg", "ctx"], ["ctx", "pg", "ctx"], ["ctx", "pine", "ctx"],
+    ["core", "s3"], ["model", "llm"],
     ["guard", "maton", "apps gate"], ["guard", "tools", "apps gate"],
     ["sched", "core", "v"], ["jobs", "pg", "v"], ["ingest", "pine", "v"], ["bills", "s3", "v"], ["notify", "maton", "v"],
   ];
@@ -67,14 +74,40 @@
   }
   async function sxData() {
     sxDocs();
-    const [mems, conns, usage, tasks, jobs, gr, biz] = await Promise.all([
+    const [mems, conns, usage, tasks, jobs, gr, biz, agents, models, skills] = await Promise.all([
       get("/api/memories?entity_id=all"), get("/api/connections"), get("/api/usage?entity_id=all"),
       get("/api/scheduled-tasks"), get("/api/jobs"), get("/api/settings/guardrails"), get("/api/businesses"),
+      get("/api/agents"), get("/api/settings/model"), get("/api/documents?entity_id=all&source_system=business_skill"),
     ]);
+    if (!SX.paths) get("/openapi.json").then((o) => { if (!o.paths) return; SX.paths = o.paths; if (view() === "schema") sxRender(); });
     SX.d = {
       docs: SX.docs || null, mems: mems.memories || [], conns: (conns.data && conns.data.connections) || [],
       usage: usage.totals || {}, tasks: tasks.tasks || [], jobs: jobs.jobs || [], gr: gr.guardrails || [], biz: biz.businesses || [],
+      agents: agents.agents || [], models: models.options || [], active: models.active || "", skills: skills.documents || [],
     };
+  }
+  // "Claude · Opus 5 (most capable)" -> provider "Claude", name "Opus 5".
+  const modelParts = (label) => {
+    const [prov, rest = ""] = String(label || "").split(" · ");
+    return { prov: rest ? prov : "", name: (rest || prov).replace(/\s*\(.*\)\s*$/, "") };
+  };
+  const optValue = (o) => (o && (o.value || o.id || o.model)) || "";
+  function activeModel(d) {
+    const o = d.models.find((m) => optValue(m) === d.active);
+    return o ? modelParts(o.label) : { prov: "", name: d.active || selText("model-select") };
+  }
+  const countBy = (arr, key) => arr.reduce((m, x) => { const k = key(x); if (k) m.set(k, (m.get(k) || 0) + 1); return m; }, new Map());
+  const PROVIDER = { Claude: "Anthropic", OpenAI: "OpenAI", Google: "Google", NVIDIA: "NVIDIA NIM" };
+  // Endpoint count per /api area, read from FastAPI's own OpenAPI schema.
+  function routeRows() {
+    const AREAS = ["/chat", "/conversations", "/agents", "/memories", "/documents", "/settings", "/scheduled-tasks", "/jobs",
+      "/meetings", "/voice", "/bills", "/register", "/artefacts", "/generated-files", "/connections"];
+    const ops = new Map();
+    Object.entries(SX.paths || {}).forEach(([p, v]) => {
+      const area = AREAS.find((a) => p === "/api" + a || p.startsWith("/api" + a + "/"));
+      if (area) ops.set(area, (ops.get(area) || 0) + Object.keys(v).length);
+    });
+    return AREAS.map((a) => '<span class="ax-route"><code>/api' + a + "</code>" + (ops.get(a) ? "<i>" + ops.get(a) + "</i>" : "") + "</span>").join("");
   }
   const selText = (id) => { const s = $(id); return s && s.options[s.selectedIndex] ? s.options[s.selectedIndex].textContent : "—"; };
   const chip = (t, led) => '<span class="ax-chip">' + (led ? '<i class="ax-led ' + led + '"></i>' : "") + esc(t) + "</span>";
@@ -107,25 +140,47 @@
     const d = SX.d, ctxOff = !SX.ctx, appsOff = !SX.apps;
     const live = d.conns.filter((c) => (c.status || "").toUpperCase() === "ACTIVE").length;
     const armed = d.tasks.filter((t) => t.enabled).length;
-    const routes = ["/chat/stream", "/conversations", "/bills", "/register", "/documents", "/memories", "/scheduled-tasks", "/jobs", "/artefacts", "/settings"];
     const ns = d.biz.map((b) => ENTITY[b.slug] ? "entity__" + ENTITY[b.slug] : null).filter(Boolean);
+    const am = activeModel(d);
+    const provs = countBy(d.models, (m) => modelParts(m.label).prov);
+    const nEndpoints = SX.paths ? Object.values(SX.paths).reduce((s, v) => s + Object.keys(v).length, 0) : null;
+    const liveAgents = d.agents.filter((a) => a.enabled !== false);
+    const memScopes = countBy(d.mems, (m) => m.scope_type);
+    const kbDocs = d.docs ? d.docs.filter((x) => x.source_system !== "business_skill").length : null;
     const N = {
       web: node({ id: "web", t: "Web app", f: "templates/index.html · static/*.js", s: "Jinja page and view scripts, served by the API.", chips: chip(d.biz.length + " businesses"), goto: "agent" }),
-      voice: node({ id: "voice", t: "Voice", f: "voice.py · /api/voice", s: "Speech-to-text in, spoken replies out." }),
+      voice: node({ id: "voice", t: "Voice", f: "voice.py · gemini_live.py · /api/voice", s: "Speech-to-text in, spoken replies out, live voice sessions." }),
       meet: node({ id: "meet", t: "Meeting Copilot", f: "meeting_copilot.py · fathom.py", s: "Live guidance and notes during calls.", goto: "meeting" }),
-      api: node({ id: "api", cls: "tall", t: "FastAPI", f: "app.py · hermes-agent-mvp.vercel.app", s: "One API for every tab, worker and integration.", chips: routes.map((r) => chip("/api" + r)).join("") }),
-      core: node({ id: "core", cls: "core", t: "Hermes agent", f: "agent.py · tools.py · models.py", goto: "agent",
-        s: '<b id="sx-model">' + esc(selText("model-select")) + "</b> · tool-use loop",
+      api: node({ id: "api", cls: "tall", t: "FastAPI", f: "app.py · Swagger at /docs", s: "One API for every tab, worker and integration." + (nEndpoints ? " <b>" + nEndpoints + "</b> endpoints." : ""),
+        x: '<div class="ax-routes">' + routeRows() + "</div>" }),
+      agents: node({ id: "agents", t: "Multi-agents", f: "agents.py · agent_tools.py · /api/agents", goto: "multiagents",
+        s: "<b>" + liveAgents.length + "</b> of " + d.agents.length + " agents on · each has its own role prompt, tool whitelist and autonomy.",
+        chips: d.agents.slice(0, 6).map((a) => chip(a.name, a.enabled === false ? "off" : "on")).join("") + (d.agents.length > 6 ? chip("+" + (d.agents.length - 6)) : "") }),
+      core: node({ id: "core", cls: "core", t: "Hermes agent", f: "agent.py · tools.py · turn_router.py", goto: "agent",
+        s: "Tool-use loop · routes each turn to <b>CHAT</b> or <b>FULL</b>",
         x: '<div class="ax-stats"><div>Reasoning<b id="sx-effort">' + esc(selText("effort-select").split(" — ")[0]) + "</b></div><div>Tokens<b>" + Number(d.usage.tokens || 0).toLocaleString() + "</b></div><div>Spend<b>" + usd(d.usage.cost_usd, 2) + "</b></div></div>" }),
-      guard: node({ id: "guard", t: "Guardrails", f: "guardrails.py", goto: "settings", chips: d.gr.length ? d.gr.map((g) => chip(g.key, g.enabled ? "on" : "off")).join("") : chip("confirm_writes") + chip("business_isolation") }),
-      ctx: node({ id: "ctx", t: "Context builder", f: "rag.py · memory_retrieve.py · context_packs.py", goto: "context", off: ctxOff, s: "<b>" + d.mems.length + "</b> memories · <b>" + (d.docs ? d.docs.length : "…") + "</b> documents" }),
+      model: node({ id: "model", t: "Model switch", f: "models.py · /api/settings/model", goto: "agent",
+        s: 'Active: <b id="sx-model">' + esc(am.name) + "</b>" + (am.prov ? " · " + esc(am.prov) : "") + "<br>" + d.models.length + " models · change it from the model picker, next turn uses it",
+        chips: [...provs].map(([p, n]) => chip(p + " ×" + n, p === am.prov ? "on" : "")).join("") }),
+      guard: node({ id: "guard", t: "Guardrails", f: "guardrails.py", goto: "settings",
+        s: "Checked on every tool call, before it runs.",
+        chips: d.gr.length ? d.gr.map((g) => chip(g.key, g.enabled ? "on" : "off")).join("") : chip("confirm_writes") + chip("business_isolation") }),
+      mem: node({ id: "mem", t: "Memory", f: "memory_retrieve.py · conversation_retrieve.py", goto: "context", off: ctxOff,
+        s: "<b>" + d.mems.length + "</b> memories · standing rules always load, the rest by relevance to your message.",
+        chips: [...memScopes].map(([s, n]) => chip(s + " " + n)).join("") }),
+      skills: node({ id: "skills", t: "Skills", f: "Context › Skills · rag.py", goto: "context", off: ctxOff,
+        s: "<b>" + d.skills.length + "</b> playbooks · pulled into the turn when your request matches one.",
+        chips: d.skills.slice(0, 4).map((k) => chip(k.title || "untitled")).join("") + (d.skills.length > 4 ? chip("+" + (d.skills.length - 4)) : "") }),
+      ctx: node({ id: "ctx", t: "Knowledge retrieval", f: "rag.py · context_packs.py", goto: "context", off: ctxOff,
+        s: "<b>" + (kbDocs == null ? "…" : kbDocs) + "</b> documents · pgvector + Pinecone, ranked per message." }),
       pg: node({ id: "pg", t: "Postgres 17", f: "AWS RDS · hermes/db", s: "Chats, memories, documents, tasks, bills, usage.", chips: chip("pgvector") + chip("24 tables") }),
       s3: node({ id: "s3", t: "S3", f: "AWS S3 · storage.py", goto: "files", s: "Original files and everything Hermes generates.", chips: ["bills/", "generated/", "drive-files/", "wati-media/"].map((p) => chip(p)).join("") }),
       pine: node({ id: "pine", t: "Pinecone", f: "pinecone_store.py · serverless", off: ctxOff, s: "One search namespace per business.", chips: (ns.length ? ns : ["entity__<slug>"]).map((x) => chip(x)).join("") }),
       maton: node({ id: "maton", t: "Maton gateway", f: "maton.py · OAuth connectors", off: appsOff,
         s: "<b>" + live + "</b> of " + d.conns.length + " accounts connected · <b>" + appGroups(d.conns).length + "</b> apps",
         chips: appGroups(d.conns).map((g) => chip(g.label + (g.total > 1 ? " ×" + g.total : ""), g.active === g.total ? "on" : g.active || g.pending ? "warn" : "off")).join("") }),
-      llm: node({ id: "llm", t: "Model providers", f: "models.py", s: "Switchable per conversation.", chips: chip("Anthropic") + chip("OpenAI") + chip("NVIDIA NIM") }),
+      llm: node({ id: "llm", t: "Model providers", f: "Anthropic · OpenAI · Gemini · NIM APIs", s: "Whichever model the switch picks answers the turn.",
+        chips: [...provs.keys()].map((p) => chip(PROVIDER[p] || p, p === am.prov ? "on" : "")).join("") }),
       tools: node({ id: "tools", t: "Direct integrations", f: "wati.py · worldbank.py · extract.py", off: appsOff, chips: chip("WhatsApp · WATI") + chip("World Bank") + chip("Web search") + chip("NuExtract OCR") }),
       sched: node({ id: "sched", t: "Scheduler", f: "scheduler.py", goto: "tasks", s: "<b>" + armed + "</b> of " + d.tasks.length + " tasks armed" }),
       jobs: node({ id: "jobs", t: "Job runner", f: "job_runner.py", goto: "jobs", s: "<b>" + d.jobs.length + "</b> jobs · reviews, World Bank, Drive" }),
@@ -145,12 +200,13 @@
         '<div class="ax-grid">' +
           col("01", "Clients", N.web + N.voice + N.meet) +
           '<div class="ax-zone ax-vercel"><div class="ax-tag">Vercel · serverless</div>' +
-            col("02", "API", N.api) + col("03", "Agent runtime", N.core + N.guard + N.ctx) +
+            col("02", "API", N.api) + col("03", "Agent runtime", N.agents + N.core + N.model + N.guard) +
+            col("04", "Context", N.mem + N.skills + N.ctx) +
           "</div>" +
-          col("04", "Data", '<div class="ax-sub"><div class="ax-tag">AWS · us-east-1</div>' + N.pg + N.s3 + "</div>" + N.pine) +
-          col("05", "External services", N.maton + N.llm + N.tools) +
+          col("05", "Data", '<div class="ax-sub"><div class="ax-tag">AWS · us-east-1</div>' + N.pg + N.s3 + "</div>" + N.pine) +
+          col("06", "External services", N.maton + N.llm + N.tools) +
         "</div>" +
-        '<div class="ax-band"><div class="ax-lbl"><b>06</b>Background workers</div><div class="ax-band-row">' + N.sched + N.jobs + N.ingest + N.bills + N.notify + "</div></div>" +
+        '<div class="ax-band"><div class="ax-lbl"><b>07</b>Background workers</div><div class="ax-band-row">' + N.sched + N.jobs + N.ingest + N.bills + N.notify + "</div></div>" +
       "</div>" +
       '<div class="ax-legend"><span><i></i>Request path</span><span><i class="gate"></i>Checked by guardrails</span><span><i class="off"></i>Switched off</span></div>';
     el.querySelectorAll(".ax-node").forEach((n, i) => {
@@ -189,7 +245,10 @@
       const ra = A.getBoundingClientRect(), rb = B.getBoundingClientRect();
       const L = (r) => r.left - box.left, T = (r) => r.top - box.top;
       let d, ex, ey;
-      if (!tag.includes("v") && rb.left >= ra.right - 4) {
+      if (tag.includes("side")) {
+        const x1 = L(ra), y1 = T(ra) + ra.height / 2, x2 = L(rb), y2 = T(rb) + rb.height / 2, gx = Math.min(x1, x2) - 16;
+        d = "M" + x1 + "," + y1 + " C" + gx + "," + y1 + " " + gx + "," + y2 + " " + x2 + "," + y2; ex = x2; ey = y2;
+      } else if (!tag.includes("v") && rb.left >= ra.right - 4) {
         const x1 = L(ra) + ra.width, y1 = T(ra) + ra.height / 2, x2 = L(rb), y2 = T(rb) + rb.height / 2, mx = (x1 + x2) / 2;
         d = "M" + x1 + "," + y1 + " C" + mx + "," + y1 + " " + mx + "," + y2 + " " + x2 + "," + y2; ex = x2; ey = y2;
       } else if (rb.top >= ra.bottom - 4) {
@@ -240,7 +299,7 @@
     i && i.addEventListener("change", () => { sxState(); if (view() === "schema") { sxRender(); toast({ title: id.startsWith("context") ? "Business context" : "Apps access", body: "Turned <b>" + (i.checked ? "on" : "off") + "</b>. The architecture shows the new path." }); } });
   });
   ["model-select", "effort-select"].forEach((id) => $(id) && $(id).addEventListener("change", () => {
-    if ($("sx-model")) $("sx-model").textContent = selText("model-select");
+    if (id === "model-select" && view() === "schema") { SX.d.active = $(id).value; sxRender(); return; }
     if ($("sx-effort")) $("sx-effort").textContent = selText("effort-select").split(" — ")[0];
   }));
   addEventListener("resize", () => view() === "schema" && sxWires());

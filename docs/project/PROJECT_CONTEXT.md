@@ -4,8 +4,8 @@ A single reference to *what this project is*, *what it can actually do right now
 and *what only looks like it works*. Last full audit: **2026-07-27** (verified
 against the live production database and a running app instance).
 
-For recurring automation see [SCHEDULED_TASKS.md](SCHEDULED_TASKS.md).
-For the 25 Jul fabrication incident see [ADR-001](ADR-001-fabrication-truncation-fix.md).
+For recurring automation see [SCHEDULED_TASKS.md](../features/SCHEDULED_TASKS.md).
+For the 25 Jul fabrication incident see [ADR-001](../architecture/ADR-001-fabrication-truncation-fix.md).
 
 > **Status legend used throughout**
 > **LIVE** — verified working in production · **SHIPPED** — committed and wired, not

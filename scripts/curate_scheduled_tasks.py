@@ -13,7 +13,7 @@ Optional flags:
     --enable-all          enable every task in the catalog, not just the
                           ones marked for the first rollout
 
-Every decision below is data, not code — see SCHEDULED_TASKS_CATALOG.md for the
+Every decision below is data, not code — see docs/features/SCHEDULED_TASKS_CATALOG.md for the
 reasoning. Deletions are matched on (task_id, name): if the name on the row no
 longer matches what this file expects, the delete is skipped and reported, so a
 stale ID can never take out the wrong task.

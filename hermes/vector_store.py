@@ -24,6 +24,7 @@ filters and the namespace boundary are always applied — that is the guard.
 """
 from __future__ import annotations
 
+import math
 import os
 from typing import Any, Iterable
 
@@ -36,7 +37,14 @@ from .db.connection import cursor
 # Sensitivity ladder (low -> high). A viewer may see their level and below.
 SENSITIVITY_ORDER = ["public", "internal", "confidential", "restricted"]
 
-EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+# "openai" (text-embedding-3-small) or "gemini" (gemini-embedding-001, truncated
+# to EMBED_DIM). Vectors from different providers/models live in different
+# spaces — switching means re-embedding every stored vector
+# (scripts/reembed_gemini.py) and pointing PINECONE_INDEX at the re-embedded index.
+EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "openai").strip().lower()
+EMBED_MODEL = os.getenv("EMBED_MODEL", "").strip() or (
+    "gemini-embedding-001" if EMBED_PROVIDER == "gemini" else "text-embedding-3-small"
+)
 EMBED_DIM = int_env("EMBED_DIM", 1536)
 
 
@@ -87,9 +95,59 @@ def _allowed_sensitivities(max_level: str) -> list[str]:
     return SENSITIVITY_ORDER[: cutoff + 1]
 
 
-# ---- Embeddings (OpenAI) ---------------------------------------------------
-def embed(texts: list[str]) -> list[list[float]]:
-    """Embed a batch of texts with OpenAI. Returns one vector per input."""
+# ---- Embeddings (OpenAI or Gemini) -------------------------------------------
+_GEMINI_BATCH = 100  # batchEmbedContents hard limit
+
+
+def embed(texts: list[str], *, task: str = "document") -> list[list[float]]:
+    """Embed a batch of texts with the configured provider. Returns one vector
+    per input. `task` is "document" for text being stored and "query" for a
+    search query — Gemini embeds the two asymmetrically; OpenAI ignores it."""
+    if EMBED_PROVIDER == "gemini":
+        return _embed_gemini(texts, task)
+    return _embed_openai(texts)
+
+
+def _embed_gemini(texts: list[str], task: str) -> list[list[float]]:
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY is not set (needed for embeddings).")
+    task_type = "RETRIEVAL_QUERY" if task == "query" else "RETRIEVAL_DOCUMENT"
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{EMBED_MODEL}:batchEmbedContents"
+    )
+    out: list[list[float]] = []
+    for i in range(0, len(texts), _GEMINI_BATCH):
+        batch = texts[i : i + _GEMINI_BATCH]
+        resp = requests.post(
+            url,
+            headers={"x-goog-api-key": key},
+            json={
+                "requests": [
+                    {
+                        "model": f"models/{EMBED_MODEL}",
+                        # Gemini rejects empty content; a space embeds as "nothing".
+                        "content": {"parts": [{"text": t or " "}]},
+                        "taskType": task_type,
+                        "outputDimensionality": EMBED_DIM,
+                    }
+                    for t in batch
+                ]
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        for row in resp.json()["embeddings"]:
+            vec = row["values"]
+            # Truncated (non-3072) Gemini outputs aren't unit-length; normalize
+            # so cosine and dot-product scores behave like OpenAI's.
+            norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+            out.append([v / norm for v in vec])
+    return out
+
+
+def _embed_openai(texts: list[str]) -> list[list[float]]:
     key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key:
         raise RuntimeError("OPENAI_API_KEY is not set (needed for embeddings).")
@@ -172,7 +230,7 @@ def query(
     if query_vector is None:
         if not (query_text or "").strip():
             return []
-        query_vector = embed([query_text])[0]
+        query_vector = embed([query_text], task="query")[0]
     allowed = _allowed_sensitivities(max_sensitivity)
     params: dict[str, Any] = {
         "allowed": allowed,

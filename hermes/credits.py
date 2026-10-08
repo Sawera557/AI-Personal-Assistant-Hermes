@@ -33,6 +33,7 @@ PROVIDER_LABELS = {
     "anthropic": "Anthropic (Claude)",
     "openai": "OpenAI",
     "nvidia": "NVIDIA",
+    "gemini": "Google (Gemini)",
 }
 
 #: Substrings that mean "out of credit / over quota" rather than a transient
@@ -73,8 +74,9 @@ def scope_for(provider: str, model_id: str | None = None) -> str:
     each model can have its own balance — tracking those together would let one
     dry key disable all six.
     """
-    if provider == "nvidia" and model_id:
-        return f"nvidia:{model_id}"
+    if provider in ("nvidia", "gemini") and model_id:
+        # Gemini's free tier also meters each model separately.
+        return f"{provider}:{model_id}"
     return provider
 
 
@@ -112,9 +114,12 @@ def note_failure(scope: str, exc: BaseException) -> bool:
     scope_for() — a provider, or a provider+model for per-key NIM billing."""
     if not is_credit_error(exc):
         return False
+    # A per-minute rate cap (Gemini free tier: "...PerMinute...") clears within
+    # a minute — bench the scope for 60s, not the full TTL.
+    benched = 60 if "perminute" in str(exc).lower() else TTL_SECONDS
     with _lock:
         first = scope not in _exhausted
-        _exhausted[scope] = time.time()
+        _exhausted[scope] = time.time() - (TTL_SECONDS - benched)
     if first:
         # Once per TTL, not once per call — this is the line that replaces a
         # stack trace per background job.

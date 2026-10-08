@@ -25,6 +25,30 @@ ENTITY_TO_BUSINESS_SLUG: dict[str, str] = {
     v: k for k, v in BUSINESS_TO_ENTITY_SLUG.items()
 }
 
+# The human names the owner actually types ("how is Nour Hammam doing"), keyed
+# by business slug. Neither table above carries them: `businesses` rows hold
+# only slugs here, and `entities.name` (migration 0002_seed) says "Personal"
+# where the UI and the tool descriptions say "Personal & Family".
+#
+# Taken from the names already in use, not invented: the `business` parameter
+# description in hermes/tools.py (afk … per), the entity seed names, and the
+# ingestion-service's account map for `comfort_pca` — a business the ingestion
+# service ingests (Comfort PCA, PHI) that has no `businesses` slug in this app,
+# which is exactly why it cannot be derived from BUSINESS_TO_ENTITY_SLUG.
+#
+# First consumer: hermes/turn_router.py, where any of these names in a message
+# is a FULL signal (TURN_COST_PLAN §2 rule 7) — a turn that names a business
+# needs that business's tools and data, never the cheap tool-free tiers.
+BUSINESS_DISPLAY_NAMES: dict[str, str] = {
+    "afk": "Afro Farm",
+    "gak": "GAK Properties",
+    "gif": "GIF Properties",
+    "gakc": "GAK Commodities",
+    "nh": "Nour Hammam",
+    "per": "Personal & Family",
+    "comfort_pca": "Comfort PCA",
+}
+
 
 def to_entity_slug(business_slug: str | None) -> str | None:
     """businesses.slug -> entities.slug (or None if unmapped/blank)."""

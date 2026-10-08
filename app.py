@@ -100,6 +100,7 @@ from hermes import job_runner as hermes_jobs
 from hermes.jobs_api import router as jobs_router
 from hermes.search import semantic_search
 from hermes.voice import VoiceError, speakable, synthesize, transcribe
+from hermes.gemini_live import LiveError, mint_session as mint_live_session
 
 @asynccontextmanager
 async def _lifespan(_app: "FastAPI"):
@@ -154,7 +155,53 @@ async def _lifespan(_app: "FastAPI"):
     yield
 
 
-app = FastAPI(title="Hermes AI Agent API", version="0.1.0", lifespan=_lifespan)
+# ---- OpenAPI / Swagger (/docs, /redoc) --------------------------------------
+# One tag per area of the app, in the order they appear in Swagger. Routes in
+# this file are tagged by path prefix in `_tag_routes()` at the bottom, so a new
+# endpoint lands in the right group without a per-decorator `tags=` argument;
+# the routers in hermes/*_api.py set their own tags.
+_OPENAPI_TAGS: list[dict[str, str]] = [
+    {"name": "chat", "description": "Run an agent turn. `/api/chat/stream` is the SSE endpoint the web app uses; "
+        "`/api/chat` is the blocking variant. Every turn passes the guardrail gate before any tool runs."},
+    {"name": "conversations", "description": "Conversation history: list, replay, delete, reset."},
+    {"name": "agents", "description": "Multi-agents: named agent configurations (role prompt, tool whitelist, modes, "
+        "autonomy). Pick one in chat and Hermes answers as it."},
+    {"name": "settings", "description": "Platform-wide switches: active model, business context, apps access and guardrails. "
+        "Each takes effect on the next turn."},
+    {"name": "memories", "description": "Persistent memory (owner / business / project scope). Standing memories load every "
+        "turn; the rest are retrieved by relevance."},
+    {"name": "documents", "description": "The Context tab: business documents and Skills (`source_system=business_skill`), "
+        "file tree and federated search over pgvector + Pinecone."},
+    {"name": "attachments", "description": "Chat attachments and presigned media URLs."},
+    {"name": "meetings", "description": "Meeting Copilot: live guidance, prep, AI notes and Fathom import."},
+    {"name": "voice", "description": "Speech-to-text, text-to-speech and live voice sessions."},
+    {"name": "connections", "description": "Maton OAuth connections to external apps."},
+    {"name": "businesses", "description": "The businesses (entities) Hermes keeps separate."},
+    {"name": "bills", "description": "Bills pipeline: upload, scan the inbox, extract, view, check payments."},
+    {"name": "register", "description": "Bills register: verification and amount proposals awaiting approval."},
+    {"name": "scheduled-tasks", "description": "Recurring unattended agent runs. `run-due` is the cron trigger."},
+    {"name": "jobs", "description": "Code-driven jobs (the Jobs tab)."},
+    {"name": "reviews", "description": "Review intelligence reports."},
+    {"name": "artefacts", "description": "Artifacts (the Library tab)."},
+    {"name": "generated-files", "description": "Files Hermes generated, stored in S3."},
+    {"name": "usage", "description": "Token and spend totals."},
+    {"name": "system", "description": "Health check and admin operations."},
+]
+
+app = FastAPI(
+    title="Hermes AI Agent API",
+    version="0.2.0",
+    description=(
+        "JSON API behind the Hermes web app, scheduler and workers.\n\n"
+        "**Scoping.** Most endpoints take `entity_id`, a business slug (`afk`, `nh`, ...) or `all`. "
+        "Data never crosses businesses unless you ask for `all`.\n\n"
+        "**Turn pipeline.** A chat turn goes: optional agent (Multi-agents) → memory + skills + "
+        "knowledge retrieval → the active model (switchable at `/api/settings/model`) → guardrails "
+        "→ tools. Sends, writes and deletes are held for your approval unless that guardrail is off."
+    ),
+    openapi_tags=_OPENAPI_TAGS,
+    lifespan=_lifespan,
+)
 
 # Jobs (the Jobs tab) — /api/jobs/* routes live in hermes/jobs_api.py.
 app.include_router(jobs_router)
@@ -167,6 +214,9 @@ app.include_router(artefacts_router)
 # Generated files (the Library tab's Files list) — hermes/generated_files_api.py.
 from hermes.generated_files_api import router as generated_files_router
 app.include_router(generated_files_router)
+# Multi-agents roster (the Multi-agents tab) — hermes/agents_api.py.
+from hermes.agents_api import router as agents_router
+app.include_router(agents_router)
 
 # ---- Web UI (single-page chat with conversation history) ------------------
 _BASE_DIR = Path(__file__).resolve().parent
@@ -273,7 +323,7 @@ def _asset_version() -> int:
     return int(latest)
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 def index(request: Request):
     """Render the web chat UI. Config drives what the sidebar shows."""
     return templates.TemplateResponse(
@@ -290,6 +340,7 @@ def index(request: Request):
             "voice_enabled": Config.voice_enabled(),
             "voices": Config.voice_voices(),
             "voice": Config.voice_tts_voice(),
+            "live_voice_enabled": bool(Config.GEMINI_API_KEY),
             "v": _asset_version(),
         },
     )
@@ -298,7 +349,7 @@ def index(request: Request):
 # Each tab has its own URL (static/hermes-router.js). A reload or deep link on
 # one of these paths serves the same page; the router then opens that tab.
 for _tab in ("agent", "system", "billing", "meetings", "context", "tasks",
-             "files", "jobs", "artifacts", "usage", "settings"):
+             "files", "jobs", "artifacts", "usage", "settings", "multi-agents"):
     app.add_api_route(f"/{_tab}", index, methods=["GET"], include_in_schema=False)
 
 
@@ -377,10 +428,16 @@ def set_model_setting(body: ModelUpdate):
 @app.get("/api/settings/context")
 def get_context_setting():
     """Whether turns carry the user's business knowledge (memory, context pack,
-    documents, past-conversation recall). Independent of apps access below."""
+    documents, past-conversation recall).
+
+    `split_toggles` (HERMES_SPLIT_TOGGLES, TURN_COST_PLAN step 0.3) tells the
+    Settings UI what "off" actually does, so it can say so: true — the apps stay
+    reachable and only the knowledge is dropped; false (the default) — chat
+    also loses its tools and answers as plain chat. Scheduled tasks ignore this
+    switch either way."""
     from hermes import context_mode
 
-    return {"enabled": context_mode.enabled()}
+    return {"enabled": context_mode.enabled(), "split_toggles": Config.split_toggles()}
 
 
 class ContextUpdate(BaseModel):
@@ -390,8 +447,10 @@ class ContextUpdate(BaseModel):
 @app.post("/api/settings/context")
 def set_context_setting(body: ContextUpdate):
     """Switch business context on/off platform-wide. Off = no memory, no
-    business knowledge, no retrieved documents — but the apps stay reachable
-    (that is `/api/settings/apps`). Takes effect on the next turn of every
+    business knowledge, no retrieved documents in interactive chat. Whether the
+    apps stay reachable meanwhile depends on HERMES_SPLIT_TOGGLES (see the GET
+    above): on, they do; off (the default), chat loses its tools too. Scheduled
+    tasks always run with full context. Takes effect on the next turn of every
     conversation."""
     from hermes import context_mode
 
@@ -414,8 +473,10 @@ class AppsUpdate(BaseModel):
 def set_apps_setting(body: AppsUpdate):
     """Switch apps access on/off platform-wide. Off = no tool schemas sent, so
     Hermes cannot email, reach Drive/Jira/WhatsApp, search the web or read
-    files — it still keeps whatever business context is switched on. This is the
-    big token line (~11k of ~20k). Takes effect on the next turn."""
+    files — it still keeps whatever business context is switched on, and
+    scheduled tasks are skipped (recorded as "Apps access is off") rather than
+    run without their tools. This is the big token line (10.4–13.9k of a ~16k
+    greeting). Takes effect on the next turn."""
     from hermes import apps_access
 
     return {"enabled": apps_access.set_enabled(body.enabled)}
@@ -500,6 +561,34 @@ async def admin_migrate():
     return result
 
 
+async def _load_agent(agent_id) -> tuple[dict | None, JSONResponse | None]:
+    """The Multi-agents agent a chat turn names (agent_id: uuid or slug), or
+    (None, None) for an ordinary turn. An unknown or switched-off agent is a
+    clean 4xx, never a silent fall-back to the unconstrained assistant."""
+    ref = str(agent_id or "").strip()
+    if not ref:
+        return None, None
+    from hermes.db import agents as agents_db
+
+    try:
+        agent = await run_in_threadpool(agents_db.get_agent, ref)
+    except Exception as exc:  # noqa: BLE001
+        return None, JSONResponse({"error": f"Couldn't load agent: {exc}"}, status_code=500)
+    if not agent:
+        return None, JSONResponse({"error": "Unknown agent."}, status_code=404)
+    if not agent.get("enabled", True):
+        return None, JSONResponse(
+            {"error": f"The {agent.get('name')} agent is switched off."}, status_code=400
+        )
+    return agent, None
+
+
+def _agent_kwargs(agent: dict | None, agent_mode) -> dict:
+    """Extra turn kwargs for an agent turn; {} for an ordinary one, so an
+    ordinary turn calls run_turn/stream_turn exactly as it always has."""
+    return {"agent": agent, "agent_mode": agent_mode} if agent else {}
+
+
 @app.post("/api/chat")
 async def chat(request: Request):
     """Run one user turn through the Claude + Maton agent.
@@ -514,6 +603,8 @@ async def chat(request: Request):
         voice = _truthy(form.get("voice"))
         attachment_ids = [a for a in form.getlist("attachment_ids") if isinstance(a, str)]
         effort = form.get("effort")
+        agent_id = form.get("agent_id")
+        agent_mode = form.get("agent_mode")
         files: list[tuple[str, str, bytes]] = []
         for upload in form.getlist("files"):
             if isinstance(upload, FormUploadFile) and upload.filename:
@@ -531,6 +622,8 @@ async def chat(request: Request):
         voice = _truthy(data.get("voice"))
         attachment_ids = data.get("attachment_ids") or []
         effort = data.get("effort")
+        agent_id = data.get("agent_id")
+        agent_mode = data.get("agent_mode")
         attachments = []
 
     if not message and not attachments and not attachment_ids:
@@ -551,6 +644,12 @@ async def chat(request: Request):
     if message:
         content.append({"type": "text", "text": message})
 
+    agent, agent_err = await _load_agent(agent_id)
+    if agent_err is not None:
+        return agent_err
+    if agent and agent.get("business"):
+        entity_id = agent["business"]  # a business-bound agent always runs in its business
+
     key = _session_key(entity_id, session_id)
 
     # Business scoping: a conversation's business is locked at creation and
@@ -566,7 +665,10 @@ async def chat(request: Request):
 
     try:
         result = await run_in_threadpool(
-            run_turn, key, content, voice, active_business, None, effort
+            lambda: run_turn(
+                key, content, voice, active_business, None, effort,
+                **_agent_kwargs(agent, agent_mode),
+            )
         )
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the client
         return JSONResponse({"error": f"Agent error: {exc}"}, status_code=500)
@@ -592,6 +694,9 @@ async def chat(request: Request):
 
     result["session_id"] = session_id
     result["entity_id"] = active_business  # authoritative, locked value — not just an echo
+    # Held approvals (B6) carry live approval tokens; they were persisted above
+    # for the next turn and must never reach the browser.
+    result.pop("pending", None)
     return result
 
 
@@ -632,6 +737,8 @@ async def chat_stream(request: Request):
         voice = _truthy(form.get("voice"))
         attachment_ids = [a for a in form.getlist("attachment_ids") if isinstance(a, str)]
         effort = form.get("effort")
+        agent_id = form.get("agent_id")
+        agent_mode = form.get("agent_mode")
         files: list[tuple[str, str, bytes]] = []
         for upload in form.getlist("files"):
             if isinstance(upload, FormUploadFile) and upload.filename:
@@ -649,6 +756,8 @@ async def chat_stream(request: Request):
         voice = _truthy(data.get("voice"))
         attachment_ids = data.get("attachment_ids") or []
         effort = data.get("effort")
+        agent_id = data.get("agent_id")
+        agent_mode = data.get("agent_mode")
         attachments = []
         files = []
 
@@ -666,6 +775,12 @@ async def chat_stream(request: Request):
     content.extend(attachments)
     if message:
         content.append({"type": "text", "text": message})
+
+    agent, agent_err = await _load_agent(agent_id)
+    if agent_err is not None:
+        return agent_err
+    if agent and agent.get("business"):
+        entity_id = agent["business"]  # a business-bound agent always runs in its business
 
     key = _session_key(entity_id, session_id)
 
@@ -686,19 +801,43 @@ async def chat_stream(request: Request):
         user_text = f"{message}\n{note}" if message else note
     store_entity = None if active_business == "all" else to_entity_slug(active_business)
 
+    async def _persist(result: dict) -> None:
+        """Write this exchange to the conversation store, never raising.
+
+        Runs BEFORE the client is told `done` (B22, TURN_COST_PLAN step 0.6):
+        the frontend unlocks the composer on `done`, so a fast follow-up used
+        to read history — and, from 0.6 on, the previous reply's TurnState —
+        from before this turn was written. A write failure is logged and the
+        reply still goes out; the Postgres store already swallows its own
+        errors, this guards any other store the same way."""
+        try:
+            await run_in_threadpool(
+                store.record_turn, key, store_entity, session_id, user_text, result,
+            )
+        except Exception as exc:  # noqa: BLE001 — never lose the reply over a history write
+            log.warning("record_turn(%s) failed: %s", session_id, exc)
+
     async def event_source():
         result: dict = {}
+        persisted = False
         try:
             async for event in iterate_in_threadpool(
-                stream_turn(key, content, voice, active_business, None, effort)
+                stream_turn(
+                    key, content, voice, active_business, None, effort,
+                    **_agent_kwargs(agent, agent_mode),
+                )
             ):
                 if event["type"] == "done":
                     result = event["result"]
+                    await _persist(result)
+                    persisted = True
                     payload = {
                         "type": "done",
                         "session_id": session_id,
                         "entity_id": active_business,
-                        **result,
+                        # Minus the held approvals (B6): persisted above for
+                        # the next turn, never sent to the browser.
+                        **{k: v for k, v in result.items() if k != "pending"},
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                 else:
@@ -707,8 +846,14 @@ async def chat_stream(request: Request):
             yield f"data: {json.dumps({'type': 'error', 'error': f'Agent error: {exc}'})}\n\n"
             return
 
-        # Same history recording as /api/chat, after the stream completes.
-        store.record_turn(key, store_entity, session_id, user_text, result)
+        # A stream that ended without a `done` event is still recorded, as it
+        # always was (stream_turn always ends with one; this keeps the old
+        # contract for anything that doesn't).
+        if not persisted:
+            await _persist(result)
+        # Background work stays AFTER the stream: these are fire-and-forget
+        # threads (memory extraction, conversation-memory write) that the next
+        # turn does not depend on.
         extract_async(
             session_id=session_id, entity_slug=store_entity,
             user_text=user_text, reply=result.get("reply") or "",
@@ -1297,6 +1442,23 @@ async def generate_meeting_ai_notes(session_id: str, body: MeetingAiNotesRequest
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": f"AI notes generation failed: {exc}"}, status_code=500)
 
+    if result.get("skipped"):
+        # Apps access is off (TURN_COST_PLAN step 0.3, §8 Q2): the agent never
+        # ran, so there is nothing to save — and saving the empty result would
+        # wipe the meeting's existing notes. 409: the request is fine, the
+        # platform's current state refuses it. The page shows `error` as is.
+        return JSONResponse(
+            {
+                "error": (
+                    f"{result['skipped']}. AI meeting notes read Gmail and Drive live, so "
+                    "they can't be built while Apps access is switched off in Settings. "
+                    "This meeting's existing notes were left unchanged."
+                ),
+                "skipped": result["skipped"],
+            },
+            status_code=409,
+        )
+
     await run_in_threadpool(meetings_db.save_ai_notes, session_id, result["notes"])
     full = await run_in_threadpool(meetings_db.transcript, session_id)
     return full or {"session_id": session_id, **result}
@@ -1466,6 +1628,23 @@ def voice_voices():
         "voices": list(Config.voice_voices()),
         "enabled": Config.voice_enabled(),
     }
+
+
+class LiveSessionRequest(BaseModel):
+    entity_id: str | None = None
+
+
+@app.post("/api/voice/live/session")
+async def voice_live_session(body: LiveSessionRequest):
+    """Mint a single-use Gemini Live token for the Home orb's real-time voice.
+
+    Returns `token`, `ws_url`, `model` and the `setup` message the browser must
+    send first. The setup is locked into the token server-side, and the real
+    GEMINI_API_KEY never leaves the server."""
+    try:
+        return await run_in_threadpool(mint_live_session, (body.entity_id or "all").strip() or "all")
+    except LiveError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
 
 
 class ResetRequest(BaseModel):
@@ -2419,6 +2598,35 @@ async def run_scheduled_task_now(task_id: str):
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": f"Run failed: {exc}"}, status_code=500)
     return summary
+
+
+# Path prefix -> Swagger tag, longest prefix first wins. See _OPENAPI_TAGS above.
+_TAG_BY_PREFIX: list[tuple[str, str]] = [
+    ("/api/chat", "chat"), ("/api/reset", "conversations"), ("/api/conversations", "conversations"),
+    ("/api/settings", "settings"), ("/api/memories", "memories"),
+    ("/api/documents", "documents"), ("/api/files", "documents"), ("/api/search", "documents"),
+    ("/api/attachments", "attachments"), ("/api/media", "attachments"),
+    ("/api/meetings", "meetings"), ("/api/voice", "voice"), ("/api/connections", "connections"),
+    ("/api/businesses", "businesses"), ("/api/bills", "bills"), ("/api/register", "register"),
+    ("/api/scheduled-tasks", "scheduled-tasks"), ("/api/usage", "usage"),
+    ("/api/health", "system"), ("/api/admin", "system"),
+]
+
+
+def _tag_routes() -> None:
+    """Give every untagged /api route in this file its Swagger group."""
+    from fastapi.routing import APIRoute
+
+    for route in app.routes:
+        if not isinstance(route, APIRoute) or route.tags:
+            continue
+        for prefix, tag in _TAG_BY_PREFIX:
+            if route.path == prefix or route.path.startswith(prefix + "/"):
+                route.tags = [tag]
+                break
+
+
+_tag_routes()
 
 
 if __name__ == "__main__":
