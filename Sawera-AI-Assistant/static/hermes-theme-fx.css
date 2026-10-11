@@ -1,0 +1,105 @@
+/* Hermes v2 · App-wide motion theme — carries the System tab's look to every view. */
+html.pro :is(.home-view, .chat, .bills-view, .meeting-view, .context-view, .tasks-view, .jobs-view, .artefacts-view, .pricing-view, .settings-view) {
+  --ax: 127, 220, 255; --ax-amber: 255, 182, 77; --ax-ink: #eafaff; --ax-dim: rgba(160, 190, 208, .92); --ax-card: rgba(4, 9, 14, .72); --fx-r: 4px;
+  position: relative; isolation: isolate;
+}
+html.pro:not(.holo) :is(.home-view, .chat, .bills-view, .meeting-view, .context-view, .tasks-view, .jobs-view, .artefacts-view, .pricing-view, .settings-view) {
+  --ax: 245, 166, 35; --ax-amber: 251, 113, 133; --ax-ink: #f3f4f7; --ax-dim: rgba(170, 178, 192, .92); --ax-card: rgba(18, 21, 28, .8); --fx-r: 12px;
+}
+
+/* backdrop */
+html.pro .tf-bg { position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+html.pro .tf-bg .grid {
+  position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(var(--ax), .055) 1px, transparent 1px), linear-gradient(90deg, rgba(var(--ax), .055) 1px, transparent 1px);
+  background-size: 44px 44px; animation: tf-grid 22s linear infinite;
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 25%, #000 10%, transparent 75%); mask-image: radial-gradient(ellipse 80% 60% at 50% 25%, #000 10%, transparent 75%);
+}
+html.pro .tf-bg .g1, html.pro .tf-bg .g2 { position: absolute; border-radius: 50%; filter: blur(80px); }
+html.pro .tf-bg .g1 { width: 42%; aspect-ratio: 1; left: 10%; top: -14%; background: rgb(var(--ax)); opacity: .14; animation: tf-drift1 18s ease-in-out infinite alternate; }
+html.pro .tf-bg .g2 { width: 28%; aspect-ratio: 1; right: 4%; top: 34%; background: rgb(var(--ax-amber)); opacity: .08; animation: tf-drift2 22s ease-in-out infinite alternate; }
+html.pro .chat .tf-bg .grid { opacity: .55; }
+html.pro .home-view .tf-bg .grid { -webkit-mask-image: radial-gradient(ellipse 60% 55% at 50% 48%, #000 10%, transparent 75%); mask-image: radial-gradient(ellipse 60% 55% at 50% 48%, #000 10%, transparent 75%); }
+html.pro .home-view .tf-bg .g1 { left: 29%; top: 12%; opacity: .12; }
+
+/* page headers */
+html.pro [data-tf-eyebrow]::before {
+  content: attr(data-tf-eyebrow); display: inline-flex; align-items: center; margin-bottom: 10px;
+  padding-left: 14px; font: 600 10px/1 "IBM Plex Mono", monospace; letter-spacing: .22em; text-transform: uppercase; color: rgba(var(--ax), .8); white-space: nowrap;
+  background: radial-gradient(circle 3px at 3px 50%, #5be49b 2.5px, transparent 3.5px);
+  animation: tf-fade .6s ease backwards;
+}
+html.pro :is(.tasks-pg-title, .bills-pg-title, .context-pg-header .bills-panel-title) {
+  font: 600 clamp(26px, 3vw, 40px)/1.05 "Chakra Petch", "IBM Plex Sans", sans-serif !important; letter-spacing: -.005em !important; text-transform: none !important; color: var(--ax-ink) !important; margin: 0 !important;
+}
+html.pro:not(.holo) :is(.tasks-pg-title, .bills-pg-title, .context-pg-header .bills-panel-title) { font-family: "Inter", sans-serif !important; letter-spacing: -.02em !important; }
+html.pro .tf-w { display: inline-block; }
+html.pro .tf-enter .tf-w { animation: tf-word .9s cubic-bezier(.16, 1, .3, 1) backwards; }
+html.pro .tf-enter :is(.tasks-pg-sub, .bills-pg-sub, .context-pg-sub) { animation: tf-fade .8s .3s ease backwards; }
+
+/* cards: entrance, spotlight, tilt, sheen, ping */
+html.pro :is(.tk-card, .bstat, .usage-stat, .guardrail-row, .context-item, .meeting-box, .reg-proposal, .reg-row, .meeting-upcoming-row, .lib-card, .art-card, .job-card) {
+  position: relative; isolation: isolate;
+  transition: border-color .25s, box-shadow .3s, transform .3s cubic-bezier(.16, 1, .3, 1), opacity .3s !important;
+}
+html.pro .tf-enter :is(.tk-card, .bstat, .usage-stat, .guardrail-row, .context-item, .meeting-box, .reg-proposal, .reg-row, .meeting-upcoming-row, .lib-card, .art-card, .job-card) {
+  animation: tf-in .75s cubic-bezier(.16, 1, .3, 1) backwards !important; animation-delay: var(--tf-d, 0ms) !important;
+}
+html.pro :is(.tk-card, .bstat, .usage-stat, .guardrail-row, .context-item, .meeting-box, .reg-proposal, .hud-mod, .lib-card, .art-card, .job-card):hover {
+  border-color: rgba(var(--ax), .5) !important; box-shadow: 0 10px 30px -14px rgba(0, 0, 0, .6), 0 0 26px rgba(var(--ax), .12) !important;
+}
+html.pro :is(.tk-card, .bstat, .usage-stat, .guardrail-row, .context-item, .meeting-box, .reg-proposal, .hud-mod, .lib-card, .art-card, .job-card)::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: inherit;
+  background: linear-gradient(105deg, transparent 40%, rgba(var(--ax), .13) 50%, transparent 60%) no-repeat; background-size: 300% 100%; background-position: 100% 0;
+}
+html.pro :is(.tk-card, .bstat, .usage-stat, .guardrail-row, .context-item, .meeting-box, .reg-proposal, .hud-mod, .lib-card, .art-card, .job-card):hover::after { animation: tf-sheen .9s ease; }
+html.pro .tf-rip-wrap { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; z-index: -1; }
+html.pro .tf-ping { animation: tf-press .4s cubic-bezier(.16, 1, .3, 1) !important; }
+html.pro .tf-ripple { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: rgba(var(--ax), .4); pointer-events: none; animation: tf-ripple .6s ease-out forwards; }
+
+/* section labels: LED + drawn rule */
+html.pro :is(.hud-mod h3, .bills-panel-title:not(.context-pg-header .bills-panel-title), .tk-group-head, .panel > h2) { display: flex; align-items: center; gap: 8px; }
+html.pro :is(.hud-mod h3, .tk-group-head, .panel > h2)::before { content: ""; width: 5px; height: 5px; flex: none; border-radius: 50%; background: rgb(var(--ax)); box-shadow: 0 0 6px rgb(var(--ax)); animation: tf-blink 1.8s ease-in-out infinite; }
+html.pro :is(.hud-mod h3, .tk-group-head)::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(var(--ax), .25), transparent); transform-origin: left; }
+html.pro .tf-enter :is(.hud-mod h3, .tk-group-head)::after { animation: tf-line 1.1s .25s cubic-bezier(.16, 1, .3, 1) backwards; }
+
+/* primary actions: light sweep */
+html.pro :is(.tasks-new-btn, .bills-upload-btn, .context-add-btn, .meeting-primary-btn, .tk-save, .reg-approve, .hx-ask-go, .v2-btn, #send-btn) { position: relative; overflow: hidden; }
+html.pro :is(.tasks-new-btn, .bills-upload-btn, .context-add-btn, .meeting-primary-btn, .hx-ask-go, .v2-btn)::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, .28) 50%, transparent 70%);
+  transform: translateX(-100%); animation: tf-sweep 3.6s 1.2s ease-in-out infinite;
+}
+html.pro :is(.tasks-new-btn, .bills-upload-btn, .context-add-btn, .meeting-primary-btn, .tk-save, .reg-approve, .v2-btn):active { transform: scale(.97); }
+
+/* tabs inside views */
+html.pro :is(.lib-subtab, .reg-tab, .context-subtab, .meeting-subtab) { transition: color .2s, background .2s, box-shadow .25s !important; }
+html.pro :is(.lib-subtab, .reg-tab, .context-subtab, .meeting-subtab):is(.active, [aria-selected="true"]) { box-shadow: inset 0 -2px 0 rgb(var(--ax)), 0 6px 16px -8px rgba(var(--ax), .7) !important; }
+
+/* home extras */
+html.pro .home-view .hud-mod { position: relative; isolation: isolate; }
+html.pro .home-view .hx-ask { transition: box-shadow .3s, border-color .3s; }
+html.pro .home-view .hx-ask:focus-within { box-shadow: 0 0 0 1px rgba(var(--ax), .6), 0 0 30px rgba(var(--ax), .25) !important; }
+html.pro .home-view .hud-spoke .dot { animation: tf-blink 2.2s ease-in-out infinite; }
+html.pro .home-view .hud-spoke:nth-child(2) .dot { animation-delay: .4s; } html.pro .home-view .hud-spoke:nth-child(3) .dot { animation-delay: .8s; }
+
+/* chat */
+html.pro .chat .msg, html.pro .chat .message { animation: tf-in-msg .5s cubic-bezier(.16, 1, .3, 1) backwards; }
+html.pro .chat :is(.composer, .input-wrap, form#chat-form):focus-within { box-shadow: 0 0 0 1px rgba(var(--ax), .55), 0 0 28px rgba(var(--ax), .2); }
+
+@keyframes tf-word { from { opacity: 0; transform: translateY(.45em) rotateX(-40deg); filter: blur(8px); } }
+@keyframes tf-fade { from { opacity: 0; } }
+@keyframes tf-in { from { opacity: 0; transform: translateY(16px) scale(.96); filter: blur(6px); } }
+@keyframes tf-in-msg { from { opacity: 0; transform: translateY(10px); filter: blur(4px); } }
+@keyframes tf-line { from { transform: scaleX(0); } }
+@keyframes tf-sheen { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@keyframes tf-sweep { 0%, 60% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+@keyframes tf-press { 40% { transform: scale(.975); } }
+@keyframes tf-ripple { to { width: 420px; height: 420px; margin: -210px 0 0 -210px; opacity: 0; } }
+@keyframes tf-blink { 50% { opacity: .3; } }
+@keyframes tf-grid { to { background-position: 44px 44px; } }
+@keyframes tf-drift1 { to { transform: translate(22%, 14%) scale(1.15); } }
+@keyframes tf-drift2 { to { transform: translate(-30%, -16%) scale(.9); } }
+
+@media (prefers-reduced-motion: reduce) {
+  html.pro .tf-bg *, html.pro .tf-enter *, html.pro [data-tf-eyebrow]::before, html.pro :is(.tasks-new-btn, .bills-upload-btn, .context-add-btn, .meeting-primary-btn, .hx-ask-go, .v2-btn)::after { animation: none !important; }
+}

@@ -1,0 +1,300 @@
+{
+  "info": {
+    "name": "Hermes AI Agent — API",
+    "description": "Headless FastAPI backend for the Hermes AI Agent.\n\nSet the `baseUrl` and `entityId` collection variables (Collection → Variables), then run requests.\n\nHelper scripts:\n- **Chat (JSON)** saves the returned `session_id` into the `sessionId` variable.\n- **Upload attachments** saves the first returned `attachment_id` into the `attachmentId` variable, so the GET/DELETE/chat-by-attachment requests work out of the box.\n\nFor multipart requests (chat with files, attachments, transcribe) select a file in the request **Body → form-data** rows before sending.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000", "type": "string" },
+    { "key": "entityId", "value": "customer-42", "type": "string" },
+    { "key": "sessionId", "value": "", "type": "string" },
+    { "key": "attachmentId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "health"]
+        },
+        "description": "Liveness + configuration check. `problems` lists any missing required keys (empty when healthy)."
+      }
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "Chat (JSON)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Persist the conversation id so follow-up turns reuse it.",
+                  "try {",
+                  "  var body = pm.response.json();",
+                  "  if (body.session_id) pm.collectionVariables.set('sessionId', body.session_id);",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What meetings do I have tomorrow?\",\n  \"session_id\": \"{{sessionId}}\",\n  \"entity_id\": \"{{entityId}}\",\n  \"voice\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "chat"]
+            },
+            "description": "Run one user turn through the Claude + Maton agent.\n\nFields: `message` (required unless a file/attachment is provided), `session_id`, `entity_id`, `attachment_ids` (string[]), `voice` (bool)."
+          }
+        },
+        {
+          "name": "Chat with attachment_ids (JSON)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Summarize the attached file.\",\n  \"session_id\": \"{{sessionId}}\",\n  \"entity_id\": \"{{entityId}}\",\n  \"attachment_ids\": [\"{{attachmentId}}\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "chat"]
+            },
+            "description": "Reference files previously uploaded via POST /api/attachments. Run **Upload attachments** first so `{{attachmentId}}` is set. Unknown or cross-entity ids return 400."
+          }
+        },
+        {
+          "name": "Chat with inline files (multipart)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "message", "value": "Summarize this PDF", "type": "text" },
+                { "key": "session_id", "value": "{{sessionId}}", "type": "text" },
+                { "key": "entity_id", "value": "{{entityId}}", "type": "text" },
+                { "key": "voice", "value": "false", "type": "text" },
+                { "key": "files", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "chat"]
+            },
+            "description": "Attach files directly to a turn. Select one or more files in the `files` row (you can add the `files` key multiple times for multiple files)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Attachments",
+      "item": [
+        {
+          "name": "Upload attachments (multipart)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Save the first attachment id for the GET / DELETE / chat-by-attachment requests.",
+                  "try {",
+                  "  var body = pm.response.json();",
+                  "  if (body.attachments && body.attachments.length) {",
+                  "    pm.collectionVariables.set('attachmentId', body.attachments[0].attachment_id);",
+                  "  }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "entity_id", "value": "{{entityId}}", "type": "text" },
+                { "key": "files", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/attachments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "attachments"]
+            },
+            "description": "Upload one or more files and get back stable attachment ids. Select file(s) in the `files` row (repeat the `files` key for multiple files). Scoped to `entity_id`."
+          }
+        },
+        {
+          "name": "Get attachment metadata",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/attachments/{{attachmentId}}?entity_id={{entityId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "attachments", "{{attachmentId}}"],
+              "query": [{ "key": "entity_id", "value": "{{entityId}}" }]
+            },
+            "description": "Return an attachment's metadata. Must pass the same `entity_id` it was uploaded with. 404 if missing or owned by another entity."
+          }
+        },
+        {
+          "name": "Delete attachment",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/attachments/{{attachmentId}}?entity_id={{entityId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "attachments", "{{attachmentId}}"],
+              "query": [{ "key": "entity_id", "value": "{{entityId}}" }]
+            },
+            "description": "Delete an attachment. 404 if not found / not owned."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Voice",
+      "item": [
+        {
+          "name": "Transcribe (speech -> text)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "audio", "type": "file", "src": [] },
+                { "key": "entity_id", "value": "{{entityId}}", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/voice/transcribe",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "voice", "transcribe"]
+            },
+            "description": "Speech -> text. Select an audio clip in the `audio` row (webm, ogg, wav, mp4, mpeg/mp3, m4a, flac). Returns the transcript; send it back through /api/chat to run the agent."
+          }
+        },
+        {
+          "name": "Speak (text -> speech)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Response is raw audio (audio/wav). Use 'Save Response → Save to a file' to play it.",
+                  "pm.test('returns audio', function () {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('audio');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"You have two meetings tomorrow.\",\n  \"voice\": \"alloy\",\n  \"entity_id\": \"{{entityId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/voice/speak",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "voice", "speak"]
+            },
+            "description": "Text -> speech. Returns raw audio bytes (audio/wav); the entity is echoed in the `X-Entity-Id` response header. In Postman use **Save Response → Save to a file** to keep the .wav."
+          }
+        },
+        {
+          "name": "List voices",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/voice/voices",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "voice", "voices"]
+            },
+            "description": "List the TTS voices available for the active provider plus the current default. Pass a chosen name as `voice` to /api/voice/speak."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Connections",
+      "item": [
+        {
+          "name": "List connections",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/connections?app=&status=",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "connections"],
+              "query": [
+                { "key": "app", "value": "", "description": "Optional app slug filter", "disabled": true },
+                { "key": "status", "value": "", "description": "ACTIVE | PENDING | FAILED", "disabled": true }
+              ]
+            },
+            "description": "List the user's Maton app connections. Optional `app` and `status` query filters."
+          }
+        },
+        {
+          "name": "Create connection",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"app\": \"google-mail\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/connections",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "connections"]
+            },
+            "description": "Start an OAuth connection for an app. The response contains a `url` the user opens to authorize it."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reset conversation",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"session_id\": \"{{sessionId}}\",\n  \"entity_id\": \"{{entityId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/reset",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "reset"]
+        },
+        "description": "Clear a conversation's history. Scope it the same way you created it (same `entity_id`)."
+      }
+    }
+  ]
+}

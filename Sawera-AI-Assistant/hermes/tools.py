@@ -1,0 +1,2814 @@
+"""Tool definitions exposed to Claude, plus the dispatcher that executes them."""
+from __future__ import annotations
+
+import base64
+import copy
+import json
+import logging
+import re
+import uuid
+from email.message import EmailMessage
+from typing import Any
+from urllib.parse import urlsplit
+
+import requests
+
+from . import calendar as hermes_calendar
+from . import documents
+from . import email_attachments
+from . import extract
+from . import guardrails
+from . import storage
+from . import worldbank
+from .attachments import store as attachment_store
+from .businesses import (
+    BUSINESS_TO_ENTITY_SLUG,
+    key_business as _key_business,
+    to_entity_slug,
+)
+from .config import Config
+from .maton import MatonClient, MatonError
+from .wati import WatiClient
+
+log = logging.getLogger("hermes.tools")
+
+# Sentinel meaning "no single business scoped — fan out across all connected
+# businesses" (as opposed to None, which means "no business context at all",
+# i.e. legacy behavior using the plain default key).
+ALL_BUSINESSES = "all"
+
+# Cap for files fetched from a `file_url` and forwarded to WATI as a session file.
+_MAX_FETCH_BYTES = 25 * 1024 * 1024
+# Inline-base64 fallback cap for wati_get_media when S3_BUCKET isn't configured
+# (media can't be persisted, so it's inlined into the tool result instead).
+_MAX_MEDIA_INLINE_B64_CHARS = 200_000
+
+
+# --------------------------------------------------------------------------
+# Autonomy: a hard gate, not a prompt.
+#
+# A scheduled task carries an autonomy tier (readonly / draft / full). Until
+# now that tier was enforced only by a paragraph prepended to the run prompt
+# (scheduler._AUTONOMY_GUARDRAIL) — so a "readonly" task whose allowed_apps
+# included google-mail still had a live `send_email` tool, and a working
+# maton_request that could POST to Gmail's send endpoint or overwrite a Sheets
+# register. Instruction is not enforcement for an unattended run. These sets
+# remove the capability itself.
+# --------------------------------------------------------------------------
+
+_NO_WRITE_AUTONOMY = frozenset({"readonly", "draft"})
+
+# Tools that put something in front of another human.
+_SEND_TOOLS = frozenset({
+    "send_email", "email_with_attachment", "zoom_send_invite",
+    "wati_send_message", "wati_send_file",
+})
+
+# Everything that mutates state outside Hermes, plus the send tools. `create_file`
+# is deliberately absent: the readonly guardrail explicitly permits saving a
+# document, and it writes only into Hermes' own storage.
+_WRITE_TOOLS = _SEND_TOOLS | frozenset({
+    "maton_create_connection",
+    "wati_add_contact", "wati_update_contact_attributes", "wati_assign_operator",
+    "jira_create_issue", "jira_assign_issue",
+    "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task",
+    "set_guardrail",
+})
+
+# Tools only a live chat turn may use, whatever the autonomy tier: authoring
+# standing scheduled tasks and switching guardrails. An unattended run has no
+# human to confirm with, so it must never spawn or rewrite tasks or turn a
+# guardrail off — a FULL-autonomy task with no allowed_apps used to be offered
+# all four (B13), and the guardrail gate no-ops when interactive=False.
+_INTERACTIVE_ONLY_TOOLS = frozenset({
+    "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task",
+    "set_guardrail",
+})
+
+_READ_METHODS = frozenset({"GET", "HEAD"})
+
+# The one write a `draft` run may make through the raw gateway: creating a Gmail
+# draft. It used to be any POST whose path merely CONTAINED "/drafts", which
+# also let through `.../drafts/send` (sending a draft) and a send path with a
+# "#/drafts" fragment, which never reaches the wire. Now only a POST to the
+# Gmail drafts collection itself qualifies: no fragment, no query, no sub-path.
+_DRAFT_CREATE_PATH = re.compile(r"/?gmail/v1/users/[^/?#]+/drafts/?")
+
+
+def _restrict_writes(tools: list[dict[str, Any]], autonomy: str) -> list[dict[str, Any]]:
+    """Drop write tools and narrow maton_request's methods for a sub-`full` run.
+
+    Mirrored by the same check in `dispatch` — the schema tells the model what it
+    may do, dispatch is what actually stops it."""
+    out: list[dict[str, Any]] = []
+    for t in tools:
+        if t.get("name") in _WRITE_TOOLS:
+            continue
+        if t.get("name") == "maton_request":
+            t = copy.deepcopy(t)
+            method = t["input_schema"]["properties"].get("method")
+            if isinstance(method, dict):
+                if autonomy == "draft":
+                    method["enum"] = ["GET", "POST"]
+                    method["description"] = (
+                        "HTTP method. This run is draft-only: POST is accepted ONLY to "
+                        "create a Gmail draft (a path containing '/drafts'). Every other "
+                        "write is refused."
+                    )
+                else:
+                    method["enum"] = ["GET"]
+                    method["description"] = (
+                        "HTTP method. This run is read-only, so GET is the only method "
+                        "accepted; any write is refused."
+                    )
+        out.append(t)
+    return out
+
+
+_RAW_GMAIL_SEND = re.compile(r"/(?:messages|drafts)/send\b")
+
+
+def _is_raw_gmail_send(tool_input: dict[str, Any]) -> bool:
+    return (
+        str(tool_input.get("app") or "").strip().lower() == "google-mail"
+        and str(tool_input.get("method") or "GET").strip().upper() == "POST"
+        and bool(_RAW_GMAIL_SEND.search(str(tool_input.get("path") or "").lower()))
+    )
+
+
+def write_blocked_reason(name: str, tool_input: dict[str, Any], autonomy: str | None) -> str | None:
+    """Why this tool call is refused under `autonomy`, or None if it's allowed.
+
+    The enforcement point. `autonomy` is None for interactive chat, which is
+    unchanged — a human is there to approve."""
+    if name == "maton_request" and _is_raw_gmail_send(tool_input):
+        # Sending through the raw gateway hid the recipients inside a base64
+        # MIME blob (or a draft id), so the approval summary the user saw could
+        # not show who the email went to. Email goes out through send_email /
+        # email_with_attachment, whose summaries name every recipient.
+        return (
+            "Refused: send email with send_email (or email_with_attachment for files), "
+            "not a raw Gmail send through maton_request — the dedicated tools show the user "
+            "exactly who it goes to before it is sent."
+        )
+    if autonomy is not None and name in _INTERACTIVE_ONLY_TOOLS:
+        return (
+            f"Refused: `{name}` is only available in a live chat with the user. A "
+            "scheduled run cannot create, change or delete scheduled tasks or change "
+            "guardrails. Report what you would change instead."
+        )
+    if autonomy not in _NO_WRITE_AUTONOMY:
+        return None
+    if name in _WRITE_TOOLS:
+        what = "send messages" if name in _SEND_TOOLS else "make that change"
+        return (
+            f"Refused: `{name}` is unavailable because this scheduled run is "
+            f"{autonomy}-only, so it cannot {what}. Describe what you would send or "
+            "change and report it instead — the owner will act on it."
+        )
+    if name == "maton_request":
+        method = str(tool_input.get("method") or "GET").upper()
+        if method in _READ_METHODS:
+            return None
+        path = str(tool_input.get("path") or "")
+        if (
+            autonomy == "draft" and method == "POST"
+            and str(tool_input.get("app") or "").strip().lower() == "google-mail"
+            and _DRAFT_CREATE_PATH.fullmatch(path.strip())
+        ):
+            return None
+        return (
+            f"Refused: this scheduled run is {autonomy}-only, so maton_request may only "
+            f"read ({'GET, or POST to a Gmail /drafts path' if autonomy == 'draft' else 'GET'}). "
+            f"A {method} to {path or 'that path'} is a write. Report what you would change instead."
+        )
+    return None
+
+
+def build_tools(
+    active_business: str | None = None,
+    allowed_apps: list[str] | None = None,
+    autonomy: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return the tool list passed to the Messages API.
+
+    `active_business` is the business slug locked to this turn/conversation, or
+    ALL_BUSINESSES ("all") when no single business is scoped. Only in the "all"
+    case do the Maton tools get an extra `business` parameter, so Claude can
+    pick which connected account to use per call — for a locked single-business
+    conversation, the parameter is omitted entirely, making it structurally
+    impossible for a tool call to reach a different business's data.
+
+    `allowed_apps` restricts which connected apps this run may use — passed by
+    Scheduled Tasks so an unattended run only ever touches the apps the user
+    picked for it. It's a list of Maton app slugs (plus the pseudo-slug "web"
+    for web search/fetch). When given, `maton_request`'s app enum is narrowed to
+    it and every app-gated dedicated tool (send_email, calendar_list_upcoming,
+    the wati_* tools, …) is dropped unless its app is in the list. App-agnostic
+    tools (search_business_knowledge, create_file, worldbank_data) are always
+    kept. An empty/None list means no restriction (normal chat behavior).
+    """
+    apps = Config.apps()
+    restricted = bool(allowed_apps)
+    allowed_set = {a.strip() for a in (allowed_apps or []) if a.strip()}
+    effective_apps = [a for a in apps if a in allowed_set] if restricted else apps
+    app_hint = ", ".join(effective_apps) if effective_apps else ", ".join(apps)
+    fan_out = active_business == ALL_BUSINESSES
+
+    request_props: dict[str, Any] = {
+        "app": {
+            "type": "string",
+            "description": f"Maton app slug. One of: {app_hint}",
+            # When a Scheduled Task restricts the toolset, hard-narrow the enum so
+            # the model structurally cannot reach an app the user didn't allow.
+            **({"enum": effective_apps} if restricted and effective_apps else {}),
+        },
+        "method": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+            "description": "HTTP method.",
+        },
+        "path": {
+            "type": "string",
+            "description": "Native API path beginning with '/' (after the app slug).",
+        },
+        "query": {
+            "type": "object",
+            "description": "Optional query-string parameters.",
+            "additionalProperties": True,
+        },
+        "body": {
+            "type": "object",
+            "description": "Optional JSON request body for write methods.",
+            "additionalProperties": True,
+        },
+        "connection_id": {
+            "type": "string",
+            "description": "Optional Maton connection id when multiple exist for an app.",
+        },
+    }
+    connections_props: dict[str, Any] = {
+        "app": {"type": "string", "description": "Optional app slug filter."},
+        "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "PENDING", "FAILED"],
+            "description": "Optional status filter.",
+        },
+    }
+    drive_props: dict[str, Any] = {
+        "file_id": {
+            "type": "string",
+            "description": (
+                "The Drive file's `id`, from a prior maton_request call to "
+                "app='google-drive', path='drive/v3/files'."
+            ),
+        },
+    }
+    read_document_props: dict[str, Any] = {
+        "s3_uri": {
+            "type": "string",
+            "description": (
+                "The exact `s3://...` URI of the file to read. Use the URI listed under "
+                "'Files shared in this conversation' — copy it verbatim, never invent one."
+            ),
+        },
+    }
+    send_email_props: dict[str, Any] = {
+        "to": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Recipient email address(es).",
+        },
+        "cc": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Optional CC address(es).",
+        },
+        "subject": {"type": "string"},
+        "body": {"type": "string", "description": "Plain-text email body."},
+    }
+    email_attachment_props: dict[str, Any] = {
+        "to": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Recipient email address(es).",
+        },
+        "cc": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Optional CC address(es).",
+        },
+        "subject": {"type": "string"},
+        "body": {"type": "string", "description": "Plain-text email body."},
+        "attachments": {
+            "type": "array",
+            "description": (
+                "Files to attach. Each item is ONE of three shapes:\n"
+                "  • Generate a file: {\"filename\": \"renewal_letter.pdf\", \"content\": \"<full "
+                "text you write>\"} — a .pdf/.docx/.xlsx filename is rendered into a real office "
+                "file (.xlsx content is parsed as CSV rows); any other extension is saved as text.\n"
+                "  • Attach a file already uploaded in this chat: {\"attachment_id\": \"<id>\"}.\n"
+                "  • Attach a file you previously created/stored: {\"s3_uri\": \"s3://...\"}."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": "File name with extension (for a generated file)."},
+                    "content": {"type": "string", "description": "Full text content to render into the generated file."},
+                    "content_type": {"type": "string", "description": "Optional MIME override for a non-office generated file."},
+                    "attachment_id": {"type": "string", "description": "Id of a file already uploaded in this chat."},
+                    "s3_uri": {"type": "string", "description": "s3:// URI of a previously created/stored file."},
+                },
+            },
+        },
+        "confirm": {
+            "type": "boolean",
+            "description": (
+                "Leave FALSE/omitted to PREPARE: generate the attachment(s) and hold the "
+                "email as a Gmail draft for the user to review — this does NOT send. After "
+                "the user explicitly approves, call again with confirm=true AND the "
+                "draft_id and approval_token returned by the prepare step to send exactly "
+                "what was reviewed."
+            ),
+        },
+        "draft_id": {
+            "type": "string",
+            "description": "The draft id from the prepare step. Pass it together with confirm=true to send.",
+        },
+    }
+    zoom_invite_props: dict[str, Any] = {
+        "meeting_id": {
+            "type": "string",
+            "description": (
+                "The Zoom meeting's numeric id, from a prior maton_request call to "
+                "app='zoom', path='/v2/users/me/meetings' (or app='zoom-admin')."
+            ),
+        },
+        "to": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Recipient email address(es) to invite.",
+        },
+        "note": {
+            "type": "string",
+            "description": "Optional extra note/context to include in the invite email.",
+        },
+        "zoom_app": {
+            "type": "string",
+            "enum": ["zoom", "zoom-admin"],
+            "description": "Which Zoom connection owns this meeting. Defaults to 'zoom'.",
+        },
+    }
+    zoom_list_props: dict[str, Any] = {
+        "type": {
+            "type": "string",
+            "enum": ["scheduled", "live", "upcoming", "previous_meetings"],
+            "description": "Which meetings to list. Defaults to 'upcoming'.",
+        },
+        "zoom_app": {
+            "type": "string",
+            "enum": ["zoom", "zoom-admin"],
+            "description": "Which Zoom connection to list from. Defaults to 'zoom'.",
+        },
+    }
+    knowledge_props: dict[str, Any] = {
+        "query": {
+            "type": "string",
+            "description": "What to look for, in plain language (meaning-based search, not exact keywords).",
+        },
+    }
+    create_file_props: dict[str, Any] = {
+        "filename": {
+            "type": "string",
+            "description": "Name for the file, with extension, e.g. 'q3_summary.md' or 'notes.txt'.",
+        },
+        "content": {
+            "type": "string",
+            "description": "The full text content to write into the file.",
+        },
+        "content_type": {
+            "type": "string",
+            "description": (
+                "Optional MIME type, e.g. 'text/markdown' or 'text/csv'. If omitted, it's "
+                "guessed from the filename's extension (falls back to text/plain)."
+            ),
+        },
+    }
+    calendar_props: dict[str, Any] = {
+        "days": {
+            "type": "integer",
+            "description": "How many days ahead to look, from now. Defaults to 14.",
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "Cap on the number of events returned. Defaults to 20.",
+        },
+    }
+    jira_search_props: dict[str, Any] = {
+        "jql": {
+            "type": "string",
+            "description": (
+                "Full JQL query, e.g. \"project = ABC AND status = 'In Progress'\". "
+                "When given, `project`/`status`/`assignee_email` below are ignored."
+            ),
+        },
+        "project": {
+            "type": "string",
+            "description": "Project key filter, e.g. 'ABC'. Ignored if `jql` is given.",
+        },
+        "status": {
+            "type": "string",
+            "description": "Status name filter, e.g. 'In Progress'. Ignored if `jql` is given.",
+        },
+        "assignee_email": {
+            "type": "string",
+            "description": "Filter to issues assigned to this person's email. Ignored if `jql` is given.",
+        },
+        "max_results": {"type": "integer", "description": "Cap on results. Defaults to 20."},
+        "fields": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Which fields to return. Defaults to summary, status, assignee, priority, created, updated.",
+        },
+    }
+    jira_get_props: dict[str, Any] = {
+        "issue_key": {"type": "string", "description": "The issue key, e.g. 'ABC-123'."},
+        "fields": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Optional: limit which fields come back.",
+        },
+    }
+    jira_create_props: dict[str, Any] = {
+        "project_key": {"type": "string", "description": "The Jira project key to create the issue in, e.g. 'ABC'."},
+        "summary": {"type": "string", "description": "Short issue title."},
+        "description": {"type": "string", "description": "Optional longer description (plain text)."},
+        "issue_type": {
+            "type": "string",
+            "description": "Issue type name, e.g. 'Task', 'Bug', 'Story'. Defaults to 'Task'.",
+        },
+        "priority": {"type": "string", "description": "Optional priority name, e.g. 'High'."},
+        "labels": {"type": "array", "items": {"type": "string"}, "description": "Optional labels to attach."},
+        "assignee_email": {
+            "type": "string",
+            "description": "Optional: email of the person to assign this issue to immediately.",
+        },
+    }
+    jira_assign_props: dict[str, Any] = {
+        "issue_key": {"type": "string", "description": "The issue key to assign, e.g. 'ABC-123'."},
+        "assignee_email": {
+            "type": "string",
+            "description": "Email of the person to assign. Pass 'unassigned' to remove the current assignee.",
+        },
+    }
+
+    if fan_out:
+        connected = Config.connected_business_slugs()
+        business_param = {
+            "type": "string",
+            "enum": connected,
+            "description": (
+                "Required: which connected business's account to use for this call. "
+                "The user has 'All Businesses' selected, so you must pick one per call "
+                f"— you cannot query more than one business at once. Connected: {connected}."
+            ),
+        }
+        request_props["business"] = business_param
+        connections_props["business"] = business_param
+        drive_props["business"] = business_param
+        read_document_props["business"] = business_param
+        send_email_props["business"] = business_param
+        email_attachment_props["business"] = business_param
+        # Knowledge search isn't gated by a Maton connection — any business with
+        # uploaded context is searchable, whether or not it has an app connected.
+        knowledge_props["business"] = {
+            "type": "string",
+            "enum": sorted(BUSINESS_TO_ENTITY_SLUG),
+            "description": (
+                "Required: which business's knowledge base to search. The user has 'All "
+                "Businesses' selected, so you must pick one per call."
+            ),
+        }
+        zoom_invite_props["business"] = business_param
+        zoom_list_props["business"] = business_param
+        calendar_props["business"] = business_param
+        jira_search_props["business"] = business_param
+        jira_get_props["business"] = business_param
+        jira_create_props["business"] = business_param
+        jira_assign_props["business"] = business_param
+        # Optional, unlike the others above — a created file isn't tied to any
+        # business's connection, so leaving it out just files it generally.
+        create_file_props["business"] = {
+            "type": "string",
+            "enum": sorted(BUSINESS_TO_ENTITY_SLUG),
+            "description": (
+                "Optional: which business to file this under, just for organizing in S3. "
+                "Omit for a general file not tied to one business."
+            ),
+        }
+
+    tools: list[dict[str, Any]] = [
+        {
+            "name": "maton_request",
+            "description": (
+                "Call a connected third-party app through the Maton API gateway. "
+                "Maton injects the OAuth token and proxies to the app's native REST API. "
+                f"Allowed app slugs: {app_hint}. "
+                "`path` is the native API path for that app (everything after the app slug). "
+                "Examples: app='google-mail', path='/gmail/v1/users/me/messages'. "
+                "To SEND an email, use the dedicated `send_email` tool instead of building the "
+                "raw Gmail payload here yourself — hand-encoding the base64 MIME message risks "
+                "mojibake and mistyped tokens. For a Zoom meeting invite specifically, use "
+                "`zoom_send_invite` (it also auto-CCs the user). "
+                "app='google-sheets', path='/v4/spreadsheets/{id}/values/Sheet1!A1:C10'. "
+                "app='quickbooks', path='/quickbooks/v2/company/:realmId/query' "
+                "(`:realmId` is auto-substituted). "
+                "Notion (app='notion') — everything is JSON, no OCR/binary handling needed: "
+                "search the whole workspace with method='POST', path='/v1/search', "
+                "body={'query': '...', 'filter': {'value': 'page'|'database', 'property': 'object'}}. "
+                "List/filter a database's rows with method='POST', "
+                "path='/v1/databases/{database_id}/query', body={'filter': {...}, 'sorts': [...]} "
+                "(get the database_id and its property schema first via method='GET', "
+                "path='/v1/databases/{database_id}' so you use the right property names/types). "
+                "Read a single page's properties with method='GET', path='/v1/pages/{page_id}'; "
+                "read its body content with method='GET', path='/v1/blocks/{page_id}/children'. "
+                "Read comments with method='GET', path='/v1/comments?block_id={page_or_block_id}'. "
+                "Create a page/database row with method='POST', path='/v1/pages', "
+                "body={'parent': {'database_id': '...'} or {'page_id': '...'}, 'properties': {...}} "
+                "— each property value must match its type in the database schema, e.g. "
+                "{'Name': {'title': [{'text': {'content': '...'}}]}}, "
+                "{'Status': {'status': {'name': 'Done'}}}, {'Due': {'date': {'start': 'YYYY-MM-DD'}}}. "
+                "Add content blocks to an existing page with method='PATCH', "
+                "path='/v1/blocks/{page_id}/children', body={'children': [{'object': 'block', "
+                "'type': 'paragraph', 'paragraph': {'rich_text': [{'text': {'content': '...'}}]}}]}. "
+                "Post a comment with method='POST', path='/v1/comments', "
+                "body={'parent': {'page_id': '...'}, 'rich_text': [{'text': {'content': '...'}}]}. "
+                "Update properties (incl. status/assignee/due date) or archive/delete a page with "
+                "method='PATCH', path='/v1/pages/{page_id}', body={'properties': {...}} or "
+                "body={'archived': true}. "
+                "Zoom (app='zoom' for the connected user's own account; app='zoom-admin' for "
+                "account-wide access to any user — same endpoints, but zoom-admin uses an "
+                "explicit {userId} or email instead of 'me' and can also list/inspect other "
+                "users). Get your profile: method='GET', path='/v2/users/me'. "
+                "List upcoming meetings: method='GET', path='/v2/users/me/meetings', "
+                "query={'type': 'upcoming'} (types: scheduled|live|upcoming|previous_meetings). "
+                "Get one meeting's details: method='GET', path='/v2/meetings/{meetingId}'. "
+                "Create a meeting: method='POST', path='/v2/users/me/meetings', "
+                "body={'topic': '...', 'type': 2, 'start_time': 'YYYY-MM-DDTHH:MM:SSZ', "
+                "'duration': 30, 'timezone': 'UTC'} (type: 1=instant, 2=scheduled, "
+                "3=recurring no fixed time, 8=recurring fixed time). "
+                "Update a meeting: method='PATCH', path='/v2/meetings/{meetingId}', "
+                "body={...changed fields...}. Delete: method='DELETE', "
+                "path='/v2/meetings/{meetingId}'. "
+                "List a user's cloud recordings: method='GET', path='/v2/users/me/recordings' "
+                "(optionally query={'from': 'YYYY-MM-DD', 'to': 'YYYY-MM-DD'}); recordings for "
+                "one meeting: method='GET', path='/v2/meetings/{meetingId}/recordings'; delete "
+                "with method='DELETE', path='/v2/meetings/{meetingId}/recordings'. "
+                "Webinars (needs the Webinar add-on): list method='GET', "
+                "path='/v2/users/me/webinars'; create/view/update/delete mirror the meetings "
+                "endpoints with 'webinars' in place of 'meetings'. "
+                "Registrants: list method='GET', path='/v2/meetings/{meetingId}/registrants'; "
+                "add one with method='POST', path='/v2/meetings/{meetingId}/registrants', "
+                "body={'email': '...', 'first_name': '...'}. "
+                "Past-meeting details/participants: method='GET', "
+                "path='/v2/past_meetings/{meetingId}' or "
+                "path='/v2/past_meetings/{meetingId}/participants'. "
+                "zoom-admin only — list every user in the account: method='GET', "
+                "path='/v2/users'; a specific user's profile/settings: method='GET', "
+                "path='/v2/users/{userId}' or path='/v2/users/{userId}/settings'; another "
+                "user's meetings/recordings/webinars: same paths as above with "
+                "'/v2/users/{userId}/...' instead of '/v2/users/me/...'; account-wide settings "
+                "(paid plans only): method='GET', path='/v2/accounts/{accountId}/settings'. "
+                "Jira (app='jira') — prefer the dedicated `jira_search_issues`, "
+                "`jira_get_issue`, `jira_create_issue`, and `jira_assign_issue` tools for "
+                "everyday work; they already resolve the Cloud id and any accountId lookups. "
+                "Fall back to this raw tool only for things those don't cover (transitions, "
+                "comments, custom fields). Every Jira path needs the site's Cloud id first: "
+                "method='GET', path='/oauth/token/accessible-resources' returns a list with "
+                "each site's `id` (the cloudId) — then every other call is "
+                "path='/ex/jira/{cloudId}/rest/api/3/...', e.g. "
+                "path='/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/transitions' to list "
+                "or (POST) trigger a status transition, or "
+                "path='/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/comment' (POST) to "
+                "add a comment (body uses Atlassian's doc format: {'body': {'type': 'doc', "
+                "'version': 1, 'content': [{'type': 'paragraph', 'content': [{'type': 'text', "
+                "'text': '...'}]}]}}). "
+                "RESPONSE SIZE: very large responses are reduced to fit the context "
+                "window. If the result carries a top-level `_truncation` key, or you see "
+                "a <<TRUNCATED ...>> marker anywhere in it, you are NOT looking at the whole "
+                "payload — do not describe, quote, count, or answer questions about "
+                "content past a marker or beyond a listed cut. Re-request the missing part "
+                "with a narrower query, a filter (e.g. Gmail `q=`), or the API's paging "
+                "parameter (`pageToken`/`maxResults`/`startAt`). "
+                "Always do read-only (GET) calls to discover IDs before any write. "
+                "Do NOT call this for POST/PUT/PATCH/DELETE until the user has explicitly "
+                "confirmed the change."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": request_props,
+                "required": ["app", "method", "path"],
+            },
+        },
+        {
+            "name": "maton_list_connections",
+            "description": (
+                "List the user's Maton app connections so you know which apps are "
+                "connected before calling them. Optionally filter by app slug or status "
+                "(ACTIVE | PENDING | FAILED)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": connections_props,
+            },
+        },
+        {
+            "name": "maton_create_connection",
+            "description": (
+                "Begin connecting a new app. Returns an OAuth authorization URL the user "
+                "must open in their browser to grant access. Use this when an app the user "
+                "wants is not yet connected. Only works for a single scoped business — if "
+                "the user has 'All Businesses' selected, ask them to pick a specific "
+                "business first."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "app": {
+                        "type": "string",
+                        "description": "App slug to connect, e.g. 'quickbooks' or 'google-mail'.",
+                    },
+                },
+                "required": ["app"],
+            },
+        },
+        {
+            "name": "drive_read_file",
+            "description": (
+                "Fetch a Google Drive file's actual bytes (PDF or image) and hand them to "
+                "you to read directly — you read PDFs and images natively, no OCR step "
+                "needed. Use this whenever you need to see what's INSIDE a Drive file, not "
+                "just its name/metadata (which maton_request's `drive/v3/files` list already "
+                "gives you, including the `id` this tool needs). Only PDF/JPEG/PNG content "
+                "can be shown inline; other file types, or files the gateway can't proxy as "
+                "binary, come back as metadata + a webViewLink instead."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": drive_props,
+                "required": ["file_id"],
+            },
+        },
+        {
+            "name": "read_document",
+            "description": (
+                "Read the text of a document that was previously shared into this "
+                "conversation and stored in the file locker (S3) — e.g. a PDF, photo, or "
+                "invoice a contact sent over WhatsApp. Fetches the file by its `s3_uri`, "
+                "runs OCR on scanned pages and phone photos, and returns the extracted "
+                "text so you can summarize or answer questions about it — with no need for "
+                "the user to download and re-upload anything — including files you created "
+                "yourself with `create_file` (pass the `s3_uri` it returned). The available "
+                "files and their `s3_uri`s are listed under 'Files shared in this "
+                "conversation' in your context. Supports PDF, JPEG/PNG images, Word (.docx), "
+                "Excel (.xlsx), PowerPoint (.pptx), and text/CSV/JSON files."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": read_document_props,
+                "required": ["s3_uri"],
+            },
+        },
+        {
+            "name": "send_email",
+            "description": (
+                "Send an email through the connected Gmail account. The MIME message and "
+                "base64 encoding are built in code from the plain `to`/`subject`/`body` you "
+                "pass — any characters (em dashes, curly quotes, etc.) are encoded correctly, "
+                "unlike hand-building the raw Gmail payload via maton_request, which risks "
+                "encoding corruption."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": send_email_props,
+                "required": ["to", "subject", "body"],
+            },
+        },
+        {
+            "name": "email_with_attachment",
+            "description": (
+                "Send an email WITH one or more file attachments through the connected Gmail "
+                "account, following a fixed prepare-then-send flow so a review always happens "
+                "before anything leaves the outbox. Use this — not send_email or maton_request "
+                "— whenever the user wants a file emailed, whether they supplied it or asked you "
+                "to generate one (e.g. 'send Amal the renewal letter as a PDF'). You can attach "
+                "files you generate on the fly (PDF/DOCX/XLSX or plain text — you write the "
+                "content), files uploaded earlier in this chat (by attachment_id), or files you "
+                "previously created (by s3_uri).\n"
+                "STEP 1 — PREPARE (confirm omitted): generates the attachment(s), builds the "
+                "email, and saves it as a Gmail DRAFT. It does NOT send. Returns a draft_id and "
+                "a preview; show the user what will go out and ask them to approve.\n"
+                "STEP 2 — SEND (confirm=true + the returned draft_id, plus the approval_token "
+                "when one is returned): sends exactly that reviewed draft. In a live chat only "
+                "after the user explicitly approves, in a later message; the prepare result's "
+                "next_step says when it may go straight away. A send without a prepared draft "
+                "is refused.\n"
+                "Any single attachment larger than ~25 MB is automatically uploaded to Google "
+                "Drive and linked in the email body instead of attached, so the send never fails "
+                "on size."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": email_attachment_props,
+                "required": ["to", "subject", "body"],
+            },
+        },
+        {
+            "name": "zoom_send_invite",
+            "description": (
+                "Send a Zoom meeting invite by email. Fetches the meeting's real topic, time, "
+                "and join link directly from Zoom and builds the email in code, so the join "
+                "URL is always copied byte-for-byte — never retyped/hallucinated. Automatically "
+                "also sends a copy to the user's own email."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": zoom_invite_props,
+                "required": ["meeting_id", "to"],
+            },
+        },
+        {
+            "name": "calendar_list_upcoming",
+            "description": (
+                "List a business's upcoming Google Calendar events (its primary calendar) — "
+                "meetings, their time, location, and attendees. Use this whenever the user asks "
+                "what meetings/events they have, today or in a coming window, instead of "
+                "`maton_request` — it already handles the Calendar API's date-range query and "
+                "returns a clean, flattened list instead of raw Google JSON. When the user asks "
+                "generally 'what meetings do I have', also call `zoom_list_meetings` and combine "
+                "both — a meeting may exist in only one of the two."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": calendar_props,
+                "required": [],
+            },
+        },
+        {
+            "name": "zoom_list_meetings",
+            "description": (
+                "List a business's Zoom meetings (scheduled/upcoming/live/past), with join links "
+                "and meeting IDs — use this instead of `maton_request` for a clean flattened list "
+                "instead of Zoom's raw paginated response. When the user asks generally 'what "
+                "meetings do I have', also call `calendar_list_upcoming` and combine both — a "
+                "meeting may exist in only one of the two (e.g. a Zoom call with no calendar "
+                "invite, or a calendar event with no Zoom link)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": zoom_list_props,
+                "required": [],
+            },
+        },
+        {
+            "name": "jira_search_issues",
+            "description": (
+                "Search/list Jira issues (tasks, bugs, stories) via JQL. Pass a full `jql` "
+                "query for anything specific, or use the `project`/`status`/`assignee_email` "
+                "convenience filters to build a simple AND query for you. Handles the Jira "
+                "Cloud id lookup and (for `assignee_email`) the accountId lookup internally."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": jira_search_props,
+                "required": [],
+            },
+        },
+        {
+            "name": "jira_get_issue",
+            "description": "Get a single Jira issue's full details by its key (e.g. 'ABC-123').",
+            "input_schema": {
+                "type": "object",
+                "properties": jira_get_props,
+                "required": ["issue_key"],
+            },
+        },
+        {
+            "name": "jira_create_issue",
+            "description": (
+                "Create a new Jira issue (task, bug, story, ...). Optionally assign it to "
+                "someone immediately via `assignee_email` — the accountId lookup is handled "
+                "for you. Always confirm the project, summary, and assignee with the user "
+                "before calling this, since it's a write."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": jira_create_props,
+                "required": ["project_key", "summary"],
+            },
+        },
+        {
+            "name": "jira_assign_issue",
+            "description": (
+                "Assign (or reassign) an existing Jira issue to someone by email — looks up "
+                "their Jira accountId for you. Pass `assignee_email='unassigned'` to remove "
+                "the current assignee instead. Confirm the issue and the person with the user "
+                "before calling this."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": jira_assign_props,
+                "required": ["issue_key", "assignee_email"],
+            },
+        },
+        {
+            "name": "worldbank_data",
+            "description": (
+                "Fetch authoritative agriculture & livestock statistics from the World Bank "
+                "Open Data API — reliable, machine-readable numbers to ground data-driven "
+                "farming decisions (crop strategy, livestock benchmarking, export context) in "
+                "real figures instead of guesses. Defaults to Kenya. Use this whenever the user "
+                "wants a defensible number, a trend over time, or a country comparison for "
+                "agriculture/livestock — prefer it over web_search for these, since it returns "
+                "clean multi-year series you can cite.\n"
+                "`indicators` accepts these curated keys (or any raw World Bank indicator code): "
+                "crop_production_index, livestock_production_index, food_production_index, "
+                "cereal_yield, cereal_production, agricultural_land_pct, arable_land_pct, "
+                "irrigated_land_pct, fertilizer_use, agri_pct_gdp, agri_value_added_usd, "
+                "employment_in_agri_pct, rural_population_pct, food_exports_pct, "
+                "agri_raw_exports_pct.\n"
+                "`countries` accepts names (e.g. 'kenya', 'ethiopia', 'netherlands') or ISO3 "
+                "codes ('KEN'), plus aggregates 'world'/'WLD' and 'sub-saharan africa'/'SSF' — "
+                "pass several to compare Kenya against peers or export markets. Omit for Kenya.\n"
+                "Use `most_recent: 1` for 'the latest figure', or `start_year`/`end_year` for a "
+                "trend. Data is annual and typically lags 1-2 years. Cite the source and year in "
+                "your answer."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "indicators": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "One or more catalog keys or raw World Bank indicator codes.",
+                    },
+                    "countries": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Country names/ISO3 codes or aggregates. Defaults to Kenya.",
+                    },
+                    "start_year": {"type": "integer", "description": "Inclusive start year of the range."},
+                    "end_year": {"type": "integer", "description": "Inclusive end year of the range."},
+                    "most_recent": {
+                        "type": "integer",
+                        "description": "Keep only the N most recent non-null points per series (e.g. 1 for the latest).",
+                    },
+                },
+                "required": ["indicators"],
+            },
+        },
+    ]
+
+    # ---- WATI (WhatsApp Business) — dedicated tools ------------------------
+    # Purpose-built wrappers over the handful of WATI endpoints Hermes supports,
+    # so the model doesn't have to hand-construct raw `maton_request` calls for
+    # everyday WhatsApp tasks. Still routed through the same per-business Maton
+    # key resolution as every other app.
+    custom_params_schema = {
+        "type": "array",
+        "description": "Custom attributes, e.g. [{\"name\": \"lead_stage\", \"value\": \"hot\"}].",
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "value": {"type": "string"},
+            },
+            "required": ["name", "value"],
+        },
+    }
+    wati_tool_defs: list[dict[str, Any]] = [
+        {
+            "name": "wati_list_contacts",
+            "description": (
+                "List WhatsApp contacts from the connected WATI account. Filter by name, "
+                "creation date, or advanced attribute filters (e.g. lead stage, owner)."
+            ),
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Filter by contact name (partial match).",
+                },
+                "attribute_filters": {
+                    "type": "array",
+                    "description": (
+                        "Advanced filters on custom attributes, e.g. "
+                        "[{\"name\": \"lead_stage\", \"operator\": \"==\", \"value\": \"hot\"}]."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "operator": {
+                                "type": "string",
+                                "enum": [
+                                    "contain", "notContain", "exist", "notExist",
+                                    "==", "!=", "valid", "invalid",
+                                ],
+                            },
+                            "value": {"type": "string"},
+                        },
+                        "required": ["name", "operator"],
+                    },
+                },
+                "created_date": {
+                    "type": "string",
+                    "description": "Filter by contact creation date, e.g. 2026-07-01.",
+                },
+                "page_size": {"type": "integer", "description": "Results per page."},
+                "page_number": {"type": "integer", "description": "Page number, 1-based."},
+            },
+            "required": [],
+        },
+        {
+            "name": "wati_add_contact",
+            "description": "Add a new WhatsApp contact to the connected WATI account, with optional custom attributes.",
+            "properties": {
+                "whatsapp_number": {
+                    "type": "string",
+                    "description": (
+                        "Phone number in international format, digits only, no '+' or "
+                        "leading zeros — e.g. 919876543210."
+                    ),
+                },
+                "name": {"type": "string", "description": "Contact's display name."},
+                "custom_params": custom_params_schema,
+            },
+            "required": ["whatsapp_number"],
+        },
+        {
+            "name": "wati_update_contact_attributes",
+            "description": (
+                "Update custom attributes on an existing WATI contact (e.g. lead stage, "
+                "owner, deal value)."
+            ),
+            "properties": {
+                "whatsapp_number": {
+                    "type": "string",
+                    "description": "The contact's phone number, digits only.",
+                },
+                "custom_params": custom_params_schema,
+            },
+            "required": ["whatsapp_number", "custom_params"],
+        },
+        {
+            "name": "wati_get_messages",
+            "description": "Get the WhatsApp message history for a contact.",
+            "properties": {
+                "whatsapp_number": {
+                    "type": "string",
+                    "description": "The contact's phone number, digits only.",
+                },
+                "page_size": {"type": "integer", "description": "Results per page."},
+                "page_number": {"type": "integer", "description": "Page number, 1-based."},
+            },
+            "required": ["whatsapp_number"],
+        },
+        {
+            "name": "wati_send_message",
+            "description": (
+                "Send a free-text WhatsApp session message to a contact. Only works within "
+                "WATI's 24-hour customer session window (the contact must have messaged in "
+                "the last 24h) — outside that window this call will fail and an approved "
+                "template message is required instead. Always confirm the exact message text "
+                "with the user before sending."
+            ),
+            "properties": {
+                "whatsapp_number": {
+                    "type": "string",
+                    "description": "The contact's phone number, digits only.",
+                },
+                "message_text": {"type": "string", "description": "Message to send (max 4096 chars)."},
+            },
+            "required": ["whatsapp_number", "message_text"],
+        },
+        {
+            "name": "wati_send_file",
+            "description": (
+                "Send a file (PDF, image, etc.) as a WhatsApp session message. Same 24-hour "
+                "session window rule as wati_send_message. Provide either `attachment_id` "
+                "(a file the user already uploaded in this chat) or `file_url` (an http(s) "
+                "URL to fetch and forward). Always confirm with the user before sending."
+            ),
+            "properties": {
+                "whatsapp_number": {
+                    "type": "string",
+                    "description": "The contact's phone number, digits only.",
+                },
+                "attachment_id": {
+                    "type": "string",
+                    "description": "Id of a file already uploaded in this chat via the attachments endpoint.",
+                },
+                "file_url": {
+                    "type": "string",
+                    "description": "An http(s) URL to fetch and forward instead of attachment_id.",
+                },
+                "caption": {"type": "string", "description": "Optional caption sent with the file."},
+            },
+            "required": ["whatsapp_number"],
+        },
+        {
+            "name": "wati_assign_operator",
+            "description": "Assign a human operator (agent) to handle a contact's WhatsApp conversation.",
+            "properties": {
+                "whatsapp_number": {
+                    "type": "string",
+                    "description": "The contact's phone number, digits only.",
+                },
+                "email": {
+                    "type": "string",
+                    "description": "Email address of the WATI operator/agent to assign.",
+                },
+            },
+            "required": ["whatsapp_number", "email"],
+        },
+        {
+            "name": "wati_get_media",
+            "description": (
+                "Download a media file (image, document, voice note, etc.) that a contact "
+                "sent, or that was sent to them. Requires the media's `file_name`, typically "
+                "found in a message record returned by wati_get_messages or an inbound "
+                "webhook payload. When storage is configured, the file is saved for this "
+                "business and shown inline in the chat — just report that you retrieved it "
+                "and mention any caption/context; you don't need to describe or re-attach it."
+            ),
+            "properties": {
+                "file_name": {
+                    "type": "string",
+                    "description": "The media file name, as referenced in a WATI message record.",
+                },
+            },
+            "required": ["file_name"],
+        },
+    ]
+
+    for tool_def in wati_tool_defs:
+        props = dict(tool_def["properties"])
+        if fan_out:
+            props["business"] = business_param
+        tools.append(
+            {
+                "name": tool_def["name"],
+                "description": tool_def["description"],
+                "input_schema": {
+                    "type": "object",
+                    "properties": props,
+                    "required": tool_def["required"],
+                },
+            }
+        )
+
+    tools.append({
+        "name": "search_business_knowledge",
+        "description": (
+            "Search a business's uploaded knowledge base (context files, documents, and notes "
+            "ingested for it) by meaning, not exact keywords. Check here before saying you lack "
+            "information about a business's specific rules, background, or policies — this is "
+            "where manually-added business context lives. Returns the most relevant snippets "
+            "with their source; if nothing relevant comes back, say so rather than guessing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": knowledge_props,
+            "required": ["query"],
+        },
+    })
+
+    tools.append({
+        "name": "create_file",
+        "description": (
+            "Create a new file from text you write and store it in S3, returning a download "
+            "link. Use this whenever the user asks you to generate a document, report, note, "
+            "CSV, or any other file they can download — write the full content yourself, then "
+            "call this to persist it and get a real, working link. Always share the returned "
+            "`download_url` in your reply EXACTLY as returned — copy it character for character, "
+            "never shorten, tidy, or re-type it, and never invent or guess a URL yourself "
+            "(a truncated link is a dead link). The result says whether it expires: if it "
+            "returns `expires_in_hours`, tell the user the link only lasts that long; if it "
+            "returns `link_expires: false`, the link is permanent and you shouldn't claim otherwise. "
+            "If it returns `public_link: true`, the link needs no login — anyone it's forwarded to "
+            "can open it, so say so plainly when the file holds anything sensitive. "
+            "A `.pdf` filename is rendered into a REAL PDF automatically — but as plain text "
+            "only: markdown syntax (#, **, etc.) is NOT interpreted/formatted, it just shows up "
+            "as literal characters, so write clean prose for a PDF rather than markdown. Every "
+            "other extension (.md, .txt, .csv, .json, .html, ...) is saved exactly as written."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": create_file_props,
+            "required": ["filename", "content"],
+        },
+    })
+
+    if Config.WEB_SEARCH:
+        # allowed_callers=["direct"] restricts these to normal tool_use calls
+        # (what the dispatch loop already handles) instead of also allowing
+        # the programmatic/code-execution caller, which not every model
+        # supports (e.g. Claude Haiku rejects the request outright without it).
+        tools.append({"type": "web_search_20260209", "name": "web_search", "allowed_callers": ["direct"]})
+        tools.append({"type": "web_fetch_20260209", "name": "web_fetch", "allowed_callers": ["direct"]})
+
+    # Scheduled-task authoring from chat. Deliberately NOT offered on a restricted
+    # (scheduled/unattended) run — only a live chat turn, where the user is present
+    # to command it, may create standing recurring tasks. So an unattended run can
+    # never spawn more tasks. See docs/features/SCHEDULED_TASKS.md. `restricted`
+    # alone missed a FULL-autonomy task with no allowed_apps (B13); the
+    # _INTERACTIVE_ONLY_TOOLS filter at the end of this function closes that.
+    if not restricted:
+        tools.append({
+            "name": "create_scheduled_task",
+            "description": (
+                "Create a recurring Scheduled Task in the dashboard from the user's request, so "
+                "Hermes runs a job automatically on a schedule (it appears in the Tasks tab and "
+                "fires unattended). Use this whenever the user asks to schedule / automate / "
+                "'every day/week' / 'remind me to run' something — e.g. 'every morning at 7 give "
+                "me a farm briefing', 'each Monday pull the rent arrears'. "
+                "Write `prompt` as a complete standalone instruction the agent will run each time "
+                "(as if the user typed it in chat), not a paraphrase. "
+                "`frequency`: daily (every day at each time), weekdays (Mon–Fri), weekly (only the "
+                "`days_of_week`), or hourly (every hour at the minute of the first time). "
+                "`days_of_week` uses 0=Mon … 6=Sun and is required for weekly. "
+                "`times` are 24h \"HH:MM\" wall-clock in `timezone`. "
+                "`business` scopes it to one entity — one of: afk (Afro Farm), gak (GAK "
+                "Properties), gif (GIF Properties), gakc (GAK Commodities), nh (Nour Hammam), per "
+                "(Personal & Family) — or 'all' for cross-business; default is the conversation's "
+                "current business. "
+                "`allowed_apps` optionally limits which connected apps the task may use (Maton "
+                "slugs like google-mail, google-calendar, quickbooks, google-drive; empty = all). "
+                "`autonomy` is the safety ceiling for the UNATTENDED run: 'readonly' (default — "
+                "read/analyze/report only), 'draft' (may also create Gmail drafts, never send), or "
+                "'full' (may actually send/modify — a standing authorization; only pick this if "
+                "the user clearly said to act/send automatically, and confirm first). "
+                "If the schedule, business, or autonomy is ambiguous, ask the user a quick "
+                "clarifying question before creating; otherwise create it and report back the "
+                "resulting schedule and next run."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short display name for the task."},
+                    "prompt": {"type": "string", "description": "The full instruction the task runs each time, written as if asked in chat."},
+                    "frequency": {"type": "string", "enum": ["daily", "weekdays", "weekly", "hourly"]},
+                    "times": {"type": "array", "items": {"type": "string"}, "description": "24h wall-clock times, e.g. [\"07:00\",\"13:00\"]. Defaults to [\"09:00\"]."},
+                    "days_of_week": {"type": "array", "items": {"type": "integer"}, "description": "For weekly: 0=Mon … 6=Sun."},
+                    "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per | all"},
+                    "allowed_apps": {"type": "array", "items": {"type": "string"}, "description": "Optional Maton app slugs the task may use; empty = all."},
+                    "autonomy": {"type": "string", "enum": ["readonly", "draft", "full"]},
+                    "timezone": {"type": "string", "description": "IANA tz, e.g. America/Chicago or Africa/Nairobi. Defaults to the app default."},
+                    "enabled": {"type": "boolean", "description": "Whether it starts active (fires on schedule). Default true."},
+                },
+                "required": ["name", "prompt", "frequency"],
+            },
+        })
+        tools.append({
+            "name": "list_scheduled_tasks",
+            "description": (
+                "List the user's existing Scheduled Tasks (task_id, name, schedule, business, "
+                "autonomy, enabled, next run, last status). Use to answer 'what do I have "
+                "scheduled?', or to find a task's `task_id` before editing/pausing/deleting it. "
+                "Optional `business` slug (afk/gak/…/per or 'all') scopes the list; omit to use "
+                "the conversation's current business."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per | all"},
+                },
+                "required": [],
+            },
+        })
+        tools.append({
+            "name": "update_scheduled_task",
+            "description": (
+                "Edit an existing Scheduled Task — including pausing or resuming it. First get the "
+                "`task_id` from `list_scheduled_tasks`. Only the fields you pass change; everything "
+                "else stays. Set `enabled` false to PAUSE (it stops firing but is kept) or true to "
+                "resume — prefer this over deleting when the user just wants it to stop. To change "
+                "the schedule, pass the full new `frequency`/`times`/`days_of_week`. Changing "
+                "schedule, timezone, or enabled recomputes the next run. Same field meanings as "
+                "create_scheduled_task."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The task to edit (from list_scheduled_tasks)."},
+                    "name": {"type": "string"},
+                    "prompt": {"type": "string"},
+                    "frequency": {"type": "string", "enum": ["daily", "weekdays", "weekly", "hourly"]},
+                    "times": {"type": "array", "items": {"type": "string"}},
+                    "days_of_week": {"type": "array", "items": {"type": "integer"}, "description": "0=Mon … 6=Sun"},
+                    "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per | all"},
+                    "allowed_apps": {"type": "array", "items": {"type": "string"}},
+                    "autonomy": {"type": "string", "enum": ["readonly", "draft", "full"]},
+                    "timezone": {"type": "string"},
+                    "enabled": {"type": "boolean", "description": "false = pause, true = resume."},
+                },
+                "required": ["task_id"],
+            },
+        })
+        tools.append({
+            "name": "delete_scheduled_task",
+            "description": (
+                "Permanently delete a Scheduled Task and its run history. Get the `task_id` from "
+                "list_scheduled_tasks first. This is IRREVERSIBLE — confirm with the user (name the "
+                "task) before calling, and if they only want it to stop, pause it with "
+                "update_scheduled_task(enabled=false) instead."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The task to delete (from list_scheduled_tasks)."},
+                },
+                "required": ["task_id"],
+            },
+        })
+        tools.append({
+            "name": "create_artefact",
+            "description": (
+                "Create a live ARTEFACT — a saved, re-openable HTML view (a 'canvas') bound to a "
+                "data source, that shows up in the Artefacts tab. Unlike create_file (a one-off "
+                "download), an artefact RE-FETCHES its source and re-renders every time it's opened, "
+                "so it always reflects the CURRENT data. Use this when the user wants a living "
+                "dashboard/table/report from one of their documents — e.g. 'make a live view of this "
+                "budget sheet', 'pin this doc as an artefact', 'keep this Drive report handy'. "
+                "Pick `source_type`: 'sheets' (a Google Sheet — give `spreadsheet_id` and an A1 "
+                "`range` like 'Sheet1!A1:F200'), 'drive' (a Drive file — give `file_id`), 'docs' (a "
+                "Google Doc — give `document_id`), or 'reviews' (wrap the review-intelligence report "
+                "for a `date`). Get the id from a prior maton_request/drive_read_file listing. "
+                "`render`: 'dashboard' (RICH — KPI cards + live charts drawn from the sheet; prefer "
+                "this for anything numeric/financial so the user gets graphs, not just a grid), "
+                "'table' (default for sheets — first row treated as a header), 'kv' (key/value from a "
+                "2-column sheet), or 'raw' (a doc's text or a Drive file embed). "
+                "For render='dashboard' you may add `kpis` (headline stat cards) and `charts` (bar / "
+                "doughnut / line), plus `table:true` to append the full table and `description` for an "
+                "intro line. Charts aggregate LIVE sheet columns — reference columns by their header "
+                "name. A chart = {type:'bar'|'doughnut'|'line', title, group_by:<column to group by>, "
+                "value:<numeric column to sum>, agg:'sum'|'count'|'avg'|'max'|'min', bucket:'month' "
+                "(only for a date group_by → monthly trend), limit:<top N>}. A kpi = {label, "
+                "column:<numeric column>, agg:'sum'|'avg'|'max'|'min'|'count'}. Charts only reflect "
+                "columns that EXIST in the sheet, so if you want e.g. spend-by-category, make sure the "
+                "sheet has a Category column. "
+                "`business` scopes it (afk/gak/gif/gakc/nh/per) and defaults to the conversation's "
+                "current business — the source is read with that business's connection every time it "
+                "opens, so it must be the business that owns the document. After creating, share the "
+                "returned `url` so the user can open the artefact; if `warning` is set, the source "
+                "couldn't be read yet — tell the user."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short display name for the artefact."},
+                    "source_type": {"type": "string", "enum": ["sheets", "drive", "docs", "reviews"]},
+                    "spreadsheet_id": {"type": "string", "description": "For source_type=sheets: the Google Sheet id."},
+                    "range": {"type": "string", "description": "For source_type=sheets: an A1 range, e.g. 'Sheet1!A1:F200'. Defaults to A1:Z1000."},
+                    "file_id": {"type": "string", "description": "For source_type=drive: the Drive file id."},
+                    "document_id": {"type": "string", "description": "For source_type=docs: the Google Doc id."},
+                    "date": {"type": "string", "description": "For source_type=reviews: the report date 'YYYY-MM-DD'."},
+                    "render": {"type": "string", "enum": ["dashboard", "table", "kv", "raw"], "description": "How to render the data. 'dashboard' gives KPI cards + charts. Defaults to table for sheets."},
+                    "columns": {"type": "array", "items": {"type": "string"}, "description": "Optional: for a table, only show these columns (by header name)."},
+                    "description": {"type": "string", "description": "For render=dashboard: an intro line shown under the heading."},
+                    "kpis": {
+                        "type": "array",
+                        "description": "For render=dashboard: headline stat cards.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "column": {"type": "string", "description": "Numeric column to aggregate (omit for agg=count)."},
+                                "agg": {"type": "string", "enum": ["sum", "avg", "max", "min", "count"]},
+                            },
+                            "required": ["label"],
+                        },
+                    },
+                    "charts": {
+                        "type": "array",
+                        "description": "For render=dashboard: charts drawn from live sheet columns.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "enum": ["bar", "doughnut", "line"]},
+                                "title": {"type": "string"},
+                                "group_by": {"type": "string", "description": "Column to group rows by (a date column with bucket='month' for a trend)."},
+                                "value": {"type": "string", "description": "Numeric column to aggregate (omit for agg=count)."},
+                                "agg": {"type": "string", "enum": ["sum", "count", "avg", "max", "min"]},
+                                "bucket": {"type": "string", "enum": ["month"], "description": "Only for a date group_by → monthly buckets."},
+                                "limit": {"type": "integer", "description": "Keep only the top N groups (by value)."},
+                            },
+                            "required": ["type", "group_by"],
+                        },
+                    },
+                    "table": {"type": "boolean", "description": "For render=dashboard: also append the full data table."},
+                    "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per (the business whose connection owns the source)."},
+                },
+                "required": ["title", "source_type"],
+            },
+        })
+
+        tools.append({
+            "name": "set_guardrail",
+            "description": (
+                "Turn a safety guardrail on or off — ONLY when the user explicitly asks (e.g. "
+                "'stop asking me to confirm before sending', 'don't ask for approval on emails "
+                "anymore', 're-enable confirmations', or 'turn off business data isolation'). "
+                "Guardrails:\n"
+                "- 'confirm_writes': when on, Hermes pauses for the user's confirmation before any "
+                "external send/write (email, WhatsApp, Zoom invite, Jira, mutating maton_request); "
+                "when off, those run without asking.\n"
+                "- 'business_isolation': when on, knowledge retrieved from the vector store is "
+                "verified to belong to the business in scope and cross-business results are dropped; "
+                "when off, results are trusted by namespace only. (This protects against data leaks "
+                "— only disable it if the user clearly asks.)\n"
+                "- 'secret_egress': when on, any send or external write containing an API key, "
+                "access token, private key or card number is refused.\n"
+                "- 'send_limit': when on, at most a fixed number of sends/deletes run per turn.\n"
+                "`enabled`=false turns the guardrail off, true turns it on. `business` optionally "
+                "scopes the change to one entity (afk | gak | gif | gakc | nh | per); omit it to "
+                "change the global default. Never call this on your own initiative — only on the "
+                "user's clear instruction — and afterwards tell them exactly what you changed."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "guardrail": {"type": "string", "enum": sorted(guardrails._GUARDRAIL_KEYS)},
+                    "enabled": {"type": "boolean", "description": "false = turn the guardrail off; true = turn it on."},
+                    "business": {"type": "string", "description": "afk | gak | gif | gakc | nh | per — omit for the global default."},
+                },
+                "required": ["guardrail", "enabled"],
+            },
+        })
+
+    # Guardrail #1 plumbing: give tools the generic gate can hold a place to echo
+    # the approval_token back on the confirming re-call. Optional and ignored on
+    # the first call. email_with_attachment self-gates through its own draft, so
+    # its field describes the draft token instead. See hermes.guardrails.
+    for _t in tools:
+        if _t.get("name") in guardrails.APPROVAL_TOKEN_TOOLS:
+            _t["input_schema"]["properties"]["approval_token"] = {
+                "type": "string",
+                "description": (
+                    "Leave unset on the first call. If a prior call returned "
+                    "status='awaiting_confirmation', re-call with the SAME arguments plus the "
+                    "exact approval_token it gave you to proceed. Never invent one."
+                ),
+            }
+        elif _t.get("name") in guardrails.DRAFT_TOKEN_TOOLS:
+            _t["input_schema"]["properties"]["approval_token"] = {
+                "type": "string",
+                "description": (
+                    "Only with confirm=true: the approval_token returned by the prepare call "
+                    "together with draft_id. Sending needs it, and the user's approval of the "
+                    "preview on a later message. Never invent one."
+                ),
+            }
+
+    if restricted:
+        tools = _restrict_tools(tools, allowed_set)
+
+    if autonomy in _NO_WRITE_AUTONOMY:
+        tools = _restrict_writes(tools, autonomy)
+
+    if autonomy is not None:
+        # Any unattended run, FULL autonomy included (B13). Mirrored at dispatch
+        # by write_blocked_reason.
+        tools = [t for t in tools if t.get("name") not in _INTERACTIVE_ONLY_TOOLS]
+
+    return tools
+
+
+# Which connected app(s) each app-gated dedicated tool needs. A tool survives an
+# `allowed_apps` restriction only if one of its apps is allowed. Tools NOT listed
+# here are app-agnostic (search_business_knowledge, create_file, worldbank_data,
+# maton_request/maton_list_connections/maton_create_connection) and always kept —
+# maton_request is already narrowed by its app enum above.
+_TOOL_REQUIRED_APPS: dict[str, set[str]] = {
+    "drive_read_file": {"google-drive"},
+    "send_email": {"google-mail"},
+    # Gated on Gmail; the >25MB Drive fallback is best-effort and only kicks in
+    # for oversized files, so it doesn't gate the tool's availability.
+    "email_with_attachment": {"google-mail"},
+    "zoom_send_invite": {"zoom", "zoom-admin"},
+    "zoom_list_meetings": {"zoom", "zoom-admin"},
+    "calendar_list_upcoming": {"google-calendar"},
+    "jira_search_issues": {"jira"},
+    "jira_get_issue": {"jira"},
+    "jira_create_issue": {"jira"},
+    "jira_assign_issue": {"jira"},
+    "web_search": {"web"},
+    "web_fetch": {"web"},
+    "wati_list_contacts": {"wati"},
+    "wati_add_contact": {"wati"},
+    "wati_update_contact_attributes": {"wati"},
+    "wati_get_messages": {"wati"},
+    "wati_send_message": {"wati"},
+    "wati_send_file": {"wati"},
+    "wati_assign_operator": {"wati"},
+    "wati_get_media": {"wati"},
+}
+
+
+def _restrict_tools(
+    tools: list[dict[str, Any]], allowed_set: set[str]
+) -> list[dict[str, Any]]:
+    """Drop app-gated tools whose app isn't in `allowed_set` (for Scheduled
+    Tasks). App-agnostic tools are always kept."""
+    out = []
+    for tool in tools:
+        needed = _TOOL_REQUIRED_APPS.get(tool.get("name"))
+        if needed and not (needed & allowed_set):
+            continue
+        out.append(tool)
+    return out
+
+
+WATI_TOOLS = {
+    "wati_list_contacts",
+    "wati_add_contact",
+    "wati_update_contact_attributes",
+    "wati_get_messages",
+    "wati_send_message",
+    "wati_send_file",
+    "wati_assign_operator",
+    "wati_get_media",
+}
+
+# Names that Hermes executes locally (everything else is server-side).
+LOCAL_TOOLS = {
+    "maton_request", "maton_list_connections", "maton_create_connection",
+    "drive_read_file", "read_document", "send_email", "email_with_attachment",
+    "zoom_send_invite", "search_business_knowledge",
+    "create_file", "worldbank_data", "calendar_list_upcoming", "zoom_list_meetings",
+    "jira_search_issues", "jira_get_issue", "jira_create_issue", "jira_assign_issue",
+    "create_scheduled_task", "list_scheduled_tasks",
+    "update_scheduled_task", "delete_scheduled_task",
+    "set_guardrail",
+    "create_artefact",
+    *WATI_TOOLS,
+}
+
+# Drive mime types we can hand to Claude as a native document/image block, and
+# the magic bytes that confirm Maton actually proxied real binary content and
+# not a JSON error body pretending to be a file (mirrors ingestion-service's
+# ingestion/connectors/drive.py, which proved this download path works).
+_DRIVE_READABLE_MIMES = {"application/pdf", "image/jpeg", "image/jpg", "image/png"}
+_DRIVE_MAGIC = {
+    "application/pdf": (b"%PDF",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/jpg": (b"\xff\xd8\xff",),
+    "image/png": (b"\x89PNG",),
+}
+
+
+def _resolve_client(tool_input: dict[str, Any], active_business: str | None) -> MatonClient:
+    """Pick the right Maton key for this tool call.
+
+    Priority: an explicit `business` argument on the tool call (only meaningful
+    in "all businesses" mode) > the turn's locked active_business > the plain
+    default key (legacy behavior for callers with no business context at all).
+
+    Raises MatonError with a message meant to be relayed to the user when the
+    resolved business has no configured key — never silently substitutes
+    another business's key.
+    """
+    slug = tool_input.get("business") or None
+    if (
+        slug and active_business and active_business != ALL_BUSINESSES
+        and str(slug).strip().lower() != str(active_business).strip().lower()
+    ):
+        # A conversation locked to one business never offers a `business`
+        # argument, so one arriving here came from a confused model or a prompt
+        # injection. Honouring it used a DIFFERENT business's account from a
+        # locked chat — and skipped that business's own guardrail setting.
+        raise MatonError(
+            f"This conversation is locked to '{active_business}'; it can't act on "
+            f"'{slug}'. Ask the user to switch business if they meant that."
+        )
+    if not slug:
+        if active_business == ALL_BUSINESSES:
+            raise MatonError(
+                "No business specified. In 'All Businesses' mode you must pass a "
+                "`business` argument on every Maton tool call."
+            )
+        if active_business:
+            slug = active_business
+        else:
+            return MatonClient()  # no business context at all — legacy default key
+
+    key = Config.maton_key_for_slug(slug)
+    if not key:
+        raise MatonError(
+            f"'{slug}' has no Maton connection configured yet. Tell the user this "
+            "business isn't connected — do not substitute another business's account "
+            "or data."
+        )
+    return MatonClient(api_key=key)
+
+
+def _attachment_scope(tool_input: dict[str, Any], active_business: str | None) -> str | None:
+    """The entity_id an attachment was stored under, using the same business-slug
+    resolution precedence as `_resolve_client` (without the Maton-key checks)."""
+    slug = tool_input.get("business") or None
+    if slug:
+        return slug
+    return active_business if active_business != ALL_BUSINESSES else None
+
+
+def _calendar_list_upcoming(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Upcoming Google Calendar events for one business, via hermes.calendar
+    (which already owns the Maton app slug / date-range / response-shaping
+    boilerplate). No MatonClient here — just the same business-slug resolution
+    precedence as _resolve_client, translated into the {status, ok, data}
+    envelope every other tool result uses."""
+    slug = tool_input.get("business") or None
+    if not slug:
+        if active_business == ALL_BUSINESSES:
+            raise MatonError(
+                "No business specified. In 'All Businesses' mode you must pass a "
+                "`business` argument on every Maton tool call."
+            )
+        if not active_business:
+            raise MatonError(
+                "No business specified — calendar events are scoped per business."
+            )
+        slug = active_business
+
+    try:
+        events = hermes_calendar.list_upcoming(
+            slug,
+            days=tool_input.get("days") or 14,
+            max_results=tool_input.get("max_results") or 20,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise MatonError(str(exc)) from exc
+
+    return {"status": 200, "ok": True, "data": {"business": slug, "events": events}}
+
+
+def _search_business_knowledge(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Meaning-search one business's knowledge base. Federates across BOTH the
+    hand-added Context-tab files (pgvector) and the autopilot-ingested corpus of
+    emails/Drive files/meeting notes (Pinecone) via hermes.rag — no Maton client
+    needed, so this doesn't go through `_resolve_client`. document_id/chunk_id are
+    surfaced so the model can cite a specific source."""
+    from .rag import federated_search  # local import: avoid a module-load cycle
+
+    slug = tool_input.get("business") or None
+    if not slug:
+        if active_business == ALL_BUSINESSES:
+            raise MatonError(
+                "No business specified. In 'All Businesses' mode you must pass a "
+                "`business` argument naming which business's knowledge base to search."
+            )
+        slug = active_business
+    if not slug:
+        raise MatonError("No business is scoped for this conversation — nothing to search.")
+
+    entity_slug = to_entity_slug(slug)
+    if not entity_slug:
+        raise MatonError(f"Unknown business: {slug!r}.")
+
+    query = (tool_input.get("query") or "").strip()
+    if not query:
+        raise MatonError("`query` is required.")
+
+    try:
+        hits = federated_search(entity_slug, query, max_sensitivity="confidential")
+    except ValueError as exc:
+        raise MatonError(str(exc)) from exc
+
+    if not hits:
+        return {"ok": True, "results": [], "message": "No matching context found in this business's knowledge base."}
+    return {
+        "ok": True,
+        "results": [
+            {
+                "title": h.get("title") or "untitled",
+                "source_system": h.get("source_system"),
+                "snippet": (h.get("snippet") or "").strip()[:500],
+                "score": h.get("score"),
+                "document_id": h.get("document_id"),
+                "chunk_id": h.get("chunk_id"),
+            }
+            for h in hits
+        ],
+    }
+
+
+# Fallback presigned lifetime for create_file, used only when a permanent app
+# link can't be built (no PUBLIC_BASE_URL, or the DB index write failed). Much
+# longer than the 900s used for internal search-result previews, since the user
+# is meant to actually click this one.
+_CREATED_FILE_LINK_EXPIRES = 24 * 60 * 60
+
+
+def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Write model-authored text content to S3 and return a download link. No
+    Maton client involved — pure storage.py, same as _search_business_knowledge."""
+    if not storage.enabled():
+        raise MatonError(
+            "File creation isn't available — S3_BUCKET isn't configured. Tell the user "
+            "to set S3_BUCKET (and AWS credentials) before this tool can be used."
+        )
+
+    filename = (tool_input.get("filename") or "").strip()
+    if not filename:
+        raise MatonError("`filename` is required.")
+    content = tool_input.get("content")
+    if not content:
+        raise MatonError("`content` is required.")
+
+    # .pdf/.docx/.xlsx are rendered into real office files; anything else is
+    # written as UTF-8 text (a .pdf filename with plain text bytes isn't a valid
+    # PDF and won't open). Shared with email_with_attachment via documents.py.
+    try:
+        raw, content_type = documents.generate_document(
+            filename, content, tool_input.get("content_type")
+        )
+    except Exception as exc:  # noqa: BLE001 — surface as a clean tool error
+        raise MatonError(f"Could not render this content as {filename!r}: {exc}") from exc
+
+    scope = _attachment_scope(tool_input, active_business) or "general"
+    key = f"generated/{scope}/{uuid.uuid4().hex}/{filename}"
+
+    s3_uri = storage.put(key, raw, content_type)
+
+    # Index it first: the row's file_id is what makes a permanent download link
+    # possible. Best-effort — never fail file creation on it.
+    business_slug = scope if scope != "general" else None
+    file_id: str | None = None
+    try:
+        from .db import generated_files as gen_files_db
+        file_id = gen_files_db.record_file(
+            entity_slug=to_entity_slug(business_slug) if business_slug else None,
+            business_slug=business_slug, filename=filename, content_type=content_type,
+            s3_uri=s3_uri, size_bytes=len(raw),
+        )
+    except Exception as exc:  # noqa: BLE001 — indexing is non-critical
+        log.warning("Could not index generated file %s: %s", filename, exc)
+
+    # Link preference, best first. A 500-char signed URL is routinely shortened by
+    # the model into an unsigned, permanently-403 one, so short + stable wins:
+    #   1. public S3 URL   — permanent, no auth, shareable with anyone
+    #   2. app route       — permanent (re-presigns per hit), but behind whatever
+    #                        gates the app itself (e.g. Vercel SSO)
+    #   3. presigned URL   — 24h, last resort
+    download_url = storage.public_url(s3_uri)
+    public = bool(download_url)
+    permanent = public
+    if not download_url and file_id and Config.PUBLIC_BASE_URL:
+        download_url = f"{Config.PUBLIC_BASE_URL}/api/generated-files/{file_id}/download"
+        permanent = True
+    if not download_url:
+        download_url = storage.presign(s3_uri, expires=_CREATED_FILE_LINK_EXPIRES)
+    if not download_url:
+        raise MatonError("File was written but a download link could not be generated.")
+
+    out = {
+        "ok": True,
+        "filename": filename,
+        "content_type": content_type,
+        "size_bytes": len(raw),
+        "business": business_slug,
+        "download_url": download_url,
+        # s3_uri lets you read this file back later with `read_document` (e.g. to
+        # quote or re-check what you generated); share download_url with the user.
+        "s3_uri": s3_uri,
+    }
+    if permanent:
+        out["link_expires"] = False
+        # Anyone with the URL can open it — no login. Surfaced so you can warn the
+        # user before they forward a link to a document that shouldn't travel.
+        out["public_link"] = public
+    else:
+        out["expires_in_hours"] = _CREATED_FILE_LINK_EXPIRES // 3600
+    return out
+
+
+# Max bytes to pull back from S3 for reading, and max extracted chars to hand
+# the model (keeps a single huge scan from blowing the context window).
+_MAX_READ_BYTES = _MAX_FETCH_BYTES
+_MAX_EXTRACTED_CHARS = 40_000
+
+
+def _read_scope_ok(
+    s3_uri: str, active_business: str | None, requested_business: str | None
+) -> tuple[bool, str]:
+    """Enforce entity-prefix scoping on an S3 read. Returns (ok, reason).
+
+    The key must belong to the business this turn is scoped to, so one business's
+    conversation can never read another's files. In "All Businesses" mode with no
+    explicit `business`, the target business is derived from the key itself and
+    only needs to be a known business.
+    """
+    key = storage.key_of(s3_uri)
+    if not key:
+        return False, "That isn't a valid file URI in the configured storage bucket."
+    if any(seg in ("", "..", ".") for seg in key.split("/")):
+        return False, "That file path isn't allowed."
+
+    key_biz = _key_business(key)
+    if not key_biz:
+        return False, "That file isn't in a readable per-business location."
+
+    allowed = requested_business or (
+        active_business if active_business != ALL_BUSINESSES else None
+    )
+    if allowed and key_biz != allowed:
+        return (
+            False,
+            f"That file belongs to a different business ('{key_biz}') than this "
+            f"conversation ('{allowed}'). I can't read another business's files.",
+        )
+    return True, ""
+
+
+def _read_document(
+    tool_input: dict[str, Any], active_business: str | None
+) -> dict[str, Any]:
+    """Fetch a stored file by its s3_uri, extract its text, and return it so the
+    model can read the document directly — scoped to the active business."""
+    if not storage.enabled():
+        return {
+            "status": 400, "ok": False,
+            "data": {"error": "File storage (S3) isn't configured, so documents can't be read back."},
+        }
+    s3_uri = (tool_input.get("s3_uri") or "").strip()
+    if not s3_uri:
+        return {"status": 400, "ok": False,
+                "data": {"error": "Provide the `s3_uri` of the file to read."}}
+
+    ok, reason = _read_scope_ok(s3_uri, active_business, tool_input.get("business"))
+    if not ok:
+        return {"status": 403, "ok": False, "data": {"error": reason}}
+
+    filename = (storage.key_of(s3_uri) or "file").rsplit("/", 1)[-1]
+    try:
+        raw, mime = storage.get_bytes(s3_uri, max_bytes=_MAX_READ_BYTES)
+    except Exception as exc:  # noqa: BLE001 — surface a readable error to the model
+        return {"status": 404, "ok": False,
+                "data": {"error": f"Couldn't fetch the file: {exc}"}}
+
+    try:
+        text = extract.extract_text(filename, raw, mime or "")
+    except extract.ExtractionError as exc:
+        return {"status": 422, "ok": False, "data": {"error": str(exc)}}
+
+    truncated = len(text) > _MAX_EXTRACTED_CHARS
+    if truncated:
+        text = text[:_MAX_EXTRACTED_CHARS]
+    return {
+        "status": 200, "ok": True,
+        "data": {
+            "filename": filename,
+            "content_type": mime,
+            "truncated": truncated,
+            "text": text,
+        },
+    }
+
+
+def _fetch_url_bytes(url: str) -> tuple[bytes, str, str]:
+    """Download a file from an http(s) URL to forward as a WATI session file."""
+    if urlsplit(url).scheme not in ("http", "https"):
+        raise MatonError("file_url must be an http(s) URL.")
+    try:
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise MatonError(f"Failed to download file_url: {exc}") from exc
+    if len(resp.content) > _MAX_FETCH_BYTES:
+        raise MatonError(f"file_url content exceeds the {_MAX_FETCH_BYTES // (1024 * 1024)}MB limit.")
+    media_type = resp.headers.get("Content-Type", "application/octet-stream").split(";")[0].strip()
+    filename = urlsplit(url).path.rsplit("/", 1)[-1] or "file"
+    return resp.content, media_type, filename
+
+
+def _wati_send_file_args(
+    tool_input: dict[str, Any], active_business: str | None
+) -> tuple[str, str, bytes]:
+    """Resolve (filename, media_type, raw_bytes) for wati_send_file from either
+    an `attachment_id` (a file already uploaded to this chat) or a `file_url`."""
+    attachment_id = tool_input.get("attachment_id")
+    file_url = tool_input.get("file_url")
+    if attachment_id:
+        scope = _attachment_scope(tool_input, active_business)
+        meta = attachment_store.meta(attachment_id, scope)
+        block = attachment_store.block(attachment_id, scope)
+        if not meta or not block:
+            raise MatonError(f"Unknown or inaccessible attachment_id: {attachment_id}")
+        source = block.get("source") or {}
+        if source.get("type") != "base64":
+            raise MatonError(
+                "This attachment kept no original file bytes (only its extracted text "
+                "was stored) — re-upload the file, or pass `file_url` instead."
+            )
+        raw_bytes = base64.standard_b64decode(source["data"])
+        media_type = source.get("media_type") or "application/octet-stream"
+        filename = meta.get("filename") or "file"
+        return filename, media_type, raw_bytes
+    if file_url:
+        raw_bytes, media_type, filename = _fetch_url_bytes(file_url)
+        return filename, media_type, raw_bytes
+    raise MatonError("Provide either `attachment_id` or `file_url`.")
+
+
+def drive_fetch(client: MatonClient, file_id: str) -> dict[str, Any]:
+    """Fetch a Drive file's metadata and — for PDF/JPEG/PNG — its real bytes,
+    through Maton. Shared by `_drive_read_file` (the chat tool) and
+    `hermes/artefacts.py` (the live canvas) so the metadata + magic-byte + size
+    checks live in exactly one place.
+
+    Returns a dict:
+      {ok, readable, name, mime, web_link, raw, size_bytes, note, resp}
+    `ok` is False only when the Drive *metadata* call itself failed (`resp`
+    carries the Maton envelope to return verbatim). When `ok` but `readable` is
+    False, `note` explains why and `raw` is None (the caller should surface
+    `web_link`). When `readable`, `raw` holds the verified bytes."""
+    meta_resp = client.request(
+        "google-drive", "GET", f"drive/v3/files/{file_id}",
+        query={"fields": "id,name,mimeType,webViewLink"},
+    )
+    if not meta_resp.get("ok"):
+        return {
+            "ok": False, "readable": False, "name": None, "mime": None,
+            "web_link": None, "raw": None, "size_bytes": 0, "note": None,
+            "resp": meta_resp,
+        }
+
+    meta = meta_resp.get("data") or {}
+    name = meta.get("name", "untitled")
+    mime = (meta.get("mimeType") or "").lower()
+    web_link = meta.get("webViewLink")
+
+    def _out(readable: bool, raw: bytes | None, note: str | None) -> dict[str, Any]:
+        return {
+            "ok": True, "readable": readable, "name": name, "mime": mime,
+            "web_link": web_link, "raw": raw,
+            "size_bytes": len(raw) if raw else 0, "note": note, "resp": meta_resp,
+        }
+
+    if mime not in _DRIVE_READABLE_MIMES:
+        return _out(False, None, "Not a PDF/JPEG/PNG — share the webViewLink with the user instead.")
+
+    dl = client.download_binary(
+        "google-drive", "GET", f"drive/v3/files/{file_id}", query={"alt": "media"},
+    )
+    raw = dl.get("raw") or b""
+    magic_ok = any(raw[: len(m)] == m for m in _DRIVE_MAGIC.get(mime, ()))
+    if not dl.get("ok") or not magic_ok:
+        return _out(False, None, "Couldn't fetch readable binary content for this file — share the webViewLink with the user instead.")
+    if len(raw) > _MAX_FETCH_BYTES:
+        return _out(
+            False, None,
+            f"File exceeds the {_MAX_FETCH_BYTES // (1024 * 1024)}MB limit for inline "
+            "reading — share the webViewLink with the user instead.",
+        )
+    return _out(True, raw, None)
+
+
+def _drive_read_file(
+    client: MatonClient, tool_input: dict[str, Any], active_business: str | None
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]] | None]:
+    """Download a Drive file's real bytes through Maton and hand them back as a
+    native document/image content block so Claude can read the file directly —
+    no OCR step needed. Falls back to metadata + webViewLink when the type
+    isn't PDF/JPEG/PNG, or the gateway can't proxy real binary content for it."""
+    file_id = tool_input["file_id"]
+
+    f = drive_fetch(client, file_id)
+    if not f["ok"]:
+        return f["resp"], None, None
+
+    name = f["name"]
+    mime = f["mime"]
+    web_link = f["web_link"]
+
+    def _locator(note: str) -> dict[str, Any]:
+        return {
+            "status": 200,
+            "ok": True,
+            "data": {
+                "readable": False, "name": name, "mimeType": mime,
+                "webViewLink": web_link, "note": note,
+            },
+        }
+
+    if not f["readable"]:
+        return _locator(f["note"]), None, None
+
+    raw: bytes = f["raw"]
+    b64 = base64.standard_b64encode(raw).decode("utf-8")
+    block_type = "document" if mime == "application/pdf" else "image"
+    block: dict[str, Any] = {
+        "type": block_type,
+        "source": {"type": "base64", "media_type": mime, "data": b64},
+    }
+    if block_type == "document":
+        block["title"] = name
+
+    media: dict[str, Any] | None = None
+    if storage.enabled():
+        scope = _attachment_scope(tool_input, active_business) or "unsorted"
+        ext = f".{name.rsplit('.', 1)[-1]}" if "." in name else ""
+        key = f"drive-files/{scope}/{uuid.uuid4().hex}{ext}"
+        s3_uri = storage.put(key, raw, mime)
+        media = {
+            "kind": "file", "s3_uri": s3_uri, "content_type": mime,
+            "filename": name, "size_bytes": len(raw),
+        }
+
+    result = {
+        "status": 200,
+        "ok": True,
+        "data": {
+            "readable": True, "name": name, "mimeType": mime,
+            "webViewLink": web_link, "size_bytes": len(raw),
+        },
+    }
+    return result, media, [block]
+
+
+def _build_mime_raw(
+    *, to: list[str], subject: str, body: str, cc: list[str] | None = None
+) -> str:
+    """Build an RFC 2822 message and base64url-encode it for Gmail's `raw`
+    field, using Python's email module so UTF-8 headers/body are always
+    encoded correctly (RFC 2047 for headers) — no hand-rolled byte/base64
+    arithmetic for the model to get wrong."""
+    msg = EmailMessage()
+    msg["To"] = ", ".join(to)
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    msg["Subject"] = subject
+    msg.set_content(body)
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+
+
+def _send_email(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    to = tool_input["to"]
+    to = to if isinstance(to, list) else [to]
+    cc = tool_input.get("cc")
+    if isinstance(cc, str):
+        cc = [cc]
+    raw = _build_mime_raw(to=to, subject=tool_input["subject"], body=tool_input["body"], cc=cc)
+    return client.request(
+        "google-mail", "POST", "/gmail/v1/users/me/messages/send", body={"raw": raw}
+    )
+
+
+def _zoom_send_invite(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    """Fetch the meeting straight from Zoom and build the invite email in code,
+    so the join URL is copied verbatim from the API response — never retyped
+    by the model — and always CC the user's own email."""
+    zoom_app = tool_input.get("zoom_app") or "zoom"
+    meeting_id = tool_input["meeting_id"]
+    meeting = client.request(zoom_app, "GET", f"/v2/meetings/{meeting_id}")
+    if not meeting.get("ok"):
+        return meeting
+
+    m = meeting.get("data") or {}
+    topic = m.get("topic") or "Zoom Meeting"
+    join_url = m.get("join_url") or ""
+    start_time = m.get("start_time")
+    duration = m.get("duration")
+    timezone = m.get("timezone") or "UTC"
+
+    to = tool_input["to"]
+    to = to if isinstance(to, list) else [to]
+
+    own_email: str | None = None
+    profile = client.request("google-mail", "GET", "/gmail/v1/users/me/profile")
+    if profile.get("ok"):
+        own_email = (profile.get("data") or {}).get("emailAddress")
+
+    lines = [f"You're invited to: {topic}", ""]
+    if start_time:
+        lines.append(f"When: {start_time} ({timezone})")
+    if duration:
+        lines.append(f"Duration: {duration} minutes")
+    note = tool_input.get("note")
+    if note:
+        lines += ["", note]
+    lines += ["", f"Join Zoom Meeting: {join_url}"]
+
+    raw = _build_mime_raw(
+        to=to,
+        cc=[own_email] if own_email and own_email not in to else None,
+        subject=f"Zoom Invite: {topic}",
+        body="\n".join(lines),
+    )
+    result = client.request(
+        "google-mail", "POST", "/gmail/v1/users/me/messages/send", body={"raw": raw}
+    )
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    return {**result, "data": {**data, "sent_to": to, "cc": own_email, "join_url": join_url}}
+
+
+def _zoom_list_meetings(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    """List Zoom meetings, shaped into a clean flat list (not Zoom's raw
+    paginated envelope) so it reads consistently alongside
+    calendar_list_upcoming's already-shaped output."""
+    zoom_app = tool_input.get("zoom_app") or "zoom"
+    meeting_type = tool_input.get("type") or "upcoming"
+    result = client.request(zoom_app, "GET", "/v2/users/me/meetings", query={"type": meeting_type})
+    if not result.get("ok"):
+        return result
+
+    raw_meetings = (result.get("data") or {}).get("meetings") or []
+    meetings = [
+        {
+            "meeting_id": m.get("id"),
+            "topic": m.get("topic"),
+            "start_time": m.get("start_time"),
+            "duration": m.get("duration"),
+            "timezone": m.get("timezone"),
+            "join_url": m.get("join_url"),
+            "type": m.get("type"),
+        }
+        for m in raw_meetings
+    ]
+    return {**result, "data": {"meetings": meetings}}
+
+
+def _jira_cloud_id(client: MatonClient) -> str:
+    """Resolve the Jira Cloud id for this connection. Every Jira REST call needs
+    it in the path (`/ex/jira/{cloudId}/rest/api/3/...`) — unlike QuickBooks'
+    `:realmId`, Maton does not auto-substitute this one."""
+    resp = client.request("jira", "GET", "/oauth/token/accessible-resources")
+    if not resp.get("ok"):
+        raise MatonError("Could not resolve the Jira site (accessible-resources call failed).")
+    resources = resp.get("data") or []
+    if not resources:
+        raise MatonError("No accessible Jira site found for this connection.")
+    return resources[0]["id"]
+
+
+def _jira_find_account_id(client: MatonClient, cloud_id: str, query: str) -> str:
+    """Resolve a Jira accountId from an email or display name via user search —
+    Jira's assignee field takes an accountId, never a raw email."""
+    resp = client.request(
+        "jira", "GET", f"/ex/jira/{cloud_id}/rest/api/3/user/search", query={"query": query}
+    )
+    if not resp.get("ok"):
+        raise MatonError(f"Jira user search failed for '{query}'.")
+    users = resp.get("data") or []
+    if not users:
+        raise MatonError(f"No Jira user found matching '{query}'.")
+    return users[0]["accountId"]
+
+
+def _jira_search_issues(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    cloud_id = _jira_cloud_id(client)
+    jql = (tool_input.get("jql") or "").strip()
+    if not jql:
+        clauses = []
+        project = tool_input.get("project")
+        if project:
+            clauses.append(f"project = {project}")
+        status = tool_input.get("status")
+        if status:
+            clauses.append(f'status = "{status}"')
+        assignee_email = tool_input.get("assignee_email")
+        if assignee_email:
+            account_id = _jira_find_account_id(client, cloud_id, assignee_email)
+            clauses.append(f'assignee = "{account_id}"')
+        if not clauses:
+            raise MatonError(
+                "Provide `jql`, or at least one of project/status/assignee_email to filter."
+            )
+        jql = " AND ".join(clauses) + " ORDER BY created DESC"
+
+    fields = tool_input.get("fields") or ["summary", "status", "assignee", "priority", "created", "updated"]
+    return client.request(
+        "jira", "GET", f"/ex/jira/{cloud_id}/rest/api/3/search/jql",
+        query={
+            "jql": jql,
+            "maxResults": tool_input.get("max_results") or 20,
+            "fields": ",".join(fields),
+        },
+    )
+
+
+def _jira_get_issue(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    cloud_id = _jira_cloud_id(client)
+    issue_key = tool_input["issue_key"]
+    query = {"fields": ",".join(tool_input["fields"])} if tool_input.get("fields") else None
+    return client.request("jira", "GET", f"/ex/jira/{cloud_id}/rest/api/3/issue/{issue_key}", query=query)
+
+
+def _jira_create_issue(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    cloud_id = _jira_cloud_id(client)
+    fields: dict[str, Any] = {
+        "project": {"key": tool_input["project_key"]},
+        "summary": tool_input["summary"],
+        "issuetype": {"name": tool_input.get("issue_type") or "Task"},
+    }
+    description = tool_input.get("description")
+    if description:
+        fields["description"] = {
+            "type": "doc", "version": 1,
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": description}]}],
+        }
+    priority = tool_input.get("priority")
+    if priority:
+        fields["priority"] = {"name": priority}
+    labels = tool_input.get("labels")
+    if labels:
+        fields["labels"] = labels
+    assignee_email = tool_input.get("assignee_email")
+    if assignee_email:
+        fields["assignee"] = {"accountId": _jira_find_account_id(client, cloud_id, assignee_email)}
+
+    return client.request("jira", "POST", f"/ex/jira/{cloud_id}/rest/api/3/issue", body={"fields": fields})
+
+
+def _jira_assign_issue(client: MatonClient, tool_input: dict[str, Any]) -> dict[str, Any]:
+    cloud_id = _jira_cloud_id(client)
+    issue_key = tool_input["issue_key"]
+    assignee_email = (tool_input.get("assignee_email") or "").strip()
+    account_id = (
+        None if assignee_email.lower() == "unassigned"
+        else _jira_find_account_id(client, cloud_id, assignee_email)
+    )
+
+    result = client.request(
+        "jira", "PUT", f"/ex/jira/{cloud_id}/rest/api/3/issue/{issue_key}/assignee",
+        body={"accountId": account_id},
+    )
+    if result.get("ok") and not result.get("data"):
+        # Jira returns 204 No Content on success — give the model something readable.
+        result = {**result, "data": {"issue_key": issue_key, "assigned_to": assignee_email or "unassigned"}}
+    return result
+
+
+def _wati_get_media(
+    client: MatonClient, tool_input: dict[str, Any], active_business: str | None
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Download WATI media. When S3 is configured, persist it under the
+    conversation's business (`wati-media/{business}/...`) so it survives past
+    this tool result and can be rendered inline in the chat UI; the caller
+    folds the returned `media` dict into the tool call's trace entry, which
+    flows into the conversation transcript. Falls back to inlining a capped
+    base64 preview when S3_BUCKET isn't configured.
+    """
+    wati = WatiClient(client)
+    file_name = tool_input["file_name"]
+    dl = wati.download_media(file_name)
+
+    if not dl.get("ok"):
+        raw = dl.get("raw") or b""
+        content_type = dl.get("content_type") or ""
+        text = raw.decode("utf-8", errors="replace")
+        body: Any = text
+        if "json" in content_type:
+            try:
+                body = json.loads(text)
+            except ValueError:
+                pass
+        return {"status": dl.get("status"), "ok": False, "data": body}, None
+
+    raw: bytes = dl["raw"]
+    content_type = dl.get("content_type") or "application/octet-stream"
+    filename = file_name.rsplit("/", 1)[-1] or "file"
+    kind = "image" if content_type.startswith("image/") else "file"
+
+    if storage.enabled():
+        scope = _attachment_scope(tool_input, active_business) or "unsorted"
+        ext = f".{filename.rsplit('.', 1)[-1]}" if "." in filename else ""
+        key = f"wati-media/{scope}/{uuid.uuid4().hex}{ext}"
+        s3_uri = storage.put(key, raw, content_type)
+        media = {
+            "kind": kind,
+            "s3_uri": s3_uri,
+            "content_type": content_type,
+            "filename": filename,
+            "size_bytes": len(raw),
+        }
+        result = {
+            "status": dl["status"],
+            "ok": True,
+            "data": {**media, "stored": True},
+        }
+        return result, media
+
+    # No S3 bucket configured — fall back to inlining a capped base64 preview,
+    # so the model still gets something even though it won't persist or render.
+    b64 = base64.standard_b64encode(raw).decode("utf-8")
+    data: dict[str, Any] = {
+        "stored": False,
+        "content_type": content_type,
+        "filename": filename,
+        "size_bytes": len(raw),
+    }
+    if len(b64) > _MAX_MEDIA_INLINE_B64_CHARS:
+        data["_truncated"] = True
+        data["_note"] = (
+            "S3_BUCKET isn't configured so this media can't be stored or shown in the "
+            f"chat UI — base64 truncated to {_MAX_MEDIA_INLINE_B64_CHARS} chars."
+        )
+        data["base64_preview"] = b64[:_MAX_MEDIA_INLINE_B64_CHARS]
+    else:
+        data["base64"] = b64
+    return {"status": dl["status"], "ok": True, "data": data}, None
+
+
+def _create_scheduled_task(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Create a recurring Scheduled Task from a chat request. Mirrors the
+    validation/resolution the POST /api/scheduled-tasks endpoint does, so a
+    task the agent makes is identical to one made in the UI."""
+    from . import scheduler as sched
+    from .db import scheduled_tasks as tasks_db
+
+    name = (tool_input.get("name") or "").strip()
+    prompt = (tool_input.get("prompt") or "").strip()
+    if not name:
+        return {"ok": False, "status": 400, "error": "A task name is required."}
+    if not prompt:
+        return {"ok": False, "status": 400, "error": "A task prompt is required."}
+
+    frequency = (tool_input.get("frequency") or "daily").strip()
+    if frequency not in sched.VALID_FREQUENCIES:
+        return {"ok": False, "status": 400, "error": f"frequency must be one of {sorted(sched.VALID_FREQUENCIES)}."}
+    autonomy = (tool_input.get("autonomy") or "readonly").strip()
+    if autonomy not in sched.VALID_AUTONOMY:
+        return {"ok": False, "status": 400, "error": f"autonomy must be one of {sorted(sched.VALID_AUTONOMY)}."}
+
+    times = [t.strip() for t in (tool_input.get("times") or []) if isinstance(t, str) and t.strip()]
+    days = []
+    for d in tool_input.get("days_of_week") or []:
+        try:
+            di = int(d)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= di <= 6:
+            days.append(di)
+    schedule = {"frequency": frequency, "times": times or ["09:00"], "days_of_week": days}
+    if frequency == "weekly" and not days:
+        return {"ok": False, "status": 400, "error": "A weekly task needs at least one weekday in days_of_week (0=Mon … 6=Sun)."}
+
+    business = (tool_input.get("business") or "").strip().lower()
+    if not business:
+        business = active_business if (active_business and active_business != ALL_BUSINESSES) else "all"
+    entity_slug = None
+    if business and business != "all":
+        entity_slug = to_entity_slug(business)
+        if not entity_slug:
+            return {"ok": False, "status": 400,
+                    "error": f"Unknown business '{business}'. Valid: {sorted(BUSINESS_TO_ENTITY_SLUG)} or 'all'."}
+
+    tz = (tool_input.get("timezone") or Config.SCHEDULER_DEFAULT_TZ).strip() or Config.SCHEDULER_DEFAULT_TZ
+    enabled = tool_input.get("enabled", True)
+    if not isinstance(enabled, bool):
+        enabled = str(enabled).strip().lower() not in ("false", "0", "no", "off", "")
+    allowed_apps = [a.strip() for a in (tool_input.get("allowed_apps") or []) if isinstance(a, str) and a.strip()]
+
+    next_run = sched.compute_next_run(schedule, tz) if enabled else None
+    task_id = tasks_db.create_task(
+        entity_slug=entity_slug, name=name, prompt=prompt, schedule=schedule,
+        timezone_name=tz, allowed_apps=allowed_apps, autonomy=autonomy,
+        enabled=enabled, next_run_at=next_run,
+    )
+    if not task_id:
+        return {"ok": False, "status": 500, "error": "Could not create the task (storage error)."}
+    return {
+        "ok": True, "status": 200, "task_id": task_id, "name": name,
+        "schedule": sched.describe_schedule(schedule, tz), "business": business,
+        "allowed_apps": allowed_apps or "all connected apps", "autonomy": autonomy,
+        "timezone": tz, "enabled": enabled,
+        "next_run_at": next_run.isoformat() if next_run else None,
+        "message": (f"Scheduled task '{name}' created — visible in the Tasks tab. "
+                    + ("It will run " + sched.describe_schedule(schedule, tz) + f" ({tz})."
+                       if enabled else "It is paused; enable it in the Tasks tab to start it.")),
+    }
+
+
+def _create_artefact(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Create a live artefact from a chat request: persist the source binding +
+    render recipe, then do one initial sync to validate the source and warm the
+    cache. The artefact re-renders from its live source on every open (no LLM)."""
+    from . import artefacts as artefacts_engine
+    from .db import artefacts as artefacts_db
+
+    title = (tool_input.get("title") or "").strip()
+    source_type = (tool_input.get("source_type") or "").strip().lower()
+    if not title:
+        return {"ok": False, "status": 400, "error": "A title is required."}
+    if source_type not in artefacts_engine.VALID_SOURCE_TYPES:
+        return {"ok": False, "status": 400,
+                "error": f"source_type must be one of {sorted(artefacts_engine.VALID_SOURCE_TYPES)}."}
+
+    # Resolve the owning business. 'reviews' is cross-business/public, so business
+    # is optional there; every other type needs a connection to read its source.
+    business = (tool_input.get("business") or "").strip().lower()
+    if not business:
+        business = active_business if (active_business and active_business != ALL_BUSINESSES) else ""
+    entity_slug = None
+    if source_type != "reviews":
+        if not business:
+            return {"ok": False, "status": 400,
+                    "error": "A business is required for this source — set `business` to the entity "
+                             "that owns the document (afk/gak/gif/gakc/nh/per)."}
+        entity_slug = to_entity_slug(business)
+        if not entity_slug:
+            return {"ok": False, "status": 400,
+                    "error": f"Unknown business '{business}'. Valid: {sorted(BUSINESS_TO_ENTITY_SLUG)}."}
+        if not Config.maton_key_for_slug(business):
+            return {"ok": False, "status": 400,
+                    "error": f"'{business}' has no Maton connection configured, so its documents can't be read."}
+
+    # Build the source binding from the type-specific fields.
+    binding: dict[str, Any] = {}
+    if source_type == "sheets":
+        sid = (tool_input.get("spreadsheet_id") or "").strip()
+        if not sid:
+            return {"ok": False, "status": 400, "error": "spreadsheet_id is required for a sheets artefact."}
+        binding = {"spreadsheet_id": sid, "range": (tool_input.get("range") or "").strip()}
+    elif source_type == "drive":
+        fid = (tool_input.get("file_id") or "").strip()
+        if not fid:
+            return {"ok": False, "status": 400, "error": "file_id is required for a drive artefact."}
+        binding = {"file_id": fid}
+    elif source_type == "docs":
+        did = (tool_input.get("document_id") or "").strip()
+        if not did:
+            return {"ok": False, "status": 400, "error": "document_id is required for a docs artefact."}
+        binding = {"document_id": did}
+    elif source_type == "reviews":
+        binding = {"date": (tool_input.get("date") or "").strip()}
+
+    # Render recipe.
+    render = (tool_input.get("render") or "").strip().lower()
+    if render and render not in ("table", "kv", "raw", "dashboard"):
+        return {"ok": False, "status": 400, "error": "render must be one of dashboard, table, kv, raw."}
+    recipe: dict[str, Any] = {"title": title}
+    if render:
+        recipe["render"] = render
+    cols = [c.strip() for c in (tool_input.get("columns") or []) if isinstance(c, str) and c.strip()]
+    if cols:
+        recipe["columns"] = cols
+
+    if render == "dashboard":
+        # Keep only known keys so a malformed spec can't reach the renderer.
+        kpis = []
+        for k in tool_input.get("kpis") or []:
+            if isinstance(k, dict) and k.get("label"):
+                kpis.append({key: k[key] for key in ("label", "column", "agg") if k.get(key) is not None})
+        charts = []
+        for c in tool_input.get("charts") or []:
+            if isinstance(c, dict) and c.get("group_by"):
+                charts.append({key: c[key] for key in ("type", "title", "group_by", "value", "agg", "bucket", "limit", "sort")
+                               if c.get(key) is not None})
+        if kpis:
+            recipe["kpis"] = kpis
+        if charts:
+            recipe["charts"] = charts
+        if tool_input.get("table"):
+            recipe["table"] = True
+        if tool_input.get("description"):
+            recipe["description"] = str(tool_input["description"])
+
+    artefact_id = artefacts_db.create_artefact(
+        entity_slug=entity_slug, business_slug=(business or None), title=title,
+        source_type=source_type, source_binding=binding, render_recipe=recipe,
+    )
+    if not artefact_id:
+        return {"ok": False, "status": 500, "error": "Could not create the artefact (storage error)."}
+
+    # One initial sync validates readability + warms the cache. A failure still
+    # leaves the artefact created (last_error stored) — surface it as a warning.
+    warning = None
+    try:
+        artefacts_engine.sync_and_render(artefact_id)
+    except Exception as exc:  # noqa: BLE001 — never fail creation on a fetch blip
+        warning = f"Created, but the source couldn't be read yet: {exc}"
+    art = artefacts_db.get_artefact(artefact_id) or {}
+    if not warning and art.get("last_error"):
+        warning = f"Created, but the source couldn't be read yet: {art['last_error']}"
+
+    result = {
+        "ok": True, "status": 200, "artefact_id": artefact_id, "title": title,
+        "source_type": source_type, "business": business or None,
+        "url": f"/api/artefacts/{artefact_id}/view",
+        "last_synced_at": art.get("last_synced_at"),
+        "message": (f"Artefact '{title}' created — it's in the Artefacts tab and re-syncs with its "
+                    "source every time it's opened. ALWAYS end your reply with the artefact link as a "
+                    f"markdown link so the user can open it, e.g. [Open “{title}”](/api/artefacts/{artefact_id}/view)."),
+    }
+    if warning:
+        result["warning"] = warning
+    return result
+
+
+def _list_scheduled_tasks(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """List existing Scheduled Tasks, optionally scoped to a business."""
+    from . import scheduler as sched
+    from .db import scheduled_tasks as tasks_db
+
+    business = (tool_input.get("business") or "").strip().lower()
+    scope: str | None = None
+    if business and business != "all":
+        scope = to_entity_slug(business) or business
+    elif active_business and active_business != ALL_BUSINESSES:
+        scope = to_entity_slug(active_business) or active_business
+    rows = tasks_db.list_tasks(scope)
+    tasks = [{
+        "task_id": t.get("task_id"), "name": t.get("name"),
+        "business": t.get("business") or "all",
+        "schedule": sched.describe_schedule(t.get("schedule") or {}, t.get("timezone")),
+        "autonomy": t.get("autonomy"), "enabled": t.get("enabled"),
+        "next_run_at": t.get("next_run_at"), "last_status": t.get("last_status"),
+    } for t in rows]
+    return {"ok": True, "status": 200, "count": len(tasks), "tasks": tasks}
+
+
+def _update_scheduled_task(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Edit / pause / resume an existing Scheduled Task. Mirrors the
+    PATCH /api/scheduled-tasks/{id} logic (only sent fields change; a
+    schedule/timezone/enabled change recomputes next_run_at)."""
+    from . import scheduler as sched
+    from .db import scheduled_tasks as tasks_db
+
+    task_id = (tool_input.get("task_id") or "").strip()
+    existing = tasks_db.get_task(task_id)
+    if not existing:
+        return {"ok": False, "status": 404,
+                "error": "No task with that task_id — call list_scheduled_tasks to find it."}
+
+    kwargs: dict[str, Any] = {}
+    if tool_input.get("name") and tool_input["name"].strip():
+        kwargs["name"] = tool_input["name"].strip()
+    if tool_input.get("prompt") and tool_input["prompt"].strip():
+        kwargs["prompt"] = tool_input["prompt"].strip()
+    if tool_input.get("autonomy"):
+        if tool_input["autonomy"] not in sched.VALID_AUTONOMY:
+            return {"ok": False, "status": 400, "error": f"autonomy must be one of {sorted(sched.VALID_AUTONOMY)}."}
+        kwargs["autonomy"] = tool_input["autonomy"]
+    if "allowed_apps" in tool_input:
+        kwargs["allowed_apps"] = [a.strip() for a in (tool_input.get("allowed_apps") or []) if isinstance(a, str) and a.strip()]
+    if tool_input.get("timezone"):
+        kwargs["timezone_name"] = tool_input["timezone"].strip()
+    if "enabled" in tool_input:
+        en = tool_input["enabled"]
+        kwargs["enabled"] = en if isinstance(en, bool) else str(en).strip().lower() not in ("false", "0", "no", "off", "")
+    if "business" in tool_input:
+        b = (tool_input.get("business") or "").strip().lower()
+        if not b or b == "all":
+            kwargs["entity_slug"] = None
+        else:
+            es = to_entity_slug(b)
+            if not es:
+                return {"ok": False, "status": 400, "error": f"Unknown business '{b}'."}
+            kwargs["entity_slug"] = es
+        kwargs["entity_slug_set"] = True
+
+    # Schedule edit: merge provided frequency/times/days with the existing schedule.
+    if any(k in tool_input for k in ("frequency", "times", "days_of_week")):
+        cur = existing.get("schedule") or {}
+        freq = (tool_input.get("frequency") or cur.get("frequency") or "daily")
+        if freq not in sched.VALID_FREQUENCIES:
+            return {"ok": False, "status": 400, "error": f"frequency must be one of {sorted(sched.VALID_FREQUENCIES)}."}
+        raw_times = tool_input.get("times") if "times" in tool_input else cur.get("times")
+        times = [t.strip() for t in (raw_times or []) if isinstance(t, str) and t.strip()] or ["09:00"]
+        raw_days = tool_input.get("days_of_week") if "days_of_week" in tool_input else cur.get("days_of_week")
+        days = []
+        for d in raw_days or []:
+            try:
+                di = int(d)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= di <= 6:
+                days.append(di)
+        if freq == "weekly" and not days:
+            return {"ok": False, "status": 400, "error": "A weekly task needs at least one weekday (0=Mon … 6=Sun)."}
+        kwargs["schedule"] = {"frequency": freq, "times": times, "days_of_week": days}
+
+    if not kwargs:
+        return {"ok": False, "status": 400, "error": "Nothing to change — pass at least one field to update."}
+
+    # Recompute next_run_at when a timing-relevant field changed.
+    if {"schedule", "timezone_name", "enabled"} & kwargs.keys():
+        tz = kwargs.get("timezone_name", existing.get("timezone"))
+        enabled = kwargs.get("enabled", existing.get("enabled"))
+        schedule_final = kwargs.get("schedule", existing.get("schedule") or {})
+        kwargs["next_run_at"] = sched.compute_next_run(schedule_final, tz) if enabled else None
+        kwargs["next_run_set"] = True
+
+    if not tasks_db.update_task(task_id, **kwargs):
+        return {"ok": False, "status": 500, "error": "Update failed."}
+    t = tasks_db.get_task(task_id)
+    return {
+        "ok": True, "status": 200, "task_id": task_id, "name": t.get("name"),
+        "schedule": sched.describe_schedule(t.get("schedule") or {}, t.get("timezone")),
+        "business": t.get("business") or "all", "autonomy": t.get("autonomy"),
+        "enabled": t.get("enabled"), "timezone": t.get("timezone"),
+        "next_run_at": t.get("next_run_at"),
+        "message": ("Task paused — it won't fire until re-enabled." if t.get("enabled") is False
+                    else "Task updated."),
+    }
+
+
+def _delete_scheduled_task(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+    """Permanently delete a Scheduled Task and its runs (the agent is instructed
+    to confirm with the user first — deletion cascades and is irreversible)."""
+    from .db import scheduled_tasks as tasks_db
+
+    task_id = (tool_input.get("task_id") or "").strip()
+    existing = tasks_db.get_task(task_id)
+    if not existing:
+        return {"ok": False, "status": 404,
+                "error": "No task with that task_id — call list_scheduled_tasks to find it."}
+    if not tasks_db.delete_task(task_id):
+        return {"ok": False, "status": 500, "error": "Delete failed."}
+    return {"ok": True, "status": 200, "deleted": task_id, "name": existing.get("name"),
+            "message": f"Deleted '{existing.get('name')}' and its run history."}
+
+
+_GUARDRAIL_STATE_LABELS = {
+    "confirm_writes": ("ON — Hermes will ask before writes/sends",
+                       "OFF — writes/sends run without asking"),
+    "business_isolation": ("ON — cross-business knowledge results are dropped",
+                           "OFF — knowledge results trusted by namespace only"),
+    "secret_egress": ("ON — sends/writes carrying secrets or card numbers are refused",
+                      "OFF — secrets are no longer screened out of sends/writes"),
+    "send_limit": ("ON — sends and deletes are capped per turn",
+                   "OFF — no cap on sends and deletes per turn"),
+}
+
+
+def _set_guardrail(tool_input: dict[str, Any]) -> dict[str, Any]:
+    """Turn a guardrail on/off (durably, global or per-business) on the user's
+    explicit instruction. Validated against the guardrails registry."""
+    guardrail = (tool_input.get("guardrail") or "").strip()
+    if "enabled" not in tool_input:
+        return {"ok": False, "status": 400, "error": "Missing required argument: enabled"}
+    enabled = bool(tool_input.get("enabled"))
+    business = (tool_input.get("business") or "").strip() or None
+    try:
+        guardrails.set_guardrail_enabled(guardrail, enabled, business)
+    except KeyError:
+        known = ", ".join(sorted(guardrails._GUARDRAIL_KEYS))
+        return {"ok": False, "status": 400,
+                "error": f"Unknown guardrail: {guardrail!r}. Known guardrails: {known}."}
+    scope = business or "all businesses"
+    on_label, off_label = _GUARDRAIL_STATE_LABELS.get(guardrail, ("ON", "OFF"))
+    state = on_label if enabled else off_label
+    return {"ok": True, "status": 200, "data": {
+        "guardrail": guardrail, "enabled": enabled, "scope": scope,
+        "message": f"'{guardrail}' is now {state} for {scope}.",
+    }}
+
+
+def dispatch(
+    name: str,
+    tool_input: dict[str, Any],
+    active_business: str | None = None,
+    autonomy: str | None = None,
+) -> tuple[str, bool, dict[str, Any] | None, list[dict[str, Any]] | None]:
+    """Execute a local tool. Returns (content_string, is_error, media, blocks).
+
+    `media` is non-None only for tools that fetched a file worth persisting
+    and showing in the chat UI (wati_get_media, drive_read_file) — the caller
+    (hermes.agent) folds it into that tool call's trace entry so it survives
+    into the conversation transcript.
+
+    `blocks` is non-None only for drive_read_file: real document/image content
+    blocks the caller appends to the conversation so Claude can read the file
+    directly on its next turn, instead of only seeing a text tool result.
+    """
+    media: dict[str, Any] | None = None
+    blocks: list[dict[str, Any]] | None = None
+
+    # Autonomy gate, before anything executes. build_tools already hides these
+    # from the model, but a tool call can still arrive (a replayed transcript, a
+    # hallucinated name), and this is the call that actually reaches the network.
+    blocked = write_blocked_reason(name, tool_input, autonomy)
+    if blocked:
+        log.warning("autonomy=%s blocked tool %s", autonomy, name)
+        return blocked, True, None, None
+
+    # Multi-agents' agent-only tools (offered only to an agent that lists them;
+    # see hermes/agent_tools.py). Read-only, so nothing above ever blocks them.
+    from . import agent_tools as _agent_tools
+
+    if name in _agent_tools.NAMES:
+        content, is_error = _agent_tools.dispatch(name, tool_input, active_business)
+        return content, is_error, None, None
+
+    try:
+        if name == "maton_create_connection":
+            # Connection provisioning is interactive/rare — keep it scoped to a
+            # single locked business, never fan out or guess in "all" mode.
+            if active_business == ALL_BUSINESSES:
+                raise MatonError(
+                    "Ask the user to pick a specific business before connecting a new app "
+                    "— 'All Businesses' mode can't provision a connection."
+                )
+            client = _resolve_client({}, active_business)
+            result = client.create_connection(app=tool_input["app"])
+        elif name == "search_business_knowledge":
+            # No Maton client involved at all — pure Postgres/pgvector search.
+            result = _search_business_knowledge(tool_input, active_business)
+        elif name == "create_file":
+            # No Maton client involved at all — pure S3 write.
+            result = _create_file(tool_input, active_business)
+        elif name == "create_scheduled_task":
+            # No Maton client — writes a row via the scheduled-tasks store.
+            result = _create_scheduled_task(tool_input, active_business)
+        elif name == "list_scheduled_tasks":
+            result = _list_scheduled_tasks(tool_input, active_business)
+        elif name == "update_scheduled_task":
+            result = _update_scheduled_task(tool_input, active_business)
+        elif name == "delete_scheduled_task":
+            result = _delete_scheduled_task(tool_input, active_business)
+        elif name == "set_guardrail":
+            # No Maton client — flips a safety setting in hermes_settings.
+            result = _set_guardrail(tool_input)
+        elif name == "create_artefact":
+            # No Maton client here — the handler builds its own per-business
+            # client for the initial validation sync from the resolved slug.
+            result = _create_artefact(tool_input, active_business)
+        elif name == "calendar_list_upcoming":
+            # hermes.calendar resolves its own per-business Maton key internally.
+            result = _calendar_list_upcoming(tool_input, active_business)
+        elif name == "worldbank_data":
+            # Public data source — no Maton key / business scoping needed.
+            result = {
+                "status": 200,
+                "ok": True,
+                "data": worldbank.fetch(
+                    indicators=tool_input.get("indicators") or [],
+                    countries=tool_input.get("countries"),
+                    start_year=tool_input.get("start_year"),
+                    end_year=tool_input.get("end_year"),
+                    most_recent=tool_input.get("most_recent"),
+                ),
+            }
+        elif name == "read_document":
+            # Reads bytes straight from the S3 locker — no Maton client needed.
+            # Business scoping is enforced inside via _read_scope_ok.
+            result = _read_document(tool_input, active_business)
+        else:
+            client = _resolve_client(tool_input, active_business)
+            if name == "maton_request":
+                result = client.request(
+                    app=tool_input["app"],
+                    method=tool_input.get("method", "GET"),
+                    path=tool_input["path"],
+                    query=tool_input.get("query"),
+                    body=tool_input.get("body"),
+                    connection_id=tool_input.get("connection_id"),
+                )
+            elif name == "maton_list_connections":
+                result = client.list_connections(
+                    app=tool_input.get("app"), status=tool_input.get("status")
+                )
+            elif name == "drive_read_file":
+                result, media, blocks = _drive_read_file(client, tool_input, active_business)
+            elif name == "send_email":
+                result = _send_email(client, tool_input)
+            elif name == "email_with_attachment":
+                result = email_attachments.run(client, tool_input, active_business)
+            elif name == "zoom_send_invite":
+                result = _zoom_send_invite(client, tool_input)
+            elif name == "zoom_list_meetings":
+                result = _zoom_list_meetings(client, tool_input)
+            elif name == "jira_search_issues":
+                result = _jira_search_issues(client, tool_input)
+            elif name == "jira_get_issue":
+                result = _jira_get_issue(client, tool_input)
+            elif name == "jira_create_issue":
+                result = _jira_create_issue(client, tool_input)
+            elif name == "jira_assign_issue":
+                result = _jira_assign_issue(client, tool_input)
+            elif name in WATI_TOOLS:
+                wati = WatiClient(client)
+                if name == "wati_list_contacts":
+                    result = wati.list_contacts(
+                        name=tool_input.get("name"),
+                        attribute_filters=tool_input.get("attribute_filters"),
+                        created_date=tool_input.get("created_date"),
+                        page_size=tool_input.get("page_size"),
+                        page_number=tool_input.get("page_number"),
+                    )
+                elif name == "wati_add_contact":
+                    result = wati.add_contact(
+                        whatsapp_number=tool_input["whatsapp_number"],
+                        name=tool_input.get("name"),
+                        custom_params=tool_input.get("custom_params"),
+                    )
+                elif name == "wati_update_contact_attributes":
+                    result = wati.update_contact_attributes(
+                        whatsapp_number=tool_input["whatsapp_number"],
+                        custom_params=tool_input["custom_params"],
+                    )
+                elif name == "wati_get_messages":
+                    result = wati.get_messages(
+                        whatsapp_number=tool_input["whatsapp_number"],
+                        page_size=tool_input.get("page_size"),
+                        page_number=tool_input.get("page_number"),
+                    )
+                elif name == "wati_send_message":
+                    result = wati.send_session_message(
+                        whatsapp_number=tool_input["whatsapp_number"],
+                        message_text=tool_input["message_text"],
+                    )
+                elif name == "wati_send_file":
+                    filename, media_type, raw_bytes = _wati_send_file_args(
+                        tool_input, active_business
+                    )
+                    result = wati.send_session_file(
+                        whatsapp_number=tool_input["whatsapp_number"],
+                        filename=filename,
+                        media_type=media_type,
+                        raw_bytes=raw_bytes,
+                        caption=tool_input.get("caption"),
+                    )
+                elif name == "wati_assign_operator":
+                    result = wati.assign_operator(
+                        whatsapp_number=tool_input["whatsapp_number"],
+                        email=tool_input["email"],
+                    )
+                else:  # wati_get_media
+                    result, media = _wati_get_media(client, tool_input, active_business)
+            else:
+                return (f"Unknown tool: {name}", True, None, None)
+    except MatonError as exc:
+        return (json.dumps({"error": str(exc)}), True, None, None)
+    except KeyError as exc:
+        return (json.dumps({"error": f"Missing required argument: {exc}"}), True, None, None)
+
+    # A non-2xx upstream status is surfaced to the model but not treated as a
+    # hard tool error, so Claude can read the error body and adjust.
+    is_error = not result.get("ok", False)
+    return (json.dumps(result, default=str), is_error, media, blocks if not is_error else None)
+
+
+# ---- Friendly in-progress status text --------------------------------------
+# What the chat UI shows WHILE a tool call is in flight, so a live turn reads
+# like a person working ("📅 Peeking at the calendar…") instead of a debug log
+# ("Calling calendar_list_upcoming…"). Keyed by tool name; `maton_request` is
+# one tool serving every connected app, so its message is keyed by the `app`
+# argument instead, via _MATON_APP_STATUS.
+_TOOL_STATUS: dict[str, str] = {
+    "reviews_data": "⭐ Analysing the Google-reviews data…",
+    "weather_forecast": "🌦️ Checking the weather forecast…",
+    "maton_list_connections": "🔌 Checking what's connected…",
+    "maton_create_connection": "🔌 Setting up a new connection…",
+    "drive_read_file": "📁 Opening that file from Drive…",
+    "send_email": "📧 Sending your email…",
+    "email_with_attachment": "📎 Getting your email and attachment ready…",
+    "zoom_send_invite": "🎥 Sending your Zoom invite…",
+    "zoom_list_meetings": "🎥 Checking your Zoom meetings…",
+    "calendar_list_upcoming": "📅 Peeking at your calendar…",
+    "jira_search_issues": "🧩 Searching Jira issues…",
+    "jira_get_issue": "🧩 Pulling up that Jira issue…",
+    "jira_create_issue": "🧩 Creating a Jira issue…",
+    "jira_assign_issue": "🧩 Assigning that Jira issue…",
+    "search_business_knowledge": "🔎 Searching your knowledge base…",
+    "create_file": "📝 Putting your file together…",
+    "worldbank_data": "🌍 Pulling stats from the World Bank…",
+    "create_scheduled_task": "🗓️ Setting up your scheduled task…",
+    "list_scheduled_tasks": "🗓️ Checking your scheduled tasks…",
+    "update_scheduled_task": "🗓️ Updating your scheduled task…",
+    "delete_scheduled_task": "🗓️ Removing that scheduled task…",
+    "create_artefact": "🎨 Building your artefact…",
+    "wati_list_contacts": "💬 Looking up WhatsApp contacts…",
+    "wati_add_contact": "💬 Adding a WhatsApp contact…",
+    "wati_update_contact_attributes": "💬 Updating contact info…",
+    "wati_get_messages": "💬 Checking WhatsApp messages…",
+    "wati_send_message": "💬 Sending a WhatsApp message…",
+    "wati_send_file": "💬 Sending a file over WhatsApp…",
+    "wati_assign_operator": "💬 Assigning a WhatsApp operator…",
+    "wati_get_media": "💬 Fetching WhatsApp media…",
+}
+
+_MATON_APP_STATUS: dict[str, str] = {
+    "google-mail": "📧 Sorting through Gmail…",
+    "google-drive": "📁 Rifling through Google Drive…",
+    "google-calendar": "📅 Peeking at the calendar…",
+    "google-sheets": "📊 Opening a spreadsheet…",
+    "google-docs": "📄 Reading a Google Doc…",
+    "google-forms": "📋 Checking Google Forms…",
+    "google-contacts": "👤 Looking up a contact…",
+    "google-meet": "🎥 Checking Google Meet…",
+    "notion": "📝 Flipping through Notion…",
+    "zoom": "🎥 Dialing into Zoom…",
+    "zoom-admin": "🎥 Dialing into Zoom…",
+    "quickbooks": "💰 Crunching the QuickBooks numbers…",
+    "jira": "🧩 Working in Jira…",
+    "wati": "💬 Pinging WhatsApp…",
+    "fathom": "🎙️ Pulling up the meeting recording…",
+    "pdf-co": "📄 Processing a PDF…",
+}
+
+
+def tool_status(name: str, tool_input: dict[str, Any]) -> str:
+    """A short, friendly 'what I'm doing right now' line for the chat UI to
+    show while this tool call is in flight — never the raw tool/app name."""
+    if name == "maton_request":
+        app = (tool_input or {}).get("app") or ""
+        return _MATON_APP_STATUS.get(app, f"🔌 Connecting to {app or 'a connected app'}…")
+    if name == "email_with_attachment" and (tool_input or {}).get("confirm"):
+        return "📧 Sending your email…"
+    return _TOOL_STATUS.get(name, f"⚙️ Running {name.replace('_', ' ')}…")

@@ -1,0 +1,47 @@
+name: CI
+
+# Backstop for the "works locally, ImportError on deploy" class of bug: runs the
+# import smoke test and the offline suite against the COMMITTED tree on every
+# push and PR. A red run here is your signal NOT to let Vercel serve the commit.
+# For full protection, enable "Wait for CI" / required status checks so a failing
+# run blocks the deployment (Vercel + GitHub branch protection).
+
+on:
+  push:
+    branches: [main, truncation-removal, RAG-on-pinecone]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      HERMES_DISABLE_DB: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # pytest is a test-only dependency, deliberately kept out of
+          # requirements.txt so it is never shipped to Vercel.
+          pip install pytest
+
+      - name: Import smoke (the exact Vercel entrypoint surface)
+        run: python tests/test_import_smoke.py
+
+      # Run the suite with pytest rather than executing each file as a script.
+      # Most test files are written for pytest (fixtures, parametrize), and a
+      # script run merely imported them and exited 0 — CI reported success for
+      # tests it never ran. Under `set -e` the loop also stopped at the first
+      # failing file, hiding everything after it.
+      - name: Offline test suite
+        run: |
+          pytest tests/ -q \
+            --ignore=tests/test_command_center_reference_visual.py \
+            --ignore=tests/test_workflow_schematic_visual.py \
+            --ignore=tests/test_worldbank_tool_triggering.py

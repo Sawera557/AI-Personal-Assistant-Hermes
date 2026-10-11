@@ -1,0 +1,44 @@
+# ---- Secrets — NEVER commit these ----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Tooling / IDE ----
+.claude/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- Runtime ----
+*.log
+instance/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Context-pack / playbook CONTENT holds real business PII (tenants, family,
+# banks) — keep local only, like .env. Load into the DB with load_packs.py.
+HERMES_CONTEXT_PACKS.md
+HERMES_PLAYBOOKS.md
+blank_bills_backup_*.json
+
+# Local backups and script output (may hold PII) — never commit
+backups/
+scripts/output/

@@ -1,0 +1,2934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, interactive-widget=resizes-content" />
+  <meta name="theme-color" content="#0b0e14" />
+  <title>Hermes AI Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-holo.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/home-hud.css?v={{ v }}" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/hermes-pro.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-views.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-stock.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-v2.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-schema-fx.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-files-fx.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-theme-fx.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/hermes-live.css?v={{ v }}" />
+  <link rel="stylesheet" href="/static/multiagents.css?v={{ v }}" />
+  <script>
+    // Skin is chosen in the top bar and remembered; Holo by default, Stock = pro without holo.
+    // Set before first paint so the page never flashes the wrong skin.
+    document.documentElement.classList.add("pro", "has-topbar");
+    document.documentElement.classList.toggle("holo", localStorage.getItem("hermes.skin") !== "stock");
+  </script>
+  <style id="hx-ab-top">
+    /* Agent settings live inside the top bar: Model + "More options" inline, the rest in a dropdown. */
+    :root { --hx-ab-h: 0px; }
+    .hx-topbar { overflow: visible !important; }
+    .hx-topbar #agent-bar.ab {
+      position: relative !important; z-index: 2; display: flex; align-items: center; flex: 0 1 auto; min-width: 0;
+      height: auto !important; margin: 0 !important; padding: 0 !important; gap: 10px !important; flex-wrap: nowrap !important;
+      background: none !important; border: 0 !important; box-shadow: none !important; overflow: visible !important;
+      -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+    }
+    .hx-topbar #agent-bar.ab::before, .hx-topbar #agent-bar.ab::after { display: none !important; }
+    .hx-topbar #agent-bar > .ab-f { min-width: 140px; flex: 0 1 290px; }
+    .hx-topbar #agent-bar > .ab-f .ab-k { display: none; }
+    .hx-topbar #agent-bar > .ab-f select { height: 32px; width: 100%; min-width: 0; max-width: none !important; }
+    @media (max-width: 1100px) { .hx-topbar #agent-bar .v2-ab-sum { display: none; } }
+    .hx-topbar #agent-bar .v2-ab-more { height: 32px; flex: none; }
+    .hx-topbar #agent-bar .ab-pop {
+      display: none; position: absolute; top: calc(100% + 12px); left: 0; z-index: 70;
+      flex-direction: column; gap: 12px; min-width: 320px; padding: 14px 16px; box-sizing: border-box;
+      background: #050a10; border: 1px solid rgba(127, 205, 255, .22); border-radius: 10px;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, .5);
+    }
+    html:not(.holo) .hx-topbar #agent-bar .ab-pop { background: #0d1017; border-color: rgba(255, 255, 255, .1); }
+    .hx-topbar #agent-bar.v2-open .ab-pop { display: flex; }
+    .hx-topbar #agent-bar .ab-pop > .ab-f, .hx-topbar #agent-bar .ab-pop > .ab-t { display: flex !important; align-items: center; justify-content: space-between; gap: 14px; }
+    .hx-topbar #agent-bar .ab-pop .ab-k { display: inline; }
+    .hx-topbar #agent-bar .ab-pop select { min-width: 150px; height: 32px; }
+    .hx-topbar #agent-bar .ab-pop .ab-t .tk-toggle { margin-left: auto; }
+    .hx-topbar #agent-bar .ab-status { position: absolute !important; top: calc(100% + 10px); left: 0; right: auto; width: max-content; max-width: 420px; z-index: 71; }
+    html:fullscreen #agent-bar { display: none; }
+    /* Status readouts removed from the top bar (still drive Home). */
+    #hx-tb-attn, #hx-tb-data, .hx-tb-sep:has(+ #hx-tb-data) { display: none !important; }
+  </style>
+  <style id="hx-mobile">
+    /* Hermes · phone layout (iPhone 14 Pro Max and other phone-size screens).
+       One header (menu · business · status · new), a bottom tab bar, safe areas, 44px touch targets,
+       16px form fields (no iOS zoom-on-focus) and single-column pages. Desktop is untouched. */
+    .hx-tb-menu, .hx-tb-act, .hx-tabbar { display: none; }
+
+    @media (max-width: 500px) {
+      :root {
+        --hx-sat: env(safe-area-inset-top, 0px);
+        --hx-sab: env(safe-area-inset-bottom, 0px);
+        --hx-topbar-h: calc(52px + var(--hx-sat));
+        --hx-tab-h: 58px;
+        --hx-ab-h: 0px !important;
+      }
+      html:has(#app[data-view="agent"]) { --hx-ab-h: 50px !important; }
+
+      /* Form fields at 16px so iOS doesn't zoom in when one is focused */
+      input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select, textarea { font-size: 16px !important; }
+
+      /* ── Header ── */
+      .hx-topbar { height: var(--hx-topbar-h); padding: var(--hx-sat) 8px 0 6px; gap: 6px; overflow: visible; }
+      .hx-topbar > .hx-tb-sep, .hx-topbar > .hx-tb-group:not(.hx-tb-biz), .hx-topbar .hx-tb-end, .hx-tb-word { display: none !important; }
+      /* Skin switch: compact, without its label */
+      .hx-topbar > .hx-tb-group.hx-tb-skin { display: flex !important; flex: none; gap: 0; }
+      .hx-tb-skin > .hx-tb-k { display: none !important; }
+      .hx-tb-skin .hx-tb-seg button { min-height: 36px; padding: 0 9px; font-size: 11px; }
+      .hx-tb-menu, .hx-tb-act {
+        display: grid; place-items: center; flex: none; width: 44px; height: 44px; padding: 0;
+        border: 0; border-radius: 10px; background: transparent; color: #cdeaf7; cursor: pointer;
+      }
+      .hx-tb-act[hidden] { display: none !important; }
+      .hx-tb-menu:active, .hx-tb-act:active { background: rgba(127, 205, 255, 0.12); }
+      .hx-tb-brand { flex: none; }
+      .hx-tb-mark { width: 26px; height: 26px; }
+      .hx-tb-biz { flex: 1 1 auto; min-width: 0; gap: 0; }
+      .hx-tb-biz > .hx-tb-k { display: none !important; }
+      .hx-tb-biz select { width: 100%; min-width: 0; max-width: none; height: 40px; }
+      .hx-tb-attn { flex: none; padding: 0 6px; height: 44px; min-width: 32px; justify-content: center; }
+      .hx-tb-attn span { display: none !important; }
+
+      /* ── Agent settings: on the Agent tab they drop below the header; More options opens a full-width dropdown ── */
+      .hx-topbar #agent-bar.ab { display: none !important; }
+      html:has(#app[data-view="agent"]) .hx-topbar #agent-bar.ab {
+        display: flex !important; position: absolute !important; top: 100%; left: 0; right: 0;
+        height: var(--hx-ab-h) !important; padding: 0 12px !important; gap: 10px !important;
+        background: #050a10 !important; border-bottom: 1px solid rgba(127, 205, 255, .12) !important;
+      }
+      html:not(.holo):has(#app[data-view="agent"]) .hx-topbar #agent-bar.ab { background: #0d1017 !important; border-bottom-color: rgba(255, 255, 255, .08) !important; }
+      .hx-topbar #agent-bar > .ab-f:first-of-type { flex: 1 1 auto; }
+      .hx-topbar #agent-bar > .ab-f:first-of-type select { width: 100%; min-width: 0; max-width: none !important; height: 38px; }
+      .hx-topbar #agent-bar .v2-ab-sum { display: none; }
+      .hx-topbar #agent-bar .v2-ab-more { height: 38px; }
+      .hx-topbar #agent-bar .ab-pop { top: calc(100% + 1px); left: 0; right: 0; min-width: 0; border-radius: 0 0 12px 12px; padding: 14px 16px 16px; }
+      .hx-topbar #agent-bar .ab-pop select { flex: 1; max-width: 220px; height: 40px; }
+      .hx-topbar #agent-bar .ab-status { left: 12px; right: 12px; width: auto; }
+
+      /* ── App area sits between the header and the tab bar ── */
+      html.has-topbar .app { top: calc(var(--hx-topbar-h) + var(--hx-ab-h)) !important; bottom: calc(var(--hx-tab-h) + var(--hx-sab)) !important; }
+      .app .topbar { display: none !important; }
+      html.has-topbar .leftnav { top: calc(var(--hx-topbar-h) + var(--hx-ab-h)) !important; bottom: calc(var(--hx-tab-h) + var(--hx-sab)) !important; }
+      .leftnav { --panel-w: 100%; }
+      .leftnav .content-panel > .panel-section { width: 100% !important; max-width: none !important; flex: 1 1 auto; box-sizing: border-box; }
+      .leftnav .content-panel .panel, .leftnav .content-panel .new-convo { max-width: none !important; }
+      #hx-live { bottom: calc(14px + var(--hx-sab)) !important; }
+      .composer { padding-bottom: 12px !important; }
+
+      /* ── Bottom tab bar ── */
+      .hx-tabbar {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 48;
+        display: grid; grid-template-columns: repeat(5, 1fr);
+        height: calc(var(--hx-tab-h) + var(--hx-sab)); padding: 0 4px var(--hx-sab); box-sizing: border-box;
+        background: linear-gradient(180deg, rgba(5, 10, 16, 0.94), #04080d); border-top: 1px solid rgba(127, 205, 255, 0.14);
+        -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+        transition: transform .35s ease;
+      }
+      .hx-tabbar button {
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 44px;
+        border: 0; background: none; color: #7f93a3; cursor: pointer;
+        font: 600 10px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.06em; text-transform: uppercase;
+      }
+      .hx-tabbar svg { width: 22px; height: 22px; flex: none; }
+      .hx-tabbar button.on { color: #7fdcff; }
+      html:not(.holo) .hx-tabbar { background: linear-gradient(180deg, rgba(14, 17, 24, 0.94), #0b0e14); border-top-color: rgba(255, 255, 255, 0.08); }
+      html:not(.holo) .hx-tabbar button.on { color: #f5a623; }
+      html:has(#home-view.hx-engaged) .hx-tabbar { transform: translateY(110%); }
+      html:fullscreen .hx-tabbar { display: none; }
+
+      /* ── Home ── */
+      .home-view { overflow-x: hidden !important; }
+      .home-view .hud { grid-template-columns: minmax(0, 1fr) !important; gap: 14px !important; padding: 12px 14px 8px !important; }
+      .home-view .hud-core { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; grid-template-areas: "rings rings" "l r"; gap: 8px 10px !important; padding: 0 !important; }
+      .home-view .hud-core .hud-rings { grid-area: rings; width: min(80vw, 340px) !important; justify-self: center; margin: 6px 0 10px; }
+      .home-view .hud-spokes.left { grid-area: l; }
+      .home-view .hud-spokes:not(.left) { grid-area: r; }
+      .home-view .hud-spokes { gap: 8px !important; align-items: stretch !important; }
+      .home-view .hud-spoke {
+        width: 100%; min-height: 44px; padding: 0 12px !important; gap: 8px !important; justify-content: flex-start;
+        border: 1px solid rgba(127, 205, 255, 0.16); background: rgba(127, 205, 255, 0.04); border-radius: 10px;
+        font-size: 11px !important; letter-spacing: 0.1em !important;
+      }
+      .home-view .hud-spokes:not(.left) .hud-spoke { flex-direction: row-reverse; justify-content: flex-end; }
+      .home-view .hud-spoke .ln, .home-view .hud-spoke .dot { display: none !important; }
+      .home-view .hud-spoke .cnt { margin-left: auto; }
+      .home-view .hud-spokes:not(.left) .hud-spoke .cnt { margin-left: auto; margin-right: 0; }
+      html:not(.holo) .home-view .hud-spoke { border-color: rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.03); }
+      .home-view .hud-col { gap: 12px !important; }
+      .hx-dock { padding: 14px 14px 12px !important; }
+      /* ── More: the drawer becomes a tile grid of every section, with the section's own panel below ── */
+      .leftnav {
+        flex-direction: column !important; width: min(360px, 88vw) !important;
+        background: #050a10; border-right: 1px solid rgba(127, 205, 255, 0.14); box-shadow: 18px 0 40px rgba(0, 0, 0, 0.45);
+      }
+      html:not(.holo) .leftnav { background: #0d1017; border-right-color: rgba(255, 255, 255, 0.08); }
+      html.pro body .leftnav .icon-strip {
+        width: 100% !important; height: auto !important; flex: none !important;
+        display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px;
+        padding: 12px 12px 10px !important; border-right: 0 !important; border-bottom: 1px solid rgba(127, 205, 255, 0.12) !important;
+        overflow: visible !important; background: transparent !important;
+      }
+      html.pro body .leftnav .icon-strip > .strip-tabs, html.pro body .leftnav .icon-strip > .v2-strip-foot { display: contents !important; }
+      html.pro body .leftnav .icon-strip > .strip-brand, html.pro body .leftnav .icon-strip > .strip-toggle, html.pro body .leftnav .icon-strip > #strip-toggle { display: none !important; }
+      html.pro body .leftnav .icon-strip .strip-tab {
+        width: auto !important; height: 62px !important; min-height: 44px !important; margin: 0 !important; padding: 0 2px !important;
+        display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 6px !important;
+        border-radius: 10px !important;
+      }
+      html.pro body .leftnav .icon-strip .strip-tab svg { width: 20px !important; height: 20px !important; }
+      html.pro body .leftnav .icon-strip .strip-tab span {
+        display: block !important; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: 9.5px !important; letter-spacing: 0.06em !important;
+      }
+      html.pro body .leftnav .icon-strip .strip-tab::before, html.pro body .leftnav .icon-strip .strip-tab::after { display: none !important; }
+      .leftnav .content-panel, .app.panel-collapsed .leftnav .content-panel {
+        width: 100% !important; flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important;
+        border: 0 !important; transform: none !important; opacity: 1 !important; visibility: visible !important;
+      }
+
+      /* ── Pages: no sideways overflow; long tab rows scroll ── */
+      .reg-tabs { flex-wrap: wrap !important; row-gap: 8px !important; height: auto !important; overflow: visible !important; max-width: 100%; }
+      .reg-sheet-link { white-space: nowrap; margin-left: 0 !important; }
+      .context-subtabs, .lib-subtabs { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap !important; }
+      .reg-tab, .context-subtab, .lib-subtab, .bills-upload-btn, .tk-chip { min-height: 40px; }
+      main > * { max-width: 100%; }
+    }
+  </style>
+  <style id="hx-viewer-css">
+    /* Hermes · file viewer: files and links in Agent chat open in a right-side drawer instead of a new window. */
+    .hx-viewer {
+      --hxv-acc: #7fdcff; --hxv-line: rgba(127, 220, 255, .16); --hxv-bg: #060c13; --hxv-ink: #e6eef4; --hxv-mute: #8597a6;
+      position: fixed; top: var(--hx-topbar-h, 52px); right: 0; bottom: 0; z-index: 65;
+      width: var(--hxv-w, min(760px, 48vw)); max-width: 100vw; box-sizing: border-box;
+      display: flex; flex-direction: column; background: var(--hxv-bg); color: var(--hxv-ink);
+      border-left: 1px solid var(--hxv-line); box-shadow: -28px 0 70px rgba(0, 0, 0, .5);
+      font: 400 14px/1.5 "IBM Plex Sans", system-ui, sans-serif;
+      transform: translateX(104%); visibility: hidden;
+      transition: transform .4s cubic-bezier(.2, .8, .2, 1), visibility 0s linear .4s;
+    }
+    .hx-viewer.open { transform: none; visibility: visible; transition: transform .4s cubic-bezier(.2, .8, .2, 1); }
+    html:not(.holo) .hx-viewer { --hxv-acc: #f5a623; --hxv-line: rgba(255, 255, 255, .09); --hxv-bg: #0d1017; --hxv-mute: #8b93a1; }
+    .hx-viewer::before {
+      content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px; pointer-events: none;
+      background: linear-gradient(90deg, transparent, var(--hxv-acc), transparent); opacity: .55;
+    }
+    .hx-v-grip { position: absolute; left: -5px; top: 0; bottom: 0; width: 10px; cursor: col-resize; z-index: 3; touch-action: none; }
+    .hx-v-grip::after {
+      content: ""; position: absolute; left: 4px; top: 50%; width: 2px; height: 44px; margin-top: -22px; border-radius: 2px;
+      background: var(--hxv-acc); opacity: 0; transition: opacity .2s;
+    }
+    .hx-v-grip:hover::after, .hx-viewer.resizing .hx-v-grip::after { opacity: .7; }
+    .hx-viewer.resizing { transition: none; user-select: none; }
+    .hx-viewer.resizing iframe { pointer-events: none; }
+
+    .hx-v-head { flex: none; display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--hxv-line); }
+    .hx-v-badge {
+      flex: none; width: 36px; height: 44px; box-sizing: border-box; padding-bottom: 7px;
+      display: flex; align-items: flex-end; justify-content: center; border-radius: 5px;
+      clip-path: polygon(0 0, 70% 0, 100% 24%, 100% 100%, 0 100%);
+      background: var(--hxv-k, var(--hxv-acc)); color: #071018;
+      font: 700 9px/1 "IBM Plex Mono", monospace; letter-spacing: .04em; text-transform: uppercase;
+    }
+    .hx-v-badge[data-k="pdf"] { --hxv-k: #ff7a7a; }
+    .hx-v-badge[data-k="img"] { --hxv-k: #8ea6ff; }
+    .hx-v-badge[data-k="doc"] { --hxv-k: #6aaeff; }
+    .hx-v-badge[data-k="sheet"] { --hxv-k: #3fd69c; }
+    .hx-v-badge[data-k="slides"] { --hxv-k: #f7b84b; }
+    .hx-v-badge[data-k="text"] { --hxv-k: #a9b8c6; }
+    .hx-v-badge[data-k="media"] { --hxv-k: #c49bff; }
+    .hx-v-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+    .hx-v-name { font: 600 14px/1.25 "IBM Plex Sans", sans-serif; color: #f2f7fa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hx-v-sub { font: 500 10.5px/1 "IBM Plex Mono", monospace; letter-spacing: .12em; text-transform: uppercase; color: var(--hxv-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hx-v-acts { flex: none; display: flex; align-items: center; gap: 6px; }
+    .hx-v-btn {
+      flex: none; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; box-sizing: border-box;
+      border-radius: 8px; border: 1px solid var(--hxv-line); background: transparent; color: #b7c6d2;
+      cursor: pointer; text-decoration: none; transition: color .2s, border-color .2s, background .2s;
+    }
+    .hx-v-btn:hover { color: #fff; border-color: var(--hxv-acc); background: rgba(255, 255, 255, .04); }
+    .hx-v-btn[hidden], .hx-v-zoom[hidden] { display: none; }
+    .hx-v-zoom { display: flex; align-items: center; height: 34px; border: 1px solid var(--hxv-line); border-radius: 8px; overflow: hidden; }
+    .hx-v-zoom button { width: 30px; height: 100%; border: 0; background: transparent; color: #b7c6d2; font: 500 16px/1 "IBM Plex Sans", sans-serif; cursor: pointer; }
+    .hx-v-zoom button:hover { color: #fff; background: rgba(255, 255, 255, .05); }
+    .hx-v-zoom span { min-width: 46px; text-align: center; font: 500 11px/1 "IBM Plex Mono", monospace; color: var(--hxv-mute); }
+
+    .hx-v-body {
+      position: relative; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain;
+      scrollbar-width: thin; scrollbar-color: rgba(127, 205, 255, .25) transparent;
+      background: radial-gradient(120% 70% at 50% 0%, rgba(127, 205, 255, .05), transparent 60%);
+    }
+    html:not(.holo) .hx-v-body { scrollbar-color: rgba(255, 255, 255, .2) transparent; background: none; }
+    .hx-v-body.flush { overflow: hidden; }
+    .hx-v-pages { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 20px 20px 72px; box-sizing: border-box; margin: 0 auto; }
+    .hx-v-page { position: relative; width: 100%; background: #fff; border-radius: 3px; overflow: hidden; box-shadow: 0 1px 0 rgba(255, 255, 255, .06), 0 10px 30px rgba(0, 0, 0, .5); }
+    .hx-v-page canvas { display: block; width: 100%; height: 100%; }
+    .hx-v-page:not(.drawn)::after {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(100deg, #eef1f4 30%, #f8fafb 50%, #eef1f4 70%); background-size: 300% 100%;
+      animation: hxv-shim 1.4s linear infinite;
+    }
+    @keyframes hxv-shim { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+    .hx-v-pill {
+      position: absolute; left: 50%; bottom: 18px; z-index: 2; transform: translate(-50%, 8px); opacity: 0; pointer-events: none;
+      padding: 7px 12px; border-radius: 999px; background: rgba(4, 9, 14, .88); border: 1px solid var(--hxv-line);
+      font: 500 11px/1 "IBM Plex Mono", monospace; letter-spacing: .08em; color: #dfe8ef; transition: opacity .25s, transform .25s;
+    }
+    .hx-v-pill.on { opacity: 1; transform: translate(-50%, 0); }
+    .hx-v-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+    .hx-v-frame.dark { background: transparent; }
+    .hx-v-imgwrap { min-height: 100%; box-sizing: border-box; display: grid; place-items: center; padding: 24px; }
+    .hx-v-imgwrap img { display: block; max-width: 100%; height: auto; border-radius: 6px; box-shadow: 0 10px 30px rgba(0, 0, 0, .45); cursor: zoom-in; background: repeating-conic-gradient(#1b2530 0 25%, #141c25 0 50%) 0 0 / 16px 16px; }
+    .hx-v-imgwrap.actual { place-items: start; }
+    .hx-v-imgwrap.actual img { max-width: none; cursor: zoom-out; }
+    .hx-v-media { display: grid; place-items: center; min-height: 100%; padding: 24px; box-sizing: border-box; }
+    .hx-v-media video { max-width: 100%; border-radius: 8px; }
+    .hx-v-text { margin: 0; padding: 20px 22px 40px; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12.5px/1.65 "IBM Plex Mono", monospace; color: #c9d6e0; }
+    .hx-v-md { padding: 22px 26px 48px; font-size: 14.5px; line-height: 1.7; color: #dce6ed; overflow-wrap: anywhere; }
+    .hx-v-md h1, .hx-v-md h2, .hx-v-md h3 { color: #f4f8fb; line-height: 1.3; margin: 1.2em 0 .5em; }
+    .hx-v-md h1:first-child, .hx-v-md h2:first-child { margin-top: 0; }
+    .hx-v-md a { color: var(--hxv-acc); }
+    .hx-v-md pre { padding: 12px 14px; border-radius: 8px; background: rgba(255, 255, 255, .04); overflow-x: auto; }
+    .hx-v-md table { border-collapse: collapse; }
+    .hx-v-md th, .hx-v-md td { border: 1px solid var(--hxv-line); padding: 6px 10px; }
+    .hx-v-table { border-collapse: separate; border-spacing: 0; min-width: 100%; font: 400 12.5px/1.45 "IBM Plex Sans", sans-serif; }
+    .hx-v-table th, .hx-v-table td { padding: 8px 12px; border-bottom: 1px solid var(--hxv-line); text-align: left; white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+    .hx-v-table th { position: sticky; top: 0; z-index: 1; background: var(--hxv-bg); font: 600 10.5px/1.2 "IBM Plex Mono", monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--hxv-mute); }
+    .hx-v-table tbody tr:hover td { background: rgba(255, 255, 255, .03); }
+    .hx-v-note { padding: 10px 16px 24px; font: 500 11px/1.4 "IBM Plex Mono", monospace; color: var(--hxv-mute); }
+    .hx-v-skel { padding: 20px; display: flex; flex-direction: column; gap: 16px; align-items: center; }
+    .hx-v-skel i { display: block; width: 100%; max-width: 640px; aspect-ratio: 8.5 / 11; border-radius: 3px; background: linear-gradient(100deg, rgba(255, 255, 255, .04) 30%, rgba(255, 255, 255, .09) 50%, rgba(255, 255, 255, .04) 70%); background-size: 300% 100%; animation: hxv-shim 1.4s linear infinite; }
+    .hx-v-empty { min-height: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 32px; text-align: center; color: var(--hxv-mute); }
+    .hx-v-empty b { font: 600 15px/1.3 "IBM Plex Sans", sans-serif; color: #e9f0f5; }
+    .hx-v-empty p { margin: 0; max-width: 340px; font-size: 13.5px; line-height: 1.55; text-wrap: pretty; }
+    .hx-v-empty a { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--hxv-acc); color: var(--hxv-acc); text-decoration: none; font: 600 12px/1 "IBM Plex Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }
+    #messages a.hx-v-active { color: var(--hxv-acc, #7fdcff); text-decoration: underline; text-underline-offset: 3px; }
+    #messages .tool-media-file { cursor: pointer; }
+
+    @media (min-width: 1000px) {
+      html.hx-viewer-open .app { right: var(--hxv-w, min(760px, 48vw)) !important; }
+      html.has-topbar .app { transition: right .4s cubic-bezier(.2, .8, .2, 1); }
+    }
+    @media (max-width: 500px) {
+      .hx-viewer { top: 0; width: 100% !important; z-index: 80; border-left: 0; padding-top: env(safe-area-inset-top, 0px); }
+      .hx-v-grip { display: none; }
+      .hx-v-head { padding: 10px 10px 10px 14px; gap: 10px; }
+      .hx-v-btn { width: 40px; height: 40px; }
+      .hx-v-zoom { display: none; }
+      .hx-v-pages { padding: 12px 10px calc(60px + env(safe-area-inset-bottom, 0px)); gap: 10px; }
+    }
+    html.hx-viewer-top .hx-viewer { z-index: 210; }
+    #files-view .file-item.hx-v-active, #artefacts-view .tk-card.hx-v-active { outline: 1px solid var(--hxv-acc, #7fdcff); outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <header class="hx-topbar" id="hx-topbar" role="toolbar" aria-label="Display">
+    <button type="button" class="hx-tb-menu" id="hx-tb-menu" aria-label="Open menu"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    <div class="hx-tb-brand">
+      <span class="hx-tb-mark"><svg viewBox="0 0 32 32" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="square"><path d="M9 6v20M23 6v20M9 16h14"/></svg></span>
+      <span class="hx-tb-word">HERMES</span>
+    </div>
+    <span class="hx-tb-sep"></span>
+    <label class="hx-tb-group hx-tb-biz" title="Active business — applies to every tab">
+      <span class="hx-tb-k">Business</span>
+      <select id="hermes-biz-select-top" class="hx-tb-select" aria-label="Active business"></select>
+    </label>
+    <button type="button" class="hx-tb-attn" id="hx-tb-attn" title="Open Home">
+      <i class="hud-led" id="hx-status-led"></i><span id="hx-status">Systems check</span>
+    </button>
+    <span class="hx-tb-sep"></span>
+    <div class="ab" id="agent-bar" role="toolbar" aria-label="Agent settings">
+      <label class="ab-f" title="Agent model — applies to every conversation">
+        <span class="ab-k">Model</span>
+        <select id="model-select" aria-label="Agent model">
+          {% for m in model_options %}
+          <option value="{{ m.id }}" {% if m.id == active_model %}selected{% endif %}
+                  {% if m.available is defined and not m.available %}disabled{% endif %}>{{ m.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="ab-status" aria-live="polite">
+        <p class="hint" id="model-select-status" hidden></p>
+        <p class="hint" id="context-select-status" hidden></p>
+        <p class="hint" id="apps-select-status" hidden></p>
+      </div>
+      <div class="ab-pop" role="group" aria-label="More agent options">
+        <label class="ab-f" title="Reasoning effort — Auto sizes thinking to each question. Applies to your next message.">
+          <span class="ab-k">Reasoning</span>
+          <select id="effort-select" aria-label="Reasoning effort" data-default="{{ active_effort }}">
+            <option value="auto" selected>Auto</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+        {% if voice_enabled %}
+        <label class="ab-f" title="Voice used for voice calls">
+          <span class="ab-k">Voice</span>
+          <select id="voice-select" aria-label="Voice">
+            {% for vo in voices %}
+            <option value="{{ vo }}" {% if vo == voice %}selected{% endif %}>{{ vo|capitalize }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endif %}
+        <div class="ab-t" title="Off: Hermes stops carrying memory, the context pack and documents into each message. Cheaper; apps stay connected.">
+          <span class="ab-k">Business context</span>
+          <label class="tk-toggle" id="context-toggle" title="{% if context_enabled %}On{% else %}Off{% endif %}">
+            <input type="checkbox" id="context-toggle-input" aria-label="Business context" {% if context_enabled %}checked{% endif %}>
+            <span class="tk-toggle-track"></span>
+          </label>
+          <span class="ab-v" id="context-toggle-label">{% if context_enabled %}On{% else %}Off{% endif %}</span>
+        </div>
+        <div class="ab-t" title="Off: Hermes can't email, reach Drive/Calendar/Jira/WhatsApp, search the web or read files. Biggest saving.">
+          <span class="ab-k">Apps access</span>
+          <label class="tk-toggle" id="apps-toggle" title="{% if apps_enabled %}On{% else %}Off{% endif %}">
+            <input type="checkbox" id="apps-toggle-input" aria-label="Apps access" {% if apps_enabled %}checked{% endif %}>
+            <span class="tk-toggle-track"></span>
+          </label>
+          <span class="ab-v" id="apps-toggle-label">{% if apps_enabled %}On{% else %}Off{% endif %}</span>
+        </div>
+      </div>
+    </div>
+    <span class="hx-tb-sep"></span>
+    <div class="hx-tb-group" id="hx-tb-data" title="Connecting to the Hermes API…">
+      <span class="hx-tb-k">Data</span>
+      <span class="hx-tb-dot"></span>
+      <span class="hx-tb-v" id="hx-tb-status">Connecting…</span>
+    </div>
+    <span class="hx-tb-sep hx-tb-skin-sep"></span>
+    <div class="hx-tb-group hx-tb-skin">
+      <span class="hx-tb-k">Skin</span>
+      <div class="hx-tb-seg" role="group" aria-label="Skin">
+        <button type="button" data-skin="holo">Holo</button>
+        <button type="button" data-skin="stock">Stock</button>
+      </div>
+    </div>
+    <div class="hx-tb-end">
+      <span class="hx-tb-date" id="hx-date">—</span>
+      <button type="button" class="hx-tb-btn" id="hx-tb-palette" title="Command palette"><span class="hx-tb-kbd">Ctrl K</span></button>
+      <button type="button" class="hx-tb-btn hx-tb-icon" id="hx-tb-replay" title="Replay intro" aria-label="Replay intro">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M4 4v6h6"/><path d="M5.5 15a7 7 0 1 0 1.6-7.3L4 10"/></svg>
+      </button>
+      <button type="button" class="hx-tb-present" id="hx-tb-present" title="Full screen">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/></svg>Present
+      </button>
+    </div>
+    <button type="button" class="hx-tb-act" id="hx-tb-act" aria-label="New" hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+  </header>
+
+  <div class="app" id="app" data-view="home">
+    <div class="overlay" id="overlay"></div>
+
+    <!--
+      Left navigation: a narrow icon strip (always on screen) + a sliding
+      content panel. Collapsing hides only the content panel — the icon
+      strip stays so section tabs are always reachable.
+    -->
+    <nav class="leftnav" id="leftnav">
+
+      <!-- Icon strip: brand + section tabs + collapse toggle -->
+      <div class="icon-strip">
+        <div class="strip-brand">
+          <div class="logo hx-mark"><svg viewBox="0 0 32 32" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"><path d="M9 6v20M23 6v20M9 16h14"/><path d="M4 11l5-5M28 21l-5 5" stroke-width="1.4" opacity=".7"/></svg></div>
+        </div>
+
+        <div class="strip-tabs">
+          <button class="strip-tab active" type="button" data-view="home" title="Home">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+              <circle cx="12" cy="12" r="3.2"/>
+              <circle cx="12" cy="12" r="7" stroke-dasharray="3 4"/>
+              <circle cx="12" cy="12" r="10.2" stroke-dasharray="1.5 5" opacity=".8"/>
+            </svg>
+            <span>Home</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="agent" title="AI Agent">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="4" y="8" width="16" height="12" rx="2"/>
+              <path d="M12 8V4"/>
+              <circle cx="9" cy="14" r="1.3" fill="currentColor" stroke="none"/>
+              <circle cx="15" cy="14" r="1.3" fill="currentColor" stroke="none"/>
+              <path d="M2 14h2M20 14h2"/>
+            </svg>
+            <span>Agent</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="schema" title="How Hermes works">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2.5" y="9.5" width="5" height="5"/><rect x="16.5" y="3.5" width="5" height="5"/><rect x="16.5" y="15.5" width="5" height="5"/>
+              <path d="M7.5 12h4M11.5 6v12M11.5 6h5M11.5 18h5"/>
+            </svg>
+            <span>System</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="bills" title="Billing &amp; Invoices">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 3v18l2-1 2 1 2-1 2 1 2-1 2 1V3l-2 1-2-1-2 1-2-1-2 1-2-1z"/>
+              <line x1="8" y1="9" x2="16" y2="9"/>
+              <line x1="8" y1="13" x2="14" y2="13"/>
+            </svg>
+            <span>Billing</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="meeting" title="Meeting Copilot">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            <span>Meeting</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="context" title="Business Context">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="8" y1="13" x2="16" y2="13"/>
+              <line x1="8" y1="17" x2="13" y2="17"/>
+            </svg>
+            <span>Context</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="tasks" title="Scheduled Tasks">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="13" r="8"/>
+              <path d="M12 9v4l2.5 1.5"/>
+              <path d="M5 3 2 6"/>
+              <path d="M19 3l3 3"/>
+            </svg>
+            <span>Tasks</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="multiagents" title="Multi-agents">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="6" r="2.6"/>
+              <circle cx="5" cy="17" r="2.6"/>
+              <circle cx="19" cy="17" r="2.6"/>
+              <path d="M12 8.6v3.4M12 12l-5.2 2.9M12 12l5.2 2.9"/>
+            </svg>
+            <span>Multi-agents</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="files" title="File Explorer">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            </svg>
+            <span>Files</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="jobs" title="Jobs">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 4h4a2 2 0 0 1 2 2v2h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3V6a2 2 0 0 1 2-2z"/>
+              <path d="M8 8V6h8v2"/>
+            </svg>
+            <span>Jobs</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="artefacts" title="Artifacts">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 5h5l2 2h9v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>
+              <path d="M8 11h8"/>
+              <path d="M8 15h5"/>
+            </svg>
+            <span>Artifacts</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="pricing" title="Usage &amp; Cost">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/>
+              <path d="M13 6v12"/>
+            </svg>
+            <span>Usage</span>
+          </button>
+          <button class="strip-tab" type="button" data-view="settings" title="Settings">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            <span>Settings</span>
+          </button>
+        </div>
+
+        <button class="strip-toggle" id="strip-toggle" type="button" title="Toggle sidebar">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="11 17 6 12 11 7"/>
+            <polyline points="18 17 13 12 18 7"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Content panel: section-specific sidebar content, slides in/out -->
+      <div class="content-panel" id="content-panel">
+
+        <!-- AI Agent panel: conversation history + settings -->
+        <div class="panel-section visible" id="panel-agent">
+          <p class="chat-lock-note" id="chat-lock-note" hidden></p>
+
+          <button id="reset-btn" class="ghost new-convo">＋ New conversation</button>
+
+          <!-- Agent mode: pick a Multi-agents agent and Hermes answers AS it
+               (its prompt, tools and mode) — static/agent-mode.js -->
+          <div class="panel agent-mode-bar" id="agent-mode-bar">
+            <h2>Agent mode</h2>
+            <select id="agent-mode-agent" class="voice-select" aria-label="Agent">
+              <option value="">⚡ Hermes (default)</option>
+            </select>
+            <select id="agent-mode-mode" class="voice-select" aria-label="Agent mode" hidden></select>
+            <p class="hint agent-mode-info" id="agent-mode-info"></p>
+          </div>
+
+          <div class="panel history-panel">
+            <h2>History</h2>
+            <div class="convo-search">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input id="convo-search-input" type="search" placeholder="Search chats…" autocomplete="off" aria-label="Search conversations" />
+            </div>
+            <ul class="convos" id="convos"></ul>
+            <p class="hint" id="convos-empty">No conversations yet.</p>
+          </div>
+
+          <details class="panel apps-panel">
+            <summary>
+              <span class="apps-title">Connected apps</span>
+              <span class="badge">{{ apps|length }}</span>
+              <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </summary>
+            <div class="apps-body">
+              <ul class="apps">
+                {% for a in apps %}<li>{{ a }}</li>{% endfor %}
+              </ul>
+              <div class="connect-row">
+                <input id="connect-app" placeholder="app slug e.g. quickbooks" autocomplete="off" />
+                <button id="connect-btn" title="Get OAuth link">Connect</button>
+              </div>
+              <p id="connect-result" class="hint"></p>
+            </div>
+          </details>
+
+          {% if web_search %}
+          <div class="panel push-bottom">
+            <p class="hint">Web search enabled</p>
+          </div>
+          {% endif %}
+        </div>
+
+        <!-- Billing panel: sidebar metadata for the Billing section -->
+        <div class="panel-section" id="panel-bills">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-bills" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-bills" hidden></p>
+          </div>
+
+          <div class="bills-panel-head" hidden>
+            <div class="bills-panel-icon">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v18l2-1 2 1 2-1 2 1 2-1 2 1V3l-2 1-2-1-2 1-2-1-2 1-2-1z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg>
+            </div>
+            <div>
+              <div class="bills-panel-title">Billing &amp; Invoices</div>
+              <div class="bills-panel-sub">AI-powered extraction</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2>Recent Bills</h2>
+            <p class="hint" style="margin-top:6px;">No bills yet. Upload from the main view.</p>
+          </div>
+
+        </div>
+
+        <!-- Meeting Copilot panel: sidebar metadata for the Meeting section -->
+        <div class="panel-section" id="panel-meeting">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-meeting" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-meeting" hidden></p>
+          </div>
+
+          <button id="meeting-new-btn" class="ghost new-convo">＋ New meeting</button>
+
+          <div class="panel history-panel">
+            <h2>Past Meetings</h2>
+            <div class="convo-search">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input id="meeting-search-input" type="search" placeholder="Search meetings…" autocomplete="off" aria-label="Search meetings" />
+            </div>
+            <ul class="convos" id="meeting-sessions"></ul>
+            <p class="hint" id="meeting-sessions-empty">No meetings yet for this business.</p>
+          </div>
+
+          <div class="panel push-bottom">
+            <p class="hint">Guidance is grounded only in what's already been indexed for the selected business — nothing invented, every claim sourced.</p>
+          </div>
+        </div>
+
+        <!-- Business Context panel: sidebar metadata for the Context section -->
+        <div class="panel-section" id="panel-context">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-context" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-context" hidden></p>
+          </div>
+
+          <div class="panel push-bottom">
+            <p class="hint">Hermes can search the notes and files you add here while chatting. Each business keeps its own.</p>
+          </div>
+        </div>
+
+        <!-- Scheduled Tasks panel: sidebar metadata for the Tasks section -->
+        <div class="panel-section" id="panel-tasks">
+          <button id="task-new-btn" class="ghost new-convo">＋ New task</button>
+
+          <div class="panel push-bottom">
+            <p class="hint" id="tasks-cron-hint">Tasks fire when your scheduler pings <code>/api/scheduled-tasks/run-due</code>. Use <strong>Run now</strong> to test any task instantly.</p>
+          </div>
+        </div>
+
+        <!-- File Explorer panel: folder tree (business comes from the top bar) -->
+        <div class="panel-section" id="panel-files">
+          <button id="files-refresh-btn" class="ghost new-convo">↻ Refresh</button>
+
+          <div class="panel files-tree-panel">
+            <h2 id="files-tree-title">Folders</h2>
+            <div class="files-folder-tree" id="files-folder-tree" role="tree"></div>
+            <p class="hint" id="files-tree-empty" hidden>No folders yet.</p>
+          </div>
+        </div>
+
+        <!-- Jobs panel: sidebar metadata for the Jobs section -->
+        <div class="panel-section" id="panel-jobs">
+          <div class="panel">
+            <h2>Jobs</h2>
+            <p class="hint">Recurring background jobs — scrapers &amp; data pipelines that run on a schedule and write their output to storage.</p>
+          </div>
+
+          <button id="jobs-refresh-btn" class="ghost new-convo">↻ Refresh</button>
+
+          <div class="panel push-bottom">
+            <p class="hint" id="jobs-cron-hint">Jobs fire when your scheduler pings <code>/api/jobs/run-due</code>. Use <strong>Start</strong> to run any job instantly.</p>
+          </div>
+        </div>
+
+        <!-- Artefacts panel: business selector + metadata for the Artefacts section -->
+        <div class="panel-section" id="panel-artefacts">
+          <div class="panel biz-scope-panel">
+            <h2>Business</h2>
+            <select id="hermes-biz-select-artefacts" class="voice-select" aria-label="Active business"></select>
+            <p class="biz-not-connected" id="hermes-biz-badge-artefacts" hidden></p>
+          </div>
+
+          <button id="artefacts-refresh-btn" class="ghost new-convo">↻ Refresh</button>
+
+          <div class="panel push-bottom">
+            <p class="hint">Open an artifact to see current data (or <strong>Sync now</strong>). Files re-download with a fresh link every time.</p>
+          </div>
+        </div>
+
+        <!-- Usage panel: sidebar metadata for the Usage &amp; Cost section -->
+        <div class="panel-section" id="panel-pricing">
+          <div class="panel">
+            <h2>Usage &amp; Cost</h2>
+            <p class="hint">Tokens used and what each chat cost, priced per model. Totals cover every recorded turn.</p>
+          </div>
+
+          <button id="pricing-refresh-btn" class="ghost new-convo">↻ Refresh</button>
+
+        </div>
+
+      </div><!-- /content-panel -->
+    </nav><!-- /leftnav -->
+
+    <!-- ── Main area: AI Agent (chat) ─────────────────────────────── -->
+    <main class="chat">
+     <div class="chat-col" id="chat-col">
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm">⚡</span> Hermes</div>
+        <button class="icon-btn plus" id="reset-top" aria-label="New conversation">＋</button>
+      </header>
+
+
+      <div id="messages" class="messages">
+        <div class="msg assistant">
+          <div class="bubble">Hi! I'm connected to your business apps. How can I help you?</div>
+        </div>
+      </div>
+
+      <div class="v2-starters" id="v2-starters" aria-label="Suggested prompts">
+        <button type="button" class="v2-starter">What needs my attention today?</button>
+        <button type="button" class="v2-starter">Which bills are due this week?</button>
+        <button type="button" class="v2-starter">Summarize yesterday's emails</button>
+        <button type="button" class="v2-starter">What meetings do I have tomorrow?</button>
+      </div>
+
+      <form id="composer" class="composer">
+        <div id="attachments" class="attachments"></div>
+        <div class="composer-row">
+          <label class="attach-btn" title="Attach files" aria-label="Attach files">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            <input id="file-input" type="file" multiple hidden />
+          </label>
+          <textarea id="input" rows="1" placeholder="Message Hermes…"></textarea>
+          {% if voice_enabled %}
+          <button id="voice-btn" type="button" class="voice-btn" title="Start voice call" aria-label="Start voice call">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </button>
+          {% endif %}
+          <button id="send-btn" type="submit" aria-label="Send">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </form>
+     </div><!-- /chat-col -->
+
+      <!-- Right-side artefact viewer — opens in-place when an artefact link in
+           chat is clicked; the header offers "open in new tab". -->
+      <aside class="artefact-side" id="artefact-side" hidden aria-label="Artifact viewer">
+        <header class="artefact-side-head">
+          <div class="artefact-side-title" id="artefact-side-title">Artifact</div>
+          <div class="artefact-side-actions">
+            <button class="artefact-side-btn" id="artefact-side-newtab" type="button" title="Open in new tab">↗ New tab</button>
+            <button class="artefact-side-btn" id="artefact-side-close" type="button" title="Close" aria-label="Close">✕</button>
+          </div>
+        </header>
+        <iframe id="artefact-side-frame" class="artefact-side-frame" title="Artifact canvas" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
+      </aside>
+    </main>
+
+    <!-- ── Main area: Billing & Invoices ──────────────────────────── -->
+    <main class="bills-view" id="bills-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-bills" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(245,166,35,.15);font-size:15px;">🧾</span> Billing</div>
+        <label class="icon-btn" for="bill-file-input-m" title="Upload" style="cursor:pointer;margin-left:auto">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <input type="file" id="bill-file-input-m" multiple accept=".pdf,.jpg,.jpeg,.png,.heic" hidden />
+        </label>
+      </header>
+
+      <!-- Full bills page -->
+      <div class="bills-page" id="bills-page">
+
+        <!-- Page header -->
+        <div class="bills-pg-header">
+          <div>
+            <h2 class="bills-pg-title">Billing &amp; Invoices</h2>
+            <p class="bills-pg-sub">AI extracts &amp; organizes across all your businesses</p>
+          </div>
+          <label class="bills-upload-btn" for="bill-file-input">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload Bills
+          </label>
+          <input type="file" id="bill-file-input" multiple accept=".pdf,.jpg,.jpeg,.png,.heic" hidden />
+        </div>
+
+        <!-- Two modes. "Register" is the Google Sheet — the source of truth for
+             recurring bills, which Hermes reads and never authors. "Documents"
+             is Hermes' own store of the original PDFs and emails, which is what
+             lets it resolve the register's unverified amounts. -->
+        <div class="reg-tabs" id="reg-tabs">
+          <button class="reg-tab" data-mode="overview" onclick="setBillingMode('overview')">Overview</button>
+          <button class="reg-tab is-active" data-mode="register" onclick="setBillingMode('register')">
+            Register <span class="reg-tab-count" id="reg-count-lines"></span>
+          </button>
+          <button class="reg-tab" data-mode="documents" onclick="setBillingMode('documents')">
+            Documents <span class="reg-tab-count" id="reg-count-docs"></span>
+          </button>
+          <a class="reg-sheet-link" id="reg-sheet-link" target="_blank" rel="noopener noreferrer">Open in Google Sheets ↗</a>
+        </div>
+
+        <div class="bo" id="bill-overview" hidden></div>
+
+        <!-- Stats row — rendered by bills.js -->
+        <div class="bills-stats-row" id="bills-stats-row"></div>
+
+        <!-- Register mode -->
+        <div id="register-pane">
+          <div class="reg-toolbar" id="reg-toolbar"></div>
+          <div class="reg-list" id="reg-list"></div>
+        </div>
+
+        <!-- Documents mode: Hermes' own captured files -->
+        <div class="bills-main-grid" id="documents-pane" hidden>
+
+          <!-- Left: dropzone + toolbar + list -->
+          <div class="bills-left-col">
+            <div class="bills-dropzone" id="bills-dropzone"></div>
+            <div class="bills-toolbar" id="bills-toolbar" hidden></div>
+            <div class="bills-list" id="bills-list"></div>
+          </div>
+
+          <!-- Right: AI insights — fully rendered by bills.js -->
+          <div class="bills-right-col">
+            <div id="bills-insights"></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- AI Business Confirmation overlay (low-confidence assignment) -->
+      <div class="ai-confirm-overlay" id="ai-confirm-overlay" hidden>
+        <div class="ai-confirm-card">
+          <div class="ai-confirm-top">
+            <div class="ai-confirm-emoji">🤔</div>
+            <div>
+              <div class="ai-confirm-title">Which business is this for?</div>
+              <div class="ai-confirm-vendor" id="ai-confirm-vendor"></div>
+            </div>
+          </div>
+          <p class="ai-confirm-hint" id="ai-confirm-hint"></p>
+          <div class="ai-confirm-grid" id="ai-confirm-grid"></div>
+          <button class="ai-confirm-skip" id="ai-confirm-skip">Skip for now</button>
+        </div>
+      </div>
+
+      <!-- Bill document viewer modal -->
+      <div class="bv-overlay" id="bv-overlay" hidden>
+        <div class="bv-modal">
+          <div class="bv-header">
+            <div class="bv-header-left">
+              <div class="bv-vendor" id="bv-vendor"></div>
+              <div class="bv-meta" id="bv-meta"></div>
+            </div>
+            <div class="bv-header-right">
+              <button class="bv-action-btn bv-paid-btn" id="bv-paid-btn" onclick="markPaidFromViewer()">✓ Mark Paid</button>
+              <button class="bv-action-btn bv-assign-btn" id="bv-assign-btn" onclick="assignFromViewer()">📁 Assign</button>
+              <button class="bv-action-btn bv-delete-btn" id="bv-delete-btn" onclick="deleteFromViewer()">🗑 Delete</button>
+              <button class="bv-close-btn" onclick="closeBillViewer()" title="Close">✕</button>
+            </div>
+          </div>
+          <!-- Editable bill details. Gmail and Drive bills arrive as stubs
+               with no amount and no due date, and nothing in the UI could set
+               them — so those bills could never age into Due Soon or Overdue
+               and never counted toward a total. -->
+          <form class="bv-edit" id="bv-edit" onsubmit="return saveBillDetails(event)">
+            <label class="bv-field">
+              <span>Amount</span>
+              <input type="number" step="0.01" id="bv-edit-amount" placeholder="—" />
+            </label>
+            <label class="bv-field bv-field-sm">
+              <span>Currency</span>
+              <input type="text" id="bv-edit-currency" maxlength="3" placeholder="USD" />
+            </label>
+            <label class="bv-field">
+              <span>Due date</span>
+              <input type="date" id="bv-edit-due" />
+            </label>
+            <label class="bv-field">
+              <span>Invoice #</span>
+              <input type="text" id="bv-edit-invoice" placeholder="—" />
+            </label>
+            <button type="submit" class="bv-action-btn bv-save-btn" id="bv-save-btn">Save</button>
+            <span class="bv-edit-status" id="bv-edit-status"></span>
+          </form>
+          <div class="bv-body">
+            <div class="bv-doc" id="bv-doc">
+              <div class="bv-doc-loading" id="bv-doc-loading">
+                <div class="scan-dots"><span></span><span></span><span></span></div>
+                <div style="margin-top:10px;font-size:12px;color:var(--muted)">Loading document…</div>
+              </div>
+            </div>
+          </div>
+          <div class="bv-footer">
+            <span id="bv-source"></span>
+            <span id="bv-invoice"></span>
+            <span id="bv-dates"></span>
+            <span class="bv-status-badge" id="bv-status"></span>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- ── Main area: Meeting Copilot ──────────────────────────────── -->
+    <main class="meeting-view" id="meeting-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-meeting" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(59,130,246,.18);font-size:15px;">🎙</span> Meeting Copilot</div>
+        <button class="icon-btn meeting-listen-btn-m" id="meeting-listen-btn-m" aria-label="Start listening" title="Start listening" style="margin-left:auto">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+      </header>
+
+      <div class="meeting-page" id="meeting-page">
+
+        <!-- Not-connected notice: meeting copilot always needs ONE specific business -->
+        <div class="meeting-need-biz" id="meeting-need-biz" hidden>
+          <div class="meeting-need-biz-card">
+            <div class="v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="1"/><path d="M9 7h2M13 7h2M9 11h2M13 11h2M10 21v-4h4v4"/></svg></div>
+            <h3>Pick a business to start</h3>
+            <p class="hint">Meeting Copilot works on one business at a time, so its guidance comes only from that business's records.</p>
+            <button type="button" class="v2-btn" id="v2-meeting-pick">Choose a business</button>
+            <p class="hint">Past meetings for every business are listed in the sidebar.</p>
+          </div>
+        </div>
+
+        <div class="meeting-main" id="meeting-main">
+          <!-- Page header -->
+          <div class="bills-pg-header">
+            <div>
+              <h2 class="bills-pg-title">Meeting Copilot</h2>
+              <p class="bills-pg-sub" id="meeting-biz-sub">Private guidance grounded in your indexed records</p>
+            </div>
+            <button class="bills-upload-btn meeting-listen-btn" id="meeting-listen-btn" type="button">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              <span id="meeting-listen-label">Start Listening</span>
+            </button>
+          </div>
+
+          <!-- Sub-tabs: Upcoming (calendar + AI briefs) / Live (copilot for one meeting) -->
+          <div class="meeting-subtabs">
+            <button class="meeting-subtab active" type="button" data-sub="upcoming">Upcoming</button>
+            <button class="meeting-subtab" type="button" data-sub="live">Live</button>
+          </div>
+
+          <!-- ── Upcoming: calendar events + AI pre-meeting briefs ────────── -->
+          <div class="meeting-sub-view" id="meeting-sub-upcoming">
+            <div class="meeting-upcoming-list" id="meeting-upcoming-list"></div>
+            <p class="hint meeting-upcoming-empty" id="meeting-upcoming-empty">Loading upcoming meetings…</p>
+          </div>
+
+          <!-- ── Live: one meeting's brief, notes, guidance, and (once ended)
+               its summary + Fathom link ──────────────────────────────────── -->
+          <div class="meeting-sub-view" id="meeting-sub-live" hidden>
+
+            <!-- Brief + AI notes side by side; each opens on its own, and while
+                 either is open the row fills the visible height (meeting.js). -->
+            <div class="meeting-docs" id="meeting-docs" hidden>
+              <div class="meeting-brief-box" id="meeting-brief-box" hidden></div>
+              <div class="meeting-ai-notes-box" id="meeting-ai-notes-box" hidden></div>
+            </div>
+            <div class="meeting-summary-box" id="meeting-summary-box" hidden></div>
+
+            <div class="meeting-grid">
+
+              <div class="meeting-col meeting-notes-col">
+                <div class="meeting-col-head">
+                  <span>Notes &amp; Transcript</span>
+                  <div class="meeting-col-head-actions">
+                    <span class="meeting-status" id="meeting-status">Not listening</span>
+                    <button class="meeting-clear-btn" id="meeting-notes-clear-btn" type="button" title="Clear notes & transcript for this meeting">Clear</button>
+                  </div>
+                </div>
+                <textarea id="meeting-notes" class="meeting-notes" placeholder="Type notes here, or press Start Listening to transcribe the meeting as it happens…"></textarea>
+                <div class="meeting-notes-row">
+                  <input id="meeting-quick-input" class="meeting-quick-input" placeholder="Or type one line and press Enter to ask the copilot right now…" autocomplete="off" />
+                  <button id="meeting-quick-send" class="meeting-quick-send" type="button" title="Ask copilot">Ask</button>
+                </div>
+              </div>
+
+              <div class="meeting-col meeting-guidance-col">
+                <div class="meeting-col-head">
+                  <span>Guidance</span>
+                  <div class="meeting-col-head-actions">
+                    <button class="meeting-clear-btn" id="meeting-guidance-clear-btn" type="button" title="Clear guidance feed for this meeting">Clear</button>
+                    <button class="meeting-end-btn" id="meeting-end-btn" type="button" title="End meeting: generate summary + Fathom link">End meeting</button>
+                  </div>
+                </div>
+                <div class="meeting-feed" id="meeting-feed">
+                  <p class="hint meeting-feed-empty" id="meeting-feed-empty">Guidance will appear here as the meeting happens — grounded in this business's own emails and files, with sources cited.</p>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── Main area: Home HUD ────────────────────────────────────── -->
+    <main class="home-view" id="home-view">
+      <div class="hud">
+        <section class="hud-col">
+          <div class="hud-mod hud-clock">
+            <div class="hud-dial-wrap">
+              <svg class="hud-dial" viewBox="0 0 120 120">
+                <circle class="trk" cx="60" cy="60" r="52"></circle>
+                <circle class="arc" id="hud-day-arc" cx="60" cy="60" r="52" stroke-dasharray="0 999"></circle>
+                <circle class="tick" cx="60" cy="60" r="43" stroke-dasharray="1 7"></circle>
+                <circle class="arc sec" id="hx-sec-arc" cx="60" cy="60" r="46" stroke-dasharray="0 999"></circle>
+              </svg>
+              <div class="hud-dial-center">
+                <div class="hud-month" id="hud-month">—</div>
+                <div class="hud-daynum" id="hud-daynum">—</div>
+              </div>
+            </div>
+            <div>
+              <div class="hud-time" id="hud-time">--:--:--</div>
+              <div class="hud-weekday" id="hud-weekday">—</div>
+              <div class="hud-zone" id="hud-zone">—</div>
+            </div>
+          </div>
+
+          <div class="hud-mod">
+            <h3>Knowledge base</h3>
+            <div class="hud-minis">
+              <div class="hud-mini">
+                <div class="hud-mini-wrap">
+                  <svg class="hud-dial" viewBox="0 0 76 76">
+                    <circle class="trk" cx="38" cy="38" r="32" stroke-width="5"></circle>
+                    <circle class="arc" id="hud-docs-arc" cx="38" cy="38" r="32" stroke-width="5" stroke-dasharray="0 999"></circle>
+                  </svg>
+                  <div class="hud-mini-val" id="hud-docs-val">·</div>
+                </div>
+                <div class="hud-mini-label">Documents</div>
+              </div>
+              <div class="hud-mini">
+                <div class="hud-mini-wrap">
+                  <svg class="hud-dial" viewBox="0 0 76 76">
+                    <circle class="trk" cx="38" cy="38" r="32" stroke-width="5"></circle>
+                    <circle class="arc amber" id="hud-mem-arc" cx="38" cy="38" r="32" stroke-width="5" stroke-dasharray="0 999"></circle>
+                  </svg>
+                  <div class="hud-mini-val" id="hud-mem-val">·</div>
+                </div>
+                <div class="hud-mini-label">Memories</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="hud-mod">
+            <h3>Credit load</h3>
+            <div class="hud-meter-top">
+              <div class="hud-meter-val" id="hud-cost">—</div>
+              <div class="hud-meter-sub" id="hud-cost-cap">—</div>
+            </div>
+            <div class="hud-bar"><i id="hud-cost-bar" style="width:0"></i></div>
+            <div class="hud-split" id="hud-tokens"></div>
+          </div>
+
+          <div class="hud-mod">
+            <h3>Next scheduled runs</h3>
+            <div class="hud-list hud-list-compact" id="hud-sched"></div>
+            <button type="button" class="hud-more" data-goto="tasks">View all →</button>
+          </div>
+        </section>
+
+        <section class="hud-core">
+          <div class="hud-spokes left">
+            <button class="hud-spoke" type="button" data-goto="agent">
+              <span class="lbl">AI Agent</span><span class="ln"></span><span class="dot"></span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="bills">
+              <span class="lbl">Billing</span><span class="cnt" id="hud-c-bills">·</span><span class="ln"></span><span class="dot"></span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="meeting">
+              <span class="lbl">Meetings</span><span class="ln"></span><span class="dot"></span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="context">
+              <span class="lbl">Context</span><span class="cnt" id="hud-c-context">·</span><span class="ln"></span><span class="dot"></span>
+            </button>
+          </div>
+
+          <div class="hud-rings" id="hud-rings">
+            <div class="pl" data-depth="5">
+              <svg class="r-outer" viewBox="0 0 400 400">
+                <circle class="ring-faint" cx="200" cy="200" r="197"></circle>
+                <circle class="ring-seg" cx="200" cy="200" r="188" stroke-dasharray="120 60 40 60 210 90 30 60 180 332"></circle>
+                <circle class="ring-faint" cx="200" cy="200" r="180" stroke-dasharray="2 6"></circle>
+              </svg>
+            </div>
+            <div class="pl" data-depth="9"><svg class="r-ticks" id="hx-ticks" viewBox="0 0 400 400"></svg></div>
+            <div class="pl hx-sweep" data-depth="11"></div>
+            <div class="pl" data-depth="14">
+              <svg class="r-mid" viewBox="0 0 400 400">
+                <circle class="ring-seg-dim" cx="200" cy="200" r="142" stroke-dasharray="60 24 8 24"></circle>
+                <circle class="ring-amber" cx="200" cy="200" r="132" stroke-dasharray="44 785"></circle>
+              </svg>
+            </div>
+            <div class="pl hx-orbit-wrap" data-depth="18"><div class="hx-orbit" id="hx-orbit"></div></div>
+            <div class="pl" data-depth="22">
+              <svg class="r-in" viewBox="0 0 400 400">
+                <circle class="ring-seg" cx="200" cy="200" r="112" stroke-dasharray="4 10"></circle>
+                <circle class="ring-faint" cx="200" cy="200" r="102"></circle>
+              </svg>
+            </div>
+            <div class="hud-core-face pl" data-depth="26">
+              <div class="hud-core-label" id="hx-core-label">Hermes online</div>
+              <div class="hud-core-biz" id="hud-core-biz">All businesses</div>
+              <div class="hx-core-sub" id="hx-core-sub"></div>
+            </div>
+            <div class="hud-core-cap">Central interface</div>
+          </div>
+          <div class="hud-spokes">
+            <button class="hud-spoke" type="button" data-goto="tasks">
+              <span class="dot"></span><span class="ln"></span><span class="cnt" id="hud-c-tasks">·</span><span class="lbl">Tasks</span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="files">
+              <span class="dot"></span><span class="ln"></span><span class="lbl">Files</span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="jobs">
+              <span class="dot"></span><span class="ln"></span><span class="cnt" id="hud-c-jobs">·</span><span class="lbl">Jobs</span>
+            </button>
+            <button class="hud-spoke" type="button" data-goto="artefacts">
+              <span class="dot"></span><span class="ln"></span><span class="lbl">Artifacts</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="hud-col">
+          <div class="hud-mod">
+            <h3>Connected apps</h3>
+            <div class="hud-conns" id="hud-conns"></div>
+          </div>
+          <div class="hud-mod">
+            <h3>Alerts · Hermes runs</h3>
+            <div class="hud-list hud-list-compact" id="hud-alerts"></div>
+            <button type="button" class="hud-more" data-goto="tasks">View all →</button>
+          </div>
+        </section>
+      </div>
+      <footer class="hud-ticker" id="hud-ticker"></footer>
+      <div class="hx-dock">
+        <form class="hx-ask" id="hx-ask" autocomplete="off">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+          <input id="hx-ask-input" type="text" placeholder="Ask Hermes…" aria-label="Ask Hermes" />
+          <button type="submit" class="hx-ask-go">Engage</button>
+          </form>
+      </div>
+    </main>
+
+    <!-- ── Main area: How it works (live schematic) ── -->
+    <main class="schema-view" id="schema-view"></main>
+
+    <!-- ── Main area: Business Context ────────────────────────────── -->
+    <main class="context-view" id="context-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-context" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(245,166,35,.15);font-size:15px;">📚</span> Context</div>
+      </header>
+
+      <div class="context-page" id="context-page">
+        <div class="context-pg-header">
+          <div>
+            <div class="bills-panel-title">Business Context</div>
+            <div class="bills-panel-sub">Notes and files Hermes can search while chatting</div>
+          </div>
+          <div class="context-header-actions">
+            <input type="file" id="context-file-input" accept=".md,.markdown,text/markdown" hidden />
+            <button type="button" id="context-upload-btn" class="ghost">Upload .md file</button>
+          </div>
+        </div>
+
+        <p class="hint" id="context-scope-hint" hidden>"All Businesses" is selected — this will be saved as a <strong>global</strong> note visible to every business, not just one.</p>
+
+        <details class="v2-add" id="v2-context-add"><summary>＋ Add a note</summary>
+        <div class="context-add" id="context-add">
+          <input type="text" id="context-paste-title" class="context-title-input" placeholder="Title (e.g. &quot;Lease terms overview&quot;)" autocomplete="off" />
+          <textarea id="context-paste-body" placeholder="Paste markdown context here…" rows="4"></textarea>
+          <div class="context-add-row">
+            <select id="context-sensitivity" aria-label="Sensitivity">
+              <option value="public">Public</option>
+              <option value="internal" selected>Internal</option>
+              <option value="confidential">Confidential</option>
+              <option value="restricted">Restricted</option>
+            </select>
+            <button type="button" id="context-save-btn">Save as context</button>
+          </div>
+          <p id="context-result" class="hint"></p>
+        </div>
+        </details>
+
+        <div class="context-subtabs" role="tablist">
+          <button type="button" class="context-subtab active" id="context-subtab-files" data-subview="files">Files</button>
+          <button type="button" class="context-subtab" id="context-subtab-memories" data-subview="memories">Memories</button>
+          <button type="button" class="context-subtab" id="context-subtab-skills" data-subview="skills">Skills</button>
+        </div>
+
+        <div id="files-subview">
+          <ul class="context-list" id="context-list"></ul>
+          <p class="hint" id="context-empty" hidden>No context files yet.</p>
+        </div>
+
+        <div id="memories-subview" hidden>
+          <ul class="context-list" id="memory-list"></ul>
+          <p class="hint" id="memory-empty" hidden>No memories yet.</p>
+        </div>
+
+        <div id="skills-subview" hidden>
+          <p class="hint">Reusable playbooks Hermes can pull up mid-chat — each one is a markdown skill scoped to this business.</p>
+          <ul class="context-list" id="skill-list"></ul>
+          <p class="hint" id="skill-empty" hidden>No skills yet.</p>
+        </div>
+      </div>
+
+      <!-- Context file editor/viewer modal -->
+      <div class="cx-overlay" id="cx-overlay" hidden>
+        <div class="cx-modal">
+          <div class="cx-header">
+            <input type="text" id="cx-edit-title" class="cx-edit-title" />
+            <button class="cx-close-btn" id="cx-close-btn" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="cx-body">
+            <textarea id="cx-edit-body" rows="16"></textarea>
+          </div>
+          <div class="cx-footer">
+            <select id="cx-edit-sensitivity" aria-label="Sensitivity">
+              <option value="public">Public</option>
+              <option value="internal">Internal</option>
+              <option value="confidential">Confidential</option>
+              <option value="restricted">Restricted</option>
+            </select>
+            <span class="hint" id="cx-edit-result"></span>
+            <div class="cx-footer-actions">
+              <button class="cx-action-btn cx-delete-btn" id="cx-delete-btn" type="button">Delete</button>
+              <button class="cx-action-btn cx-save-btn" id="cx-save-btn" type="button">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── Main area: Scheduled Tasks ─────────────────────────────── -->
+    <main class="tasks-view" id="tasks-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-tasks" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(139,92,246,.18);font-size:15px;">⏰</span> Tasks</div>
+        <button class="icon-btn plus" id="task-new-btn-m" aria-label="New task" style="margin-left:auto">＋</button>
+      </header>
+
+      <div class="tasks-page" id="tasks-page">
+        <div class="tasks-pg-header">
+          <div>
+            <h2 class="tasks-pg-title">Scheduled tasks</h2>
+            <p class="tasks-pg-sub">Run Hermes on a schedule — briefings, triage, sweeps — automatically.</p>
+            <p class="v2-tz" id="v2-tz"></p>
+          </div>
+          <button class="tasks-new-btn" id="task-new-btn-main" type="button">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New task
+          </button>
+        </div>
+
+        <div class="tasks-list" id="tasks-list"></div>
+        <div class="tasks-empty" id="tasks-empty" hidden>
+          <div class="tasks-empty-icon v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 1.5"/></svg></div>
+          <h3>No scheduled tasks yet</h3>
+          <p class="hint">Create one to have Hermes run on a schedule — a daily briefing, inbox triage, a rent-arrears sweep, whatever you'd otherwise ask in chat every day.</p>
+          <button class="tasks-new-btn" id="task-new-btn-empty" type="button">＋ Create your first task</button>
+        </div>
+      </div>
+
+      <!-- ── Task editor modal (create / edit) ─────────────────────── -->
+      <div class="tk-overlay" id="tk-editor-overlay" hidden>
+        <div class="tk-modal">
+          <div class="tk-header">
+            <div class="tk-title" id="tk-editor-title">New scheduled task</div>
+            <div class="tk-header-actions">
+              <button class="tk-close-btn" id="tk-editor-expand" type="button" aria-label="Expand to full screen" title="Expand to full screen">⤢</button>
+              <button class="tk-close-btn" id="tk-editor-close" type="button" aria-label="Close">✕</button>
+            </div>
+          </div>
+          <div class="tk-body">
+
+            <!-- Quick-start templates -->
+            <div class="tk-templates" id="tk-templates"></div>
+
+            <label class="tk-label">Task name</label>
+            <input type="text" id="tk-name" class="tk-input" placeholder="e.g. Daily AFK morning briefing" autocomplete="off" />
+
+            <label class="tk-label">What should Hermes do? <span class="tk-req">*</span></label>
+            <textarea id="tk-prompt" class="tk-textarea" rows="4" placeholder="Describe the task exactly as you'd ask in chat. e.g. “Scan AFK's Gmail and Calendar for anything that needs my attention today and write me a short briefing with what's urgent, what's coming up, and any bills due.”"></textarea>
+
+            <div class="tk-row">
+              <div class="tk-col">
+                <label class="tk-label">Business</label>
+                <select id="tk-business" class="tk-input"></select>
+              </div>
+              <div class="tk-col">
+                <label class="tk-label">Timezone</label>
+                <select id="tk-timezone" class="tk-input">
+                  <option value="America/Chicago">Central (Twin Cities)</option>
+                  <option value="America/New_York">Eastern</option>
+                  <option value="America/Los_Angeles">Pacific</option>
+                  <option value="Africa/Nairobi">East Africa (Kenya)</option>
+                  <option value="UTC">UTC</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Schedule builder -->
+            <label class="tk-label">When should it run?</label>
+            <div class="tk-schedule">
+              <div class="tk-freq-tabs" id="tk-freq-tabs">
+                <button type="button" class="tk-freq active" data-freq="daily">Daily</button>
+                <button type="button" class="tk-freq" data-freq="weekdays">Weekdays</button>
+                <button type="button" class="tk-freq" data-freq="weekly">Weekly</button>
+                <button type="button" class="tk-freq" data-freq="hourly">Hourly</button>
+              </div>
+
+              <div class="tk-days" id="tk-days" hidden>
+                <button type="button" class="tk-day" data-day="0">Mon</button>
+                <button type="button" class="tk-day" data-day="1">Tue</button>
+                <button type="button" class="tk-day" data-day="2">Wed</button>
+                <button type="button" class="tk-day" data-day="3">Thu</button>
+                <button type="button" class="tk-day" data-day="4">Fri</button>
+                <button type="button" class="tk-day" data-day="5">Sat</button>
+                <button type="button" class="tk-day" data-day="6">Sun</button>
+              </div>
+
+              <div class="tk-times-wrap" id="tk-times-wrap">
+                <div class="tk-times-label" id="tk-times-label">At these times</div>
+                <div class="tk-times" id="tk-times"></div>
+                <div class="tk-add-time">
+                  <input type="time" id="tk-time-input" class="tk-input tk-time-input" value="07:00" />
+                  <button type="button" id="tk-add-time-btn" class="tk-add-btn">＋ Add time</button>
+                </div>
+              </div>
+              <p class="tk-sched-preview" id="tk-sched-preview"></p>
+            </div>
+
+            <!-- Backfill / date window -->
+            <label class="tk-label tk-window-toggle">
+              <input type="checkbox" id="tk-window-on" />
+              <span>Process a date range, one day per run <span class="tk-hint-inline">(backfill — each run reads a single day and reports, marching across the range)</span></span>
+            </label>
+            <div class="tk-window" id="tk-window" hidden>
+              <div class="tk-window-row">
+                <div class="tk-field">
+                  <label class="tk-sublabel" for="tk-window-start">From (first day)</label>
+                  <input type="date" id="tk-window-start" class="tk-input" />
+                </div>
+                <div class="tk-field">
+                  <label class="tk-sublabel" for="tk-window-end">To (last day)</label>
+                  <input type="date" id="tk-window-end" class="tk-input" />
+                </div>
+                <div class="tk-field tk-field-narrow">
+                  <label class="tk-sublabel" for="tk-window-step">Days / run</label>
+                  <input type="number" id="tk-window-step" class="tk-input" min="1" step="1" value="1" />
+                </div>
+              </div>
+              <div class="tk-window-pace" id="tk-window-pace">
+                <label class="tk-auto-opt"><input type="radio" name="tk-window-pace" value="catchup" checked><div><span class="tk-auto-name">Catch up fast</span><span class="tk-auto-desc">Drain the whole range now — one run per day, back-to-back, until done. Best for a past range.</span></div></label>
+                <label class="tk-auto-opt"><input type="radio" name="tk-window-pace" value="scheduled"><div><span class="tk-auto-name">One day per scheduled run</span><span class="tk-auto-desc">Advance a single day each time the schedule above fires.</span></div></label>
+              </div>
+              <p class="tk-sched-preview" id="tk-window-preview"></p>
+            </div>
+
+            <!-- Allowed apps -->
+            <label class="tk-label">Which apps can it use? <span class="tk-hint-inline">(none selected = all connected apps)</span></label>
+            <div class="tk-apps" id="tk-apps"></div>
+
+            <!-- Autonomy -->
+            <label class="tk-label">How far can it act on its own?</label>
+            <div class="tk-autonomy" id="tk-autonomy">
+              <label class="tk-auto-opt"><input type="radio" name="tk-autonomy" value="readonly" checked><div><span class="tk-auto-name">Read-only</span><span class="tk-auto-desc">Reads, analyzes &amp; reports. Never sends or changes anything. Safest.</span></div></label>
+              <label class="tk-auto-opt"><input type="radio" name="tk-autonomy" value="draft"><div><span class="tk-auto-name">Draft</span><span class="tk-auto-desc">Read-only, plus can prepare Gmail drafts for you to review &amp; send.</span></div></label>
+              <label class="tk-auto-opt"><input type="radio" name="tk-autonomy" value="full"><div><span class="tk-auto-name">Full — act on my behalf</span><span class="tk-auto-desc">May send &amp; modify unattended. Only for tasks you fully trust.</span></div></label>
+            </div>
+
+            <!-- Notify to (email the result + any files here on each run) -->
+            <label class="tk-label" for="tk-notify">Email the results to <span class="tk-hint-inline">(optional — the result + any files it produces are sent here after each run)</span></label>
+            <input type="text" id="tk-notify" class="tk-input" placeholder="you@example.com, someone@else.com" autocomplete="off" />
+          </div>
+
+          <div class="tk-footer">
+            <label class="tk-enabled">
+              <input type="checkbox" id="tk-enabled" checked />
+              <span>Enabled</span>
+            </label>
+            <span class="hint" id="tk-editor-msg"></span>
+            <div class="tk-footer-actions">
+              <button class="tk-btn tk-cancel" id="tk-editor-cancel" type="button">Cancel</button>
+              <button class="tk-btn tk-save" id="tk-editor-save" type="button">Save task</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Task detail modal (info + runs + run now) ─────────────── -->
+      <div class="tk-overlay" id="tk-detail-overlay" hidden>
+        <div class="tk-modal">
+          <div class="tk-header">
+            <div class="tk-detail-head">
+              <div class="tk-title" id="tk-detail-name">Task</div>
+              <div class="tk-detail-sched" id="tk-detail-sched"></div>
+            </div>
+            <button class="tk-close-btn" id="tk-detail-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="tk-body">
+            <div class="tk-detail-meta" id="tk-detail-meta"></div>
+            <div class="tk-detail-prompt" id="tk-detail-prompt"></div>
+
+            <div class="tk-runs-head">
+              <span>Run history</span>
+              <span class="hint" id="tk-runs-count"></span>
+            </div>
+            <div class="tk-runs" id="tk-runs"></div>
+            <p class="hint" id="tk-runs-empty" hidden>No runs yet. Press “Run now” to try it.</p>
+          </div>
+          <div class="tk-footer">
+            <div class="tk-footer-actions" style="margin-right:auto">
+              <button class="tk-btn tk-danger" id="tk-detail-delete" type="button">Delete</button>
+              <button class="tk-btn tk-cancel" id="tk-detail-edit" type="button">Edit</button>
+            </div>
+            <span class="hint" id="tk-detail-msg"></span>
+            <button class="tk-btn tk-save" id="tk-detail-run" type="button">▶ Run now</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── Main area: Multi-agents ────────────────────────────────── -->
+    <main class="multiagents-view" id="multiagents-view">
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-multiagents" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(56,189,248,.18);font-size:15px;">🤖</span> Multi-agents</div>
+        <button class="icon-btn plus" id="ma-new-btn-m" aria-label="New agent" style="margin-left:auto">＋</button>
+      </header>
+
+      <div class="tasks-page ma-page" id="ma-page">
+        <div class="tasks-pg-header">
+          <div>
+            <h2 class="tasks-pg-title">Multi-agents</h2>
+            <p class="tasks-pg-sub">Specialist agents, each with its own role, tools and modes. Pick a mode, then chat.</p>
+          </div>
+          <button class="tasks-new-btn" id="ma-new-btn" type="button">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New agent
+          </button>
+        </div>
+        <p class="hint ma-page-msg" id="ma-page-msg" hidden></p>
+        <div class="tasks-list ma-list" id="ma-list"></div>
+        <div class="tasks-empty" id="ma-empty" hidden>
+          <h3>No agents for this business</h3>
+          <p class="hint">Switch the business in the top bar to All, or create an agent for this business.</p>
+          <button class="tasks-new-btn" id="ma-new-btn-empty" type="button">＋ Create an agent</button>
+        </div>
+      </div>
+
+      <!-- ── Agent chat drawer ─────────────────────────────────────── -->
+      <aside class="ma-drawer" id="ma-drawer" hidden aria-label="Agent chat">
+        <div class="ma-drawer-head">
+          <div class="ma-drawer-title"><span class="ma-drawer-icon" id="ma-chat-icon"></span><span id="ma-chat-name"></span></div>
+          <div class="ma-drawer-actions">
+            <button class="tk-close-btn" id="ma-chat-new" type="button" title="New conversation" aria-label="New conversation">↺</button>
+            <button class="tk-close-btn" id="ma-chat-close" type="button" title="Close" aria-label="Close">✕</button>
+          </div>
+        </div>
+        <div class="ma-drawer-sub">
+          <label class="ma-mode-label" for="ma-chat-mode">Mode</label>
+          <select id="ma-chat-mode" class="tk-input ma-mode-select"></select>
+          <span class="ma-chat-biz" id="ma-chat-biz"></span>
+        </div>
+        <div class="ma-mode-desc" id="ma-mode-desc"></div>
+        <div class="ma-chat-log" id="ma-chat-log"></div>
+        <form class="ma-composer" id="ma-composer">
+          <textarea id="ma-input" rows="2" placeholder="Ask this agent…"></textarea>
+          <button type="submit" class="tk-btn tk-save" id="ma-send">Send</button>
+        </form>
+      </aside>
+
+      <!-- ── Agent editor modal (create / edit) ────────────────────── -->
+      <div class="tk-overlay" id="ma-editor-overlay" hidden>
+        <div class="tk-modal ma-modal">
+          <div class="tk-header">
+            <div class="tk-title" id="ma-editor-title">New agent</div>
+            <div class="tk-header-actions">
+              <button class="tk-close-btn" id="ma-editor-expand" type="button" aria-label="Expand to full screen" title="Expand to full screen">⤢</button>
+              <button class="tk-close-btn" id="ma-editor-close" type="button" aria-label="Close">✕</button>
+            </div>
+          </div>
+          <div class="tk-body">
+            <div class="tk-row">
+              <div class="ma-col-icon">
+                <label class="tk-label">Icon</label>
+                <input type="text" id="ma-icon" class="tk-input" maxlength="4" placeholder="🤖" autocomplete="off" />
+              </div>
+              <div class="tk-col">
+                <label class="tk-label">Name <span class="tk-req">*</span></label>
+                <input type="text" id="ma-name" class="tk-input" placeholder="e.g. Tenant Collections Agent" autocomplete="off" />
+              </div>
+              <div class="tk-col">
+                <label class="tk-label">Business</label>
+                <select id="ma-business" class="tk-input"></select>
+              </div>
+            </div>
+
+            <label class="tk-label">One-line description</label>
+            <input type="text" id="ma-description" class="tk-input" placeholder="What this agent is for" autocomplete="off" />
+
+            <label class="tk-label">Role prompt <span class="tk-req">*</span> <span class="tk-hint-inline">who it is, how it works, what it outputs</span></label>
+            <textarea id="ma-prompt" class="tk-textarea" rows="8" placeholder="You are … Your job is … Method: (1) … Output: …"></textarea>
+
+            <label class="tk-label">Tools <span class="tk-hint-inline">the agent can only use what's ticked</span></label>
+            <div class="ma-tools" id="ma-tools"></div>
+
+            <label class="tk-label">Modes <span class="tk-hint-inline">shown in the agent's Mode dropdown</span></label>
+            <div class="ma-modes" id="ma-modes"></div>
+            <button class="tk-btn tk-cancel ma-add-mode" id="ma-add-mode" type="button">＋ Add mode</button>
+
+            <label class="tk-label">Default mode</label>
+            <select id="ma-default-mode" class="tk-input"></select>
+          </div>
+          <div class="tk-footer">
+            <label class="tk-enabled">
+              <input type="checkbox" id="ma-enabled" checked />
+              <span>Enabled</span>
+            </label>
+            <button class="tk-btn tk-cancel" id="ma-reset" type="button" hidden>Reset to default</button>
+            <button class="tk-btn tk-danger" id="ma-delete" type="button" hidden>Delete</button>
+            <span class="hint" id="ma-editor-msg"></span>
+            <div class="tk-footer-actions">
+              <button class="tk-btn tk-cancel" id="ma-editor-cancel" type="button">Cancel</button>
+              <button class="tk-btn tk-save" id="ma-editor-save" type="button">Save agent</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── Main area: File Explorer ───────────────────────────────── -->
+    <main class="files-view" id="files-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-files" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(96,165,250,.18);font-size:15px;">📁</span> Files</div>
+        <button class="icon-btn plus" id="files-refresh-m" aria-label="Refresh" style="margin-left:auto">↻</button>
+      </header>
+
+      <div class="files-page">
+        <div class="files-toolbar">
+          <nav class="files-breadcrumb" id="files-breadcrumb" aria-label="Breadcrumb"></nav>
+          <div class="files-toolbar-actions">
+          <div class="files-view-toggle files-group-toggle" id="files-group-toggle" role="group" aria-label="Organize by">
+            <button type="button" data-group="folders" title="Organize by folder" aria-label="Organize by folder">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              <span>Folders</span>
+            </button>
+            <button type="button" data-group="types" title="Organize by file type" aria-label="Organize by file type">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+              <span>Types</span>
+            </button>
+          </div>
+          <div class="files-view-toggle" id="files-view-toggle" role="group" aria-label="View mode">
+            <button type="button" data-mode="list" title="List view" aria-label="List view">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            </button>
+            <button type="button" data-mode="tiles" title="Tiles view" aria-label="Tiles view">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            </button>
+          </div>
+          </div>
+        </div>
+
+        <div class="files-content" id="files-content"></div>
+        <p class="hint" id="files-loading" hidden>Loading…</p>
+        <div class="files-empty" id="files-empty" hidden>
+          <div class="files-empty-icon v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+          <h3>This folder is empty</h3>
+          <p class="hint">Files uploaded, generated, or received for this business will appear here.</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── Main area: Jobs ────────────────────────────────────────── -->
+    <main class="jobs-view" id="jobs-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-jobs" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(139,92,246,.18);font-size:15px;">⚙️</span> Jobs</div>
+      </header>
+
+      <div class="tasks-page" id="jobs-page">
+        <div class="tasks-pg-header">
+          <div>
+            <h2 class="tasks-pg-title">Jobs</h2>
+            <p class="tasks-pg-sub">Recurring background jobs — scrapers &amp; pipelines that run on a schedule.</p>
+          </div>
+          <button class="tasks-new-btn" id="jobs-refresh-main" type="button">↻ Refresh</button>
+        </div>
+
+        <div class="tasks-list" id="jobs-list"></div>
+        <div class="tasks-empty" id="jobs-empty" hidden>
+          <div class="tasks-empty-icon v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4h4a2 2 0 0 1 2 2v2h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3V6a2 2 0 0 1 2-2z"/><path d="M8 8V6h8v2"/></svg></div>
+          <h3>No jobs yet</h3>
+          <p class="hint">Background jobs like the Google Reviews scraper appear here once they are set up for your account.</p>
+        </div>
+      </div>
+
+      <!-- ── Job detail modal (info + runs + start/stop) ───────────── -->
+      <div class="tk-overlay" id="jb-detail-overlay" hidden>
+        <div class="tk-modal">
+          <div class="tk-header">
+            <div class="tk-detail-head">
+              <div class="tk-title" id="jb-detail-name">Job</div>
+              <div class="tk-detail-sched" id="jb-detail-sched"></div>
+            </div>
+            <button class="tk-close-btn" id="jb-detail-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="tk-body">
+            <div class="tk-detail-meta" id="jb-detail-meta"></div>
+
+            <label class="jb-opt">
+              <input type="checkbox" id="jb-allow-multi">
+              <span>Allow multiple runs per day <span class="hint">(off = runs at most once daily)</span></span>
+            </label>
+
+            <div class="tk-runs-head">
+              <span>Run history</span>
+              <span class="hint" id="jb-runs-count"></span>
+            </div>
+            <div class="tk-runs" id="jb-runs"></div>
+            <p class="hint" id="jb-runs-empty" hidden>No runs yet. Press “Start” to run it now.</p>
+          </div>
+          <div class="tk-footer">
+            <span class="hint" id="jb-detail-msg"></span>
+            <div class="tk-footer-actions">
+              <button class="tk-btn tk-danger" id="jb-detail-stop" type="button" hidden>■ Stop</button>
+              <button class="tk-btn tk-save" id="jb-detail-run" type="button">▶ Start</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── Main area: Artefacts ───────────────────────────────────── -->
+    <main class="artefacts-view" id="artefacts-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-artefacts" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(47,107,255,.18);font-size:15px;">🗂️</span> Artifacts</div>
+      </header>
+
+      <div class="tasks-page" id="artefacts-page">
+        <div class="tasks-pg-header">
+          <div>
+            <h2 class="tasks-pg-title">Artifacts</h2>
+            <p class="tasks-pg-sub">Everything the AI has produced — live artifacts and generated files, in one place.</p>
+          </div>
+          <button class="tasks-new-btn" id="artefacts-refresh-main" type="button">↻ Refresh</button>
+        </div>
+
+        <!-- Sub-tabs: Artefacts (live) vs Files (generated downloads) -->
+        <div class="lib-subtabs" role="tablist">
+          <button class="lib-subtab active" type="button" data-libview="artefacts" role="tab">Artifacts</button>
+          <button class="lib-subtab" type="button" data-libview="files" role="tab">Files</button>
+        </div>
+
+        <!-- Artefacts sub-list -->
+        <div id="lib-artefacts">
+          <div class="tasks-list" id="artefacts-list"></div>
+          <div class="tasks-empty" id="artefacts-empty" hidden>
+            <div class="tasks-empty-icon v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h5l2 2h9v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 11h8"/><path d="M8 15h5"/></svg></div>
+            <h3>No artifacts yet</h3>
+            <p class="hint">Ask the AI in chat to build one — e.g. “make a live dashboard from this budget sheet”. It’ll appear here.</p>
+          </div>
+        </div>
+
+        <!-- Files sub-list -->
+        <div id="lib-files" hidden>
+          <div class="tasks-list" id="files-list"></div>
+          <div class="tasks-empty" id="files-empty" hidden>
+            <div class="tasks-empty-icon v2-empty-ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+            <h3>No generated files yet</h3>
+            <p class="hint">Files the AI creates for you (reports, spreadsheets, PDFs) land here — always re-downloadable, even after the original link expires.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Artefact canvas modal (live iframe view) ──────────────── -->
+      <div class="tk-overlay" id="af-detail-overlay" hidden>
+        <div class="tk-modal af-modal">
+          <div class="tk-header">
+            <div class="tk-detail-head">
+              <div class="tk-title" id="af-detail-name">Artifact</div>
+              <div class="tk-detail-sched" id="af-detail-sub"></div>
+            </div>
+            <button class="tk-close-btn" id="af-detail-close" type="button" aria-label="Close">✕</button>
+          </div>
+          <div class="af-canvas-wrap">
+            <iframe id="af-canvas" class="af-canvas" title="Artifact canvas" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
+          </div>
+          <div class="tk-footer">
+            <span class="hint" id="af-detail-msg"></span>
+            <div class="tk-footer-actions">
+              <button class="tk-btn" id="af-open-tab" type="button">↗ Open in new tab</button>
+              <button class="tk-btn tk-save" id="af-sync-now" type="button">↻ Sync now</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── Main area: Usage & Cost ────────────────────────────────── -->
+    <main class="pricing-view" id="pricing-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-pricing" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(52,199,89,.18);font-size:15px;">🎫</span> Usage</div>
+      </header>
+
+      <div class="tasks-page" id="pricing-page">
+        <div class="tasks-pg-header">
+          <div>
+            <h2 class="tasks-pg-title">Usage &amp; Cost</h2>
+            <p class="tasks-pg-sub">Total credits (tokens) and USD cost, broken down per chat session.</p>
+          </div>
+          <button class="tasks-new-btn" id="pricing-refresh-main" type="button">↻ Refresh</button>
+        </div>
+
+        <div class="usage-filter-row" id="pricing-filter-row">
+          <button class="usage-chip active" data-preset="all" type="button">All time</button>
+          <button class="usage-chip" data-preset="today" type="button">Today</button>
+          <button class="usage-chip" data-preset="yesterday" type="button">Yesterday</button>
+          <button class="usage-chip" data-preset="week" type="button">Last 7 days</button>
+          <button class="usage-chip" data-preset="month" type="button">Last 30 days</button>
+          <button class="usage-chip" data-preset="sixmonths" type="button">Last 6 months</button>
+          <button class="usage-chip" data-preset="custom" type="button">Custom…</button>
+        </div>
+        <div class="usage-custom-row" id="pricing-custom-row" hidden>
+          <label>From <input type="date" id="pricing-from"></label>
+          <label>To <input type="date" id="pricing-to"></label>
+          <button class="tasks-new-btn" id="pricing-apply" type="button">Apply</button>
+          <span class="hint" id="pricing-custom-err"></span>
+        </div>
+
+        <div class="usage-range-note hint" id="pricing-range-note"></div>
+        <div class="usage-totals" id="pricing-totals"></div>
+        <div id="pricing-body"></div>
+      </div>
+    </main>
+
+    <!-- ── Main area: Settings ────────────────────────────────────── -->
+    <main class="settings-view" id="settings-view">
+      <!-- Mobile topbar -->
+      <header class="topbar">
+        <button class="icon-btn" id="menu-btn-settings" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-brand"><span class="logo-sm" style="background:rgba(139,92,246,.18);font-size:15px;">⚙️</span> Settings</div>
+      </header>
+
+      <div class="settings-layout">
+        <aside class="settings-nav">
+          <button class="settings-nav-item active" type="button" data-settings="guardrails">Guardrails</button>
+        </aside>
+        <section class="settings-content">
+          <div class="settings-section visible" id="settings-guardrails">
+            <div class="tasks-pg-header">
+              <div>
+                <h2 class="tasks-pg-title">Guardrails</h2>
+                <p class="tasks-pg-sub">Safety gates that limit what Hermes does automatically. Toggle each on or off — changes apply to every conversation on its next turn.</p>
+              </div>
+            </div>
+            <div id="guardrails-list" class="guardrails-list"></div>
+            <p class="hint" id="guardrails-status" hidden></p>
+          </div>
+        </section>
+      </div>
+    </main>
+
+  </div><!-- /app -->
+
+  {% if voice_enabled %}
+  <div class="call" id="call" aria-hidden="true">
+    <div class="call-card">
+      <div class="call-orb" id="call-orb">
+        <span class="orb-ring"></span>
+        <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+      </div>
+      <h2 class="call-status" id="call-status">Connecting…</h2>
+      <p class="call-caption" id="call-caption">Tap the mic to talk. I'll listen, then reply out loud.</p>
+      <div class="call-actions">
+        <button class="call-mute" id="call-mute" type="button">Mute</button>
+        <button class="call-end" id="call-end" type="button" aria-label="End call">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.99.99 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.66-1.85.998.998 0 0 1-.56-.9v-3.1A15.6 15.6 0 0 0 12 9z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="/static/business.js?v={{ v }}"></script>
+  <script src="/static/context.js?v={{ v }}"></script>
+  <script src="/static/model.js?v={{ v }}"></script>
+  <script src="/static/context-mode.js?v={{ v }}"></script>
+  <script src="/static/app.js?v={{ v }}"></script>
+  <script src="/static/settings.js?v={{ v }}"></script>
+  <script src="/static/bills.js?v={{ v }}"></script>
+  <script src="/static/register.js?v={{ v }}"></script>
+  <script src="/static/meeting.js?v={{ v }}"></script>
+  <script src="/static/tasks.js?v={{ v }}"></script>
+  <script src="/static/multiagents.js?v={{ v }}"></script>
+  <script src="/static/agent-mode.js?v={{ v }}"></script>
+  <script src="/static/files.js?v={{ v }}"></script>
+  <script src="/static/jobs.js?v={{ v }}"></script>
+  <script src="/static/artefacts.js?v={{ v }}"></script>
+  <script src="/static/library.js?v={{ v }}"></script>
+  <script src="/static/pricing.js?v={{ v }}"></script>
+  <script src="/static/home-hud.js?v={{ v }}"></script>
+  {% if voice_enabled %}<script src="/static/voice.js?v={{ v }}"></script>{% endif %}
+  {% if live_voice_enabled %}<script src="/static/hermes-live.js?v={{ v }}"></script>{% endif %}
+  <script src="/static/hermes-fx.js?v={{ v }}"></script>
+  <script src="/static/hermes-views.js?v={{ v }}"></script>
+  <script src="/static/hermes-v2.js?v={{ v }}"></script>
+  <script src="/static/hermes-schema-fx.js?v={{ v }}"></script>
+  <script src="/static/hermes-files-fx.js?v={{ v }}"></script>
+  <script src="/static/hermes-theme-fx.js?v={{ v }}"></script>
+  <script src="/static/hermes-router.js?v={{ v }}"></script>
+  <script>
+  /* Hermes · Home core hologram.
+     Swaps the reactor ring graphics inside #hud-rings for the Jarvis hologram orb, drawn on one canvas.
+     When Hermes Live is engaged (#hud-rings.hx-live-on, set by hermes-live.js) everything else on Home
+     fades out and the orb grows to the centre, taking each voice state's colour and size; it shrinks
+     back when the session ends. While Hermes works on a voice request (ask_hermes), the orb moves left
+     and its reasoning flips in on the right as a stack of notifications: request, steps, thinking, result.
+     Additive only: no markup is removed. Gold on Stock, cyan on Holo. */
+  (function () {
+    "use strict";
+    const rings = document.getElementById("hud-rings");
+    if (!rings || rings.dataset.holoOrb) return;
+    rings.dataset.holoOrb = "1";
+
+    const home = document.getElementById("home-view") || rings.closest("main") || document.body;
+    const zone = rings.closest(".hud-core") || rings.parentElement;
+    const face = rings.querySelector(".hud-core-face");
+    const wrap = rings.querySelector(".hx-orbit-wrap");
+    const reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    const TAU = Math.PI * 2;
+
+    const fadeSel = (on) => [".hud-col", ".hud-spokes", ".hud-ticker", ".hx-dock"].map((s) => "#home-view" + (on ? ".hx-engaged " : " ") + s).join(", ");
+    const css = document.createElement("style");
+    css.id = "hx-holo-orb-css";
+    css.textContent = [
+      "#hud-rings.hx-holo > .pl:not(.hud-core-face):not(.hx-orbit-wrap) { display: none !important; }",
+      "#hud-rings.hx-holo > .hx-holo-cv { position: absolute; left: -15%; top: -15%; width: 130%; height: 130%; pointer-events: none; }",
+      "#hud-rings.hx-holo > .hud-core-face { inset: 32% !important; padding: 0 !important; background: none !important; box-shadow: none !important; animation: none !important; transition: filter .2s ease !important; transform: translate3d(var(--hxh-x, 0px), var(--hxh-y, 0px), 0) scale(var(--hxh-s, 1)) !important; }",
+      "#hud-rings.hx-holo > .hud-core-face > * { display: none !important; }",
+      "#hud-rings.hx-holo > .hx-orbit-wrap { transform: scale(var(--hxh-o, 1)) !important; transition: opacity .45s ease .15s, visibility 0s !important; }",
+      "#hud-rings.hx-holo .hx-orbit { inset: 3.2% !important; border-color: transparent !important; }",
+      "#hud-rings.hx-holo > .hx-orbit-wrap { display: none !important; }",
+      fadeSel(false) + " { transition: opacity .45s ease .15s, visibility 0s; }",
+      fadeSel(true) + ", #home-view.hx-engaged #hud-rings.hx-holo > .hx-orbit-wrap { opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; transition: opacity .4s ease, visibility 0s linear .4s !important; }",
+      ".hx-think { position: fixed; z-index: 55; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity .35s ease, visibility 0s linear .35s; }",
+      ".hx-think.open { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity .35s ease, visibility 0s; }",
+      "html.holo .hx-think { --hxt-acc: #7fdcff; --hxt-line: rgba(127, 220, 255, 0.22); --hxt-glow: rgba(127, 220, 255, 0.10); }",
+      "html:not(.holo) .hx-think { --hxt-acc: #f5a623; --hxt-line: rgba(245, 166, 35, 0.24); --hxt-glow: rgba(245, 166, 35, 0.10); }",
+      ".hx-think-close { align-self: flex-end; flex: none; width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 1px solid var(--hxt-line); background: rgba(6, 11, 17, 0.7); color: #93a4b3; font: 400 16px/1 'IBM Plex Sans', sans-serif; cursor: pointer; }",
+      ".hx-think-close:hover { color: #f1f6fa; }",
+      ".hx-think-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow: hidden; perspective: 1400px; -webkit-mask-image: linear-gradient(#000 84%, transparent); mask-image: linear-gradient(#000 84%, transparent); }",
+      ".hx-note { position: relative; flex: none; box-sizing: border-box; padding: 12px 14px 13px; border-radius: 12px; border: 1px solid var(--hxt-line); background: radial-gradient(120% 140% at 0% 0%, var(--hxt-glow), transparent 55%), linear-gradient(180deg, rgba(11, 18, 26, 0.92), rgba(6, 11, 17, 0.9)); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.05); color: #dfe8ef; font: 400 13px/1.5 'IBM Plex Sans', system-ui, sans-serif; transform-origin: 50% 0; backface-visibility: hidden; transition: transform .6s cubic-bezier(.2, .9, .25, 1.12), opacity .45s ease; }",
+      ".hx-note.in { transform: rotateX(-88deg); opacity: 0; }",
+      ".hx-note.old { opacity: 0.55; }",
+      ".hx-note.out { transform: rotateX(84deg); transform-origin: 50% 100%; opacity: 0; }",
+      ".hx-note-k { display: flex; align-items: center; gap: 8px; font: 600 10px/1 'IBM Plex Mono', monospace; letter-spacing: 0.16em; text-transform: uppercase; color: var(--hxt-acc); }",
+      ".hx-note-k i { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--hxt-acc); box-shadow: 0 0 8px var(--hxt-acc); transition: background .3s, box-shadow .3s; }",
+      ".hx-note[data-state='live'] .hx-note-k i { animation: hx-think-blink .9s ease-in-out infinite; }",
+      ".hx-note[data-state='done'] .hx-note-k i { background: #34d399; box-shadow: 0 0 8px rgba(52, 211, 153, 0.8); }",
+      ".hx-note[data-state='error'] .hx-note-k i { background: #ff6b6b; box-shadow: 0 0 8px rgba(255, 107, 107, 0.8); }",
+      "@keyframes hx-think-blink { 50% { opacity: 0.25; } }",
+      ".hx-note-k em { margin-left: auto; font-style: normal; color: #6f8292; letter-spacing: 0.08em; }",
+      ".hx-note-copy { margin-left: 10px; padding: 0; border: 0; background: none; color: var(--hxt-acc); font: 600 10px/1 'IBM Plex Mono', monospace; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; }",
+      ".hx-note-t { margin-top: 7px; font-size: 13.5px; line-height: 1.45; color: #e9f0f5; text-wrap: pretty; }",
+      ".hx-note-ask .hx-note-t { font-size: 14.5px; color: #f4f8fb; }",
+      ".hx-note-thought { margin-top: 7px; max-height: 6em; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; -webkit-mask-image: linear-gradient(transparent, #000 45%); mask-image: linear-gradient(transparent, #000 45%); font: 400 12px/1.5 'IBM Plex Mono', monospace; color: #93a4b3; transition: max-height .35s ease; }",
+      ".hx-note.open .hx-note-thought { display: block; max-height: 42vh; overflow-y: auto; -webkit-mask-image: none; mask-image: none; scrollbar-width: thin; }",
+      ".hx-note-thought > div { white-space: pre-wrap; }",
+      ".hx-note-body { margin-top: 8px; max-height: 24vh; overflow-y: auto; transition: max-height .35s ease; font-size: 13.5px; line-height: 1.6; color: #e6eef4; overflow-wrap: anywhere; }",
+      ".hx-note-body p, .hx-note-body ul, .hx-note-body ol { margin: 0 0 0.7em; }",
+      ".hx-note-body > :last-child { margin-bottom: 0; }",
+      ".hx-note-body a { color: var(--hxt-acc); }",
+      ".hx-note-body pre { white-space: pre-wrap; font: 400 12.5px/1.55 'IBM Plex Mono', monospace; }",
+      ".hx-note-err { margin-top: 7px; color: #ffb3b3; font-size: 13px; }",
+      ".hx-note.open .hx-note-body { max-height: 62vh; }",
+      ".hx-note.old.open { opacity: 1; }",
+      ".hx-note-ask .hx-note-t { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }",
+      ".hx-note-ask.open .hx-note-t { display: block; -webkit-line-clamp: unset; }",
+      ".hx-note-x { flex: none; margin-left: 8px; width: 24px; height: 24px; margin-top: -6px; margin-bottom: -6px; padding: 0; display: grid; place-items: center; border-radius: 6px; border: 1px solid transparent; background: transparent; color: #8fa1b0; cursor: pointer; transition: color .2s, background .2s, border-color .2s; }",
+      ".hx-note-x:hover { color: #f1f6fa; background: rgba(255, 255, 255, 0.06); border-color: var(--hxt-line); }",
+      ".hx-note-x svg { transition: transform .3s ease; }",
+      ".hx-note.open .hx-note-x svg { transform: rotate(180deg); }",
+      ".hx-note-more { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .35s ease; }",
+      ".hx-note-more > div { min-height: 0; overflow: hidden; }",
+      ".hx-note.open .hx-note-more { grid-template-rows: 1fr; }",
+      ".hx-note-more pre { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); white-space: pre-wrap; overflow-wrap: anywhere; font: 400 11.5px/1.55 'IBM Plex Mono', monospace; color: #9fb0bf; }",
+      "html.hx-reasoning #hx-live { left: var(--hxh-card-x, 50%) !important; width: var(--hxh-card-w, min(520px, calc(50vw - 40px))) !important; }"
+    ].join("\n");
+    document.head.appendChild(css);
+
+    const cv = document.createElement("canvas");
+    cv.className = "hx-holo-cv";
+    cv.setAttribute("aria-hidden", "true");
+    rings.insertBefore(cv, rings.firstChild);
+    rings.classList.add("hx-holo");
+    const ctx = cv.getContext("2d");
+
+    const GREY = [128, 138, 150];
+    const PAL = {
+      gold: {
+        a: [246, 168, 35], a2: [255, 214, 128], hot: [255, 246, 214], deep: [150, 78, 0], g: [47, 227, 165], b: [91, 156, 255],
+        st: {
+          think: { a: [255, 112, 56], a2: [255, 176, 130], hot: [255, 236, 220], deep: [140, 30, 0] },
+          speak: { a: [255, 222, 120], a2: [255, 240, 190], hot: [255, 253, 240], deep: [170, 110, 10] }
+        }
+      },
+      cyan: {
+        a: [56, 214, 255], a2: [170, 238, 255], hot: [236, 252, 255], deep: [0, 82, 124], g: [47, 227, 165], b: [246, 168, 35],
+        st: {
+          think: { a: [143, 123, 255], a2: [196, 184, 255], hot: [242, 238, 255], deep: [48, 30, 140] },
+          speak: { a: [60, 240, 196], a2: [170, 255, 232], hot: [236, 255, 250], deep: [0, 110, 90] }
+        }
+      }
+    };
+    const fib = [];
+    for (let i = 0, n = 240; i < n; i++) {
+      const y = 1 - (i + 0.5) / n * 2, r = Math.sqrt(1 - y * y), th = i * 2.399963;
+      fib.push([Math.cos(th) * r, y, Math.sin(th) * r]);
+    }
+
+    const v = { t: 0, ft: 0, boot: 0, z: 0, p: 0, think: 0, speak: 0, mute: 0, level: 0, focus: 0, kick: 0, hover: 0, mx: 0, my: 0, px: 0, py: 0, ry: 0, rc: 0, o1: 0, o2: 2 };
+    const mouse = { x: 0, y: 0, on: false };
+    const ball = { x: 0, y: 0, R: 0 };
+    const vars = {}, placed = {};
+    let ripples = [], last = 0;
+
+    const clamp = (x) => Math.max(-1, Math.min(1, x));
+    const ease = (x, t, r, dt) => x + (t - x) * Math.min(1, dt * r);
+    const mix = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+    const q = (c, a) => "rgba(" + (c[0] | 0) + "," + (c[1] | 0) + "," + (c[2] | 0) + "," + (a < 0 ? 0 : a > 1 ? 1 : a).toFixed(3) + ")";
+    const bp = (k) => { const x = (v.boot - k * 0.07) / 0.42; return x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.pow(1 - x, 3); };
+    function ring(x, y, r, col, lw, dash) {
+      ctx.beginPath();
+      if (dash) ctx.setLineDash(dash);
+      ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.arc(x, y, Math.max(0, r), 0, TAU); ctx.stroke();
+      if (dash) ctx.setLineDash([]);
+    }
+    function glow(x, y, r0, r1, c, a) {
+      if (a <= 0.002) return;
+      const g = ctx.createRadialGradient(x, y, r0, x, y, r1);
+      g.addColorStop(0, q(c, a)); g.addColorStop(1, q(c, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r1, 0, TAU); ctx.fill();
+    }
+    function fade(x, y, rot, col, al) {
+      if (!ctx.createConicGradient) return q(col, al * 0.5);
+      const g = ctx.createConicGradient(rot, x, y);
+      g.addColorStop(0, q(col, 0)); g.addColorStop(0.3, q(col, al * 0.55)); g.addColorStop(0.5, q(col, al)); g.addColorStop(0.7, q(col, al * 0.55)); g.addColorStop(1, q(col, 0));
+      return g;
+    }
+    function setVar(el, k, val) { if (el && vars[k] !== val) { vars[k] = val; el.style.setProperty(k, val); } }
+    function place(left, top, width, height) {
+      if (placed.l === left && placed.t === top && placed.w === width && placed.h === height) return;
+      placed.l = left; placed.t = top; placed.w = width; placed.h = height;
+      cv.style.left = left; cv.style.top = top; cv.style.width = width; cv.style.height = height;
+    }
+
+    /* ── Reasoning notifications: each step of a voice request flips in on the right ── */
+    const think = { el: null, stack: null, count: 0, dismissed: false, seq: 0, box: "" };
+    const MAX_NOTES = 7;
+    const esc = (t) => String(t).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    function thinkEl() {
+      if (think.el) return think.el;
+      const el = document.createElement("aside");
+      el.className = "hx-think";
+      el.setAttribute("aria-label", "Hermes reasoning");
+      el.setAttribute("aria-live", "polite");
+      el.innerHTML = '<button type="button" class="hx-think-close" aria-label="Hide reasoning">&times;</button><div class="hx-think-stack"></div>';
+      el.querySelector(".hx-think-close").addEventListener("click", () => { think.dismissed = true; });
+      document.body.appendChild(el);
+      think.el = el; think.stack = el.querySelector(".hx-think-stack");
+      return el;
+    }
+    const CHEV = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+    // Arrow at the card's top right: opens the card taller with the full detail.
+    function addToggle(note, onToggle) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "hx-note-x";
+      b.setAttribute("aria-expanded", "false"); b.setAttribute("aria-label", "Show details");
+      b.innerHTML = CHEV;
+      b.addEventListener("click", () => {
+        const open = note.classList.toggle("open");
+        b.setAttribute("aria-expanded", String(open)); b.setAttribute("aria-label", open ? "Hide details" : "Show details");
+        if (onToggle) onToggle(open);
+      });
+      note.querySelector(".hx-note-k").appendChild(b);
+    }
+    const detailOf = (evt) => {
+      const out = [];
+      if (evt && evt.tool) out.push(String(evt.tool));
+      const inp = evt && evt.input && typeof evt.input === "object" ? evt.input : null;
+      if (inp) Object.keys(inp).slice(0, 8).forEach((key) => {
+        let val = inp[key];
+        if (val && typeof val === "object") { try { val = JSON.stringify(val); } catch (_) { val = String(val); } }
+        val = String(val == null ? "" : val).replace(/\s+/g, " ").trim();
+        if (val.length > 160) val = val.slice(0, 159) + "…";
+        out.push(key + ": " + val);
+      });
+      return out.join("\n");
+    };
+    function clearNotes() { if (think.stack) think.stack.innerHTML = ""; think.count = 0; think.seq = 0; think.dismissed = false; }
+    // Newest on top: the new card flips down from its top edge while the others slide down (FLIP).
+    function pushNote(kind, label, tag) {
+      thinkEl();
+      const stack = think.stack, kids = [...stack.children].filter((k) => !k.classList.contains("out"));
+      const note = document.createElement("div");
+      note.className = "hx-note hx-note-" + kind + " in";
+      note.dataset.state = "live";
+      note.innerHTML = '<div class="hx-note-k"><i></i><span>' + esc(label) + "</span>" + (tag ? "<em>" + esc(tag) + "</em>" : "") + "</div>";
+      const before = kids.map((k) => k.getBoundingClientRect().top);
+      stack.prepend(note);
+      kids.forEach((k, i) => { const d = before[i] - k.getBoundingClientRect().top; if (d) { k.style.transition = "none"; k.style.transform = "translateY(" + d + "px)"; } });
+      void stack.offsetHeight;
+      kids.forEach((k) => { k.style.transition = ""; k.style.transform = ""; });
+      note.classList.remove("in");
+      const live = [note].concat(kids);
+      live.forEach((k, i) => k.classList.toggle("old", i >= 4));
+      live.slice(MAX_NOTES).forEach((k) => { k.classList.add("out"); setTimeout(() => k.remove(), 650); });
+      think.count++; think.dismissed = false;
+      return note;
+    }
+    function track(title) {
+      const name = String(title || "Working on it").replace(/\s+/g, " ").trim();
+      const tag = "#" + (++think.seq), notes = [];
+      const settle = () => notes.forEach((x) => { if (x.dataset.state === "live") x.dataset.state = "done"; });
+      const add = (kind, label) => { settle(); const el = pushNote(kind, label, tag); notes.push(el); return el; };
+      const ask = pushNote("ask", "Request", tag);
+      ask.insertAdjacentHTML("beforeend", '<div class="hx-note-t">' + esc(name) + "</div>");
+      if (name.length > 90) addToggle(ask);
+      let thought = null, result = null, raw = "", timer = 0;
+      const draft = () => {
+        if (result) return result;
+        result = add("draft", "Result");
+        result.querySelector(".hx-note-k").insertAdjacentHTML("beforeend", '<button type="button" class="hx-note-copy">Copy</button>');
+        result.insertAdjacentHTML("beforeend", '<div class="hx-note-body"></div>');
+        addToggle(result);
+        result.querySelector(".hx-note-copy").addEventListener("click", (e) => {
+          const b = e.currentTarget;
+          if (navigator.clipboard) navigator.clipboard.writeText(raw).then(() => { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1400); }).catch(() => {});
+        });
+        return result;
+      };
+      const render = () => {
+        timer = 0;
+        const body = draft().querySelector(".hx-note-body");
+        if (window.marked && window.DOMPurify) body.innerHTML = window.DOMPurify.sanitize(window.marked.parse(raw, { breaks: true, gfm: true }));
+        else body.textContent = raw;
+        body.scrollTop = body.scrollHeight;
+      };
+      const finish = (state) => { notes.forEach((x) => { x.dataset.state = "done"; }); ask.dataset.state = state || "done"; };
+      return {
+        thought(text) {
+          if (!text) return;
+          if (!thought) {
+            const el = add("thought", "Thinking");
+            el.insertAdjacentHTML("beforeend", '<div class="hx-note-thought"><div></div></div>');
+            const box = el.querySelector(".hx-note-thought");
+            addToggle(el, () => requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; }));
+            thought = el;
+          }
+          const box = thought.querySelector(".hx-note-thought");
+          box.firstChild.appendChild(document.createTextNode(text));
+          if (thought.classList.contains("open")) box.scrollTop = box.scrollHeight;
+        },
+        step(label, detail) {
+          thought = null;
+          const el = add("step", "Step");
+          el.insertAdjacentHTML("beforeend", '<div class="hx-note-t">' + esc(label) + "</div>");
+          if (detail) { el.insertAdjacentHTML("beforeend", '<div class="hx-note-more"><div><pre>' + esc(detail) + "</pre></div></div>"); addToggle(el); }
+        },
+        text(delta) { if (!delta) return; thought = null; draft(); raw += delta; if (!timer) timer = setTimeout(render, 140); },
+        done(reply) { if (reply) raw = reply; if (raw) { clearTimeout(timer); render(); } finish(); },
+        fail(msg) {
+          const el = add("error", "Couldn't finish");
+          el.insertAdjacentHTML("beforeend", '<div class="hx-note-err">' + esc(msg || "Hermes couldn't finish this one.") + "</div>");
+          finish("error"); el.dataset.state = "error";
+        }
+      };
+    }
+    window.HermesReasoning = { track };
+
+    // Hermes Live answers ask_hermes with a plain /api/chat call. While a live session is on, run the same
+    // request through /api/chat/stream instead so the panel can show it, and hand back the usual JSON reply.
+    const baseFetch = window.fetch.bind(window);
+    async function streamVoiceTurn(input, init) {
+      let data = {};
+      try { data = JSON.parse(init.body) || {}; } catch (_) {}
+      let res;
+      try { res = await baseFetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: init.body }); }
+      catch (_) { return baseFetch(input, init); }
+      if (!res.ok || !res.body) return baseFetch(input, init);
+      const tab = track(data.message);
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = "", text = "", final = null, err = null;
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = buf.indexOf("\n\n")) !== -1) {
+            const chunk = buf.slice(0, i);
+            buf = buf.slice(i + 2);
+            const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+            if (!line) continue;
+            let evt;
+            try { evt = JSON.parse(line.slice(6)); } catch (_) { continue; }
+            if (evt.type === "thinking") tab.thought(evt.text);
+            else if (evt.type === "tool_call") tab.step(evt.label || evt.tool || "Working on it", detailOf(evt));
+            else if (evt.type === "text") { text += evt.text || ""; tab.text(evt.text); }
+            else if (evt.type === "done") final = evt;
+            else if (evt.type === "error") err = evt.error || "Agent error";
+          }
+        }
+      } catch (e) { err = err || "Lost the connection to Hermes."; }
+      const json = { "Content-Type": "application/json" };
+      if (final) { tab.done(final.reply); return new Response(JSON.stringify(final), { status: 200, headers: json }); }
+      if (err && !text) { tab.fail(err); return new Response(JSON.stringify({ error: err }), { status: 500, headers: json }); }
+      tab.done(text);
+      return new Response(JSON.stringify({ reply: text }), { status: 200, headers: json });
+    }
+    window.fetch = function (input, init) {
+      try {
+        const url = typeof input === "string" ? input : (input && input.url) || "";
+        if (url === "/api/chat" && init && String(init.method || "").toUpperCase() === "POST" && typeof init.body === "string" && window.HermesLive && window.HermesLive.active && /"voice"\s*:\s*true/.test(init.body)) {
+          return streamVoiceTurn(input, init);
+        }
+      } catch (_) {}
+      return baseFetch(input, init);
+    };
+
+    /* Cursor: the orb turns toward it, particles part around it, a click on the orb sends a pulse. */
+    home.addEventListener("pointermove", (e) => {
+      if (!mouse.on) { v.px = e.clientX; v.py = e.clientY; }
+      mouse.x = e.clientX; mouse.y = e.clientY; mouse.on = true;
+    }, { passive: true });
+    home.addEventListener("pointerleave", () => { mouse.on = false; }, { passive: true });
+    rings.addEventListener("pointerdown", (e) => {
+      if (ball.R && Math.hypot(e.clientX - ball.x, e.clientY - ball.y) < ball.R * 1.05) { ripples.push(v.t); v.kick = 1; }
+    }, { passive: true });
+    // While engaged the orb sits at the centre, so a click on it may land outside the rings' own circle.
+    if (face) face.addEventListener("click", (e) => {
+      if (!window.HermesLive || !rings.classList.contains("hx-live-on")) return;
+      const r = rings.getBoundingClientRect();
+      if (Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2)) > r.width * 0.5) window.HermesLive.toggle();
+    });
+
+    function update(now, dt, engaged, live, inZone, bx, by, R, panel) {
+      const sp0 = reduce ? 0.2 : 1;
+      v.t = now;
+      v.ft += dt * sp0;
+      v.boot = Math.min(1, v.boot + dt / 1.5);
+      v.z = ease(v.z, engaged ? 1 : 0, reduce ? 7 : 3.2, dt);
+      v.p = ease(v.p, panel ? 1 : 0, reduce ? 7 : 3, dt);
+      v.think = ease(v.think, live === "thinking" ? 1 : 0, 3.5, dt);
+      v.speak = ease(v.speak, live === "speaking" ? 1 : 0, 3.5, dt);
+      v.mute = ease(v.mute, live === "error" ? 1 : 0, 3.5, dt);
+      v.focus = ease(v.focus, !engaged && rings.classList.contains("hx-focus") ? 1 : 0, 5, dt);
+      const on = inZone && !reduce, span = R * 1.4;
+      v.hover = ease(v.hover, on ? 1 : 0, 4, dt);
+      v.mx = ease(v.mx, on ? clamp((mouse.x - bx) / span) : 0, 4, dt);
+      v.my = ease(v.my, on ? clamp((mouse.y - by) / span) : 0, 4, dt);
+      v.px = ease(v.px, mouse.x, 14, dt); v.py = ease(v.py, mouse.y, 14, dt);
+      v.kick = Math.max(0, v.kick - dt * 1.6);
+      let target;
+      if (engaged) target = Math.max(Math.min(1, parseFloat(rings.style.getPropertyValue("--live-lvl")) || 0), 0.03 + 0.02 * Math.sin(now * 1.3));
+      else target = 0.02 + 0.015 * Math.sin(now * 1.1) + v.focus * (0.16 + 0.06 * Math.sin(now * 6));
+      v.level += (target - v.level) * Math.min(1, dt * (target > v.level ? 16 : 5));
+      const L = v.level, sp = (1 + v.think * 2.2) * (1 - 0.7 * v.mute) * (0.3 + 0.7 * v.boot) * sp0;
+      v.ry += dt * (0.22 + v.think * 1.3 + L * 0.6) * sp; v.rc -= dt * 0.03 * sp; v.o1 += dt * 0.8 * sp; v.o2 -= dt * 0.6 * sp;
+    }
+
+    function colors() {
+      const base = document.documentElement.classList.contains("holo") ? PAL.cyan : PAL.gold, T = base.st, m = v.mute * 0.85;
+      const pick = (k) => mix(mix(mix(base[k], T.think[k], v.think), T.speak[k], v.speak), GREY, m);
+      return { a: pick("a"), a2: pick("a2"), hot: pick("hot"), deep: pick("deep"), g: mix(base.g, GREY, m), b: mix(base.b, GREY, m) };
+    }
+
+    // calm (0 on Home, 1 when engaged) moves the look to the voice-mode version: quieter particles and rings, no cursor marker.
+    function draw(P, c, cy, R, calm, pxc, pyc) {
+      const k = R / 274, L = v.level, MX = v.mx, MY = v.my, rep = v.hover, hv = v.hover * (1 - calm), off = 16 * k;
+      const S = 1.08 - 0.14 * v.think + 0.12 * v.speak + 0.04 * L + 0.07 * v.kick + 0.04 * v.focus;
+      ctx.save(); ctx.translate(c, cy); ctx.scale(S, S); ctx.translate(-c, -cy);
+      const tX = 0.42 + MY * 0.4, ctX = Math.cos(tX), stX = Math.sin(tX);
+      glow(c, cy, R * 0.1, R * 0.95, P.a, (0.08 + 0.1 * L) * v.boot);
+
+      const orR = R * 0.79, orbits = [[1.22 - MX * 0.3, Math.PI / 2 + MY * 0.25, v.o1], [1.22 - MY * 0.3, Math.PI / 6 + MX * 0.25, v.o2], [1.22 - MY * 0.3, Math.PI * 5 / 6 + MX * 0.25, v.o1 * 0.9 + 2.1]];
+      const orbit = (front, bb) => {
+        for (const [tl, rz, ph] of orbits) {
+          const ct = Math.cos(tl), st = Math.sin(tl), cz = Math.cos(rz), sz = Math.sin(rz);
+          const p3 = (p) => { const x = Math.cos(p) * orR, y0 = Math.sin(p) * orR, y = y0 * ct, z = y0 * st; return [c + x * cz - y * sz, cy + x * sz + y * cz, z / orR]; };
+          ctx.beginPath();
+          let on = false;
+          for (let i = 0; i <= 120; i++) { const pt = p3(i / 120 * TAU); if ((pt[2] >= 0) === front) { if (on) ctx.lineTo(pt[0], pt[1]); else ctx.moveTo(pt[0], pt[1]); on = true; } else on = false; }
+          ctx.strokeStyle = q(P.a, (front ? 0.6 : 0.2) * bb); ctx.lineWidth = front ? 1.4 : 1; ctx.stroke();
+          const b3 = p3(ph);
+          if ((b3[2] >= 0) === front) {
+            const d = (b3[2] + 1) / 2;
+            glow(b3[0], b3[1], 0, 9 + 9 * d, P.g, 0.55 * bb * (0.4 + 0.6 * d));
+            ctx.fillStyle = q(P.g, bb * (0.45 + 0.55 * d)); ctx.beginPath(); ctx.arc(b3[0], b3[1], 1.8 + 1.8 * d, 0, TAU); ctx.fill();
+          }
+        }
+      };
+
+      const pr = R * 0.645, cY = Math.cos(v.ry + MX * 0.7), sY = Math.sin(v.ry + MX * 0.7), pa = 1 - 0.35 * calm;
+      const lx = (pxc - c) / S + c - MX * off, ly = (pyc - cy) / S + cy - MY * off, rr = 110 * k, push0 = 34 * k;
+      const parts = (front, bb) => {
+        for (let i = 0; i < fib.length; i++) {
+          const f = fib[i], x1 = f[0] * cY + f[2] * sY, z1 = -f[0] * sY + f[2] * cY, y2 = f[1] * ctX - z1 * stX, z2 = f[1] * stX + z1 * ctX;
+          if ((z2 >= 0) !== front) continue;
+          const wob = reduce ? 0.5 : 0.5 + 0.5 * Math.sin(i * 1.7 + v.t * 7);
+          const push = 1 + L * 0.22 * wob + (reduce ? 0 : v.think * 0.05 * Math.sin(i * 0.9 + v.t * 3)), d = (z2 + 1) / 2, s = 0.8 + 1.5 * d;
+          ctx.fillStyle = q(d > 0.55 ? P.a2 : P.a, (0.1 + 0.6 * d) * bb * pa);
+          let X = c + x1 * pr * push, Y = cy + y2 * pr * push;
+          if (rep > 0.02) {
+            const dx = X - lx, dy = Y - ly, dd = Math.hypot(dx, dy);
+            if (dd < rr && dd > 0.1) { const kk = Math.pow(1 - dd / rr, 2) * push0 * rep; X += dx / dd * kk; Y += dy / dd * kk; }
+          }
+          ctx.fillRect(X - s / 2, Y - s / 2, s, s);
+        }
+      };
+
+      const gr = R * 0.47, gY = v.ry * 0.6 + MX * 0.7, cG = Math.cos(gY), sG = Math.sin(gY);
+      const gp = (x, y, z) => { const x1 = x * cG + z * sG, z1 = -x * sG + z * cG; return [c + x1 * gr, cy + (y * ctX - z1 * stX) * gr, y * stX + z1 * ctX]; };
+      const gline = (fn, front) => {
+        ctx.beginPath();
+        let on = false;
+        for (let i = 0; i <= 64; i++) { const pt = fn(i / 64 * TAU); if ((pt[2] >= 0) === front) { if (on) ctx.lineTo(pt[0], pt[1]); else ctx.moveTo(pt[0], pt[1]); on = true; } else on = false; }
+        ctx.stroke();
+      };
+      const globe = (front, bb) => {
+        ctx.lineWidth = front ? 1.25 : 1; ctx.strokeStyle = q(P.a2, (front ? 0.62 : 0.2) * bb);
+        for (const lat of [-0.62, 0, 0.62]) { const yy = Math.sin(lat), r0 = Math.cos(lat); gline((p) => gp(Math.cos(p) * r0, yy, Math.sin(p) * r0), front); }
+        for (let m = 0; m < 4; m++) { const lo = m / 4 * Math.PI, cl = Math.cos(lo), sl = Math.sin(lo); gline((p) => gp(Math.cos(p) * cl, Math.sin(p), Math.cos(p) * sl), front); }
+        if (v.think > 0.02) {
+          const lat = Math.sin(v.t * (reduce ? 0.8 : 2.2)) * 1.2, yy = Math.sin(lat), r0 = Math.cos(lat);
+          ctx.strokeStyle = q(P.hot, (front ? 0.85 : 0.3) * v.think * bb); ctx.lineWidth = 1.6;
+          gline((p) => gp(Math.cos(p) * r0, yy, Math.sin(p) * r0), front);
+        }
+      };
+      const blob = (bb) => {
+        const base = R * 0.355 * (0.6 + 0.4 * bb);
+        glow(c, cy, base * 0.5, base * 1.9, P.a, (0.38 + 0.4 * L) * bb * (1 - 0.5 * v.mute));
+        for (let j = 0; j < 3; j++) {
+          const r = base * (1 - j * 0.07) * (1 + L * 0.12 + (reduce ? 0 : 0.01 * Math.sin(v.t * 2 + j)));
+          ctx.beginPath(); ctx.arc(c, cy, r, 0, TAU);
+          if (j === 0) {
+            const g = ctx.createRadialGradient(c - base * 0.3, cy - base * 0.35, base * 0.04, c, cy, base * 1.15);
+            g.addColorStop(0, q(P.hot, bb)); g.addColorStop(0.35, q(P.a2, 0.95 * bb)); g.addColorStop(0.78, q(P.a, 0.9 * bb)); g.addColorStop(1, q(P.deep, 0.85 * bb));
+            ctx.fillStyle = g; ctx.fill();
+          }
+          ctx.strokeStyle = j === 2 ? (calm > 0.5 ? q(P.a2, 0.45 * bb) : q(P.b, 0.2 * bb)) : q(P.a2, (j ? 0.45 : 0.6) * bb);
+          ctx.lineWidth = 1.2; ctx.stroke();
+        }
+      };
+
+      const bR = bp(3);
+      if (bR) {
+        const ra = 1 - 0.34 * calm, f = (rot, al) => fade(c, cy, rot, P.a, al * bR * ra);
+        ctx.lineWidth = 1; ctx.strokeStyle = f(v.ft * 0.25, 0.45); ctx.beginPath(); ctx.arc(c, cy, R * 0.885, 0, TAU); ctx.stroke();
+        ctx.setLineDash([2, 7]); ctx.strokeStyle = f(2 - v.ft * 0.18, 0.35); ctx.beginPath(); ctx.arc(c, cy, R * 0.94, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+        const segs = [60, 20, 14, 30, 90, 40, 24, 82];
+        let a = v.rc * 3;
+        ctx.lineCap = "butt"; ctx.lineWidth = 2.5; ctx.strokeStyle = f(1 + v.ft * 0.12, 0.85);
+        for (let i = 0; i < segs.length; i++) { const len = segs[i] * Math.PI / 180; if (i % 2 === 0) { ctx.beginPath(); ctx.arc(c, cy, R * 0.912, a, a + len * bR); ctx.stroke(); } a += len; }
+      }
+
+      ctx.translate(MX * off, MY * off);
+      const bO = bp(2), bP = bp(1), bC = bp(0);
+      if (bO) orbit(false, bO);
+      if (bP) parts(false, bP);
+      if (bC) { globe(false, bC); blob(bC); globe(true, bC); } else ring(c, cy, R * 0.355, "rgba(255,255,255,0.08)", 1);
+      if (bP) parts(true, bP);
+      if (bO) orbit(true, bO);
+      ctx.restore();
+
+      ripples = ripples.filter((t0) => v.t - t0 < 1.3);
+      for (const t0 of ripples) { const age = (v.t - t0) / 1.3; ring(c, cy, R * (0.36 + age * 0.62) * S, q(P.a2, 0.7 * (1 - age)), 1.6); }
+      if (hv > 0.02) {
+        const x = pxc, y = pyc, rot = v.t * 1.4;
+        ctx.save(); ctx.setLineDash([2, 6]); ctx.beginPath(); ctx.moveTo(c, cy); ctx.lineTo(x, y); ctx.strokeStyle = q(P.a2, 0.22 * hv); ctx.lineWidth = 1; ctx.stroke(); ctx.restore();
+        ring(x, y, 15, q(P.a2, 0.7 * hv), 1.2);
+        ctx.beginPath();
+        for (let i = 0; i < 4; i++) { const a = rot + i * Math.PI / 2; ctx.moveTo(x + Math.cos(a) * 19, y + Math.sin(a) * 19); ctx.lineTo(x + Math.cos(a) * 25, y + Math.sin(a) * 25); }
+        ctx.strokeStyle = q(P.a2, 0.8 * hv); ctx.lineWidth = 1.4; ctx.stroke();
+        ctx.fillStyle = q(P.hot, 0.9 * hv); ctx.beginPath(); ctx.arc(x, y, 1.6, 0, TAU); ctx.fill();
+      }
+      return S;
+    }
+
+    function frame(ts) {
+      requestAnimationFrame(frame);
+      const now = ts / 1000, dt = Math.min(0.05, Math.max(0, now - (last || now)));
+      last = now;
+      if (document.hidden) return;
+      const rr = rings.getBoundingClientRect(), hv = home.getBoundingClientRect();
+      if (!rr.width || !hv.width) return;
+      const engaged = rings.classList.contains("hx-live-on");
+      if (engaged !== home.classList.contains("hx-engaged")) {
+        home.classList.toggle("hx-engaged", engaged);
+        // The stack is cleared after a session ends (once it has faded out), so a new session starts empty.
+        if (!engaged) setTimeout(() => { if (!rings.classList.contains("hx-live-on")) clearNotes(); }, 700);
+      }
+      const panel = engaged && think.count > 0 && !think.dismissed;
+      if (think.el) think.el.classList.toggle("open", panel);
+      document.documentElement.classList.toggle("hx-reasoning", panel);
+      const staged = engaged || v.z > 0.002 || v.p > 0.002;
+      if (!staged && (rr.bottom < 0 || rr.top > innerHeight)) return;
+
+      // Home spot (the rings) and stage spot (centre of the visible Home area), blended by the engage amount.
+      const Rh = rings.clientWidth / 2 * 0.95, hx = rr.left + rr.width / 2, hy = rr.top + rr.height / 2;
+      const top = Math.max(hv.top, 0), vh = Math.max(1, Math.min(hv.bottom, innerHeight) - top);
+      // Engaged: big and centred. With reasoning notifications showing: centred in the space left of them (on top when narrow).
+      const narrow = hv.width < 900;
+      const pw = narrow ? hv.width - 32 : Math.min(440, Math.max(320, hv.width * 0.33)), freeW = narrow ? hv.width : hv.width - pw - 56;
+      const Rc = Math.max(Rh, Math.min(hv.width, vh) * 0.36), cx0 = hv.left + hv.width / 2, cy0 = top + vh * 0.45;
+      const Rl = narrow ? Math.max(Rh * 0.6, Math.min(hv.width * 0.3, vh * 0.16)) : Math.max(Rh, Math.min(Rc, freeW * 0.34, vh * 0.36));
+      const lx0 = narrow ? cx0 : hv.left + freeW / 2, ly0 = narrow ? top + vh * 0.2 : cy0;
+      const ps = v.p * v.p * (3 - 2 * v.p), Rs = Rc + (Rl - Rc) * ps, sx = cx0 + (lx0 - cx0) * ps, sy = cy0 + (ly0 - cy0) * ps;
+      const zs = v.z * v.z * (3 - 2 * v.z), R = Rh + (Rs - Rh) * zs, bx = hx + (sx - hx) * zs, by = hy + (sy - hy) * zs;
+      if (staged) place(Math.round(hv.left - rr.left) + "px", Math.round(top - rr.top) + "px", Math.round(hv.width) + "px", Math.round(vh) + "px");
+      else place("-15%", "-15%", "130%", "130%");
+      if (think.el && (panel || v.p > 0.002)) {
+        let pl, pt, ph;
+        if (narrow) { pl = hv.left + 16; pt = top + vh * 0.4; ph = vh * 0.6 - 110; }
+        else { pl = hv.left + hv.width - 28 - pw; pt = top + 20; ph = vh - 40; }
+        const box = [pl, pt, pw, Math.max(160, ph)].map(Math.round).join(",");
+        if (box !== think.box) {
+          think.box = box;
+          const b = box.split(",");
+          Object.assign(think.el.style, { left: b[0] + "px", top: b[1] + "px", width: b[2] + "px", height: b[3] + "px" });
+        }
+        document.documentElement.style.setProperty("--hxh-card-x", (narrow ? hv.left + hv.width / 2 : lx0).toFixed(0) + "px");
+        document.documentElement.style.setProperty("--hxh-card-w", Math.round(Math.min(520, (narrow ? hv.width - 32 : freeW - 40))) + "px");
+      }
+
+      const live = engaged ? (rings.dataset.live || "listening") : "idle";
+      const zr = zone.getBoundingClientRect();
+      const inZone = mouse.on && (engaged || (mouse.x >= zr.left && mouse.x <= zr.right && mouse.y >= zr.top && mouse.y <= zr.bottom));
+      update(now, dt, engaged, live, inZone, bx, by, R, panel);
+      ball.x = bx; ball.y = by; ball.R = R;
+
+      const cr = cv.getBoundingClientRect(), w = cv.clientWidth, h = cv.clientHeight, dpr = Math.min(staged ? 1.5 : 2, window.devicePixelRatio || 1);
+      if (!w || !h) return;
+      const W = Math.round(w * dpr), H = Math.round(h * dpr);
+      if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const sc = cr.width ? w / cr.width : 1;
+      const S = draw(colors(), (bx - cr.left) * sc, (by - cr.top) * sc, R, zs, (v.px - cr.left) * sc, (v.py - cr.top) * sc);
+
+      const off = 16 * R / 274;
+      setVar(face, "--hxh-x", (bx - hx + v.mx * off * S).toFixed(1) + "px");
+      setVar(face, "--hxh-y", (by - hy + v.my * off * S).toFixed(1) + "px");
+      setVar(face, "--hxh-s", (R / Rh * S / 1.08 * (1 + 0.12 * v.level)).toFixed(3));
+      setVar(wrap, "--hxh-o", (R / Rh * S / 1.08).toFixed(3));
+    }
+    requestAnimationFrame(frame);
+  })();
+  </script>
+  <script id="hx-viewer-js">
+  /* Hermes · file viewer.
+     Files and file links in Agent chat (tool files like Drive PDFs, artifacts, Google Docs/Sheets/Slides,
+     images, text, CSV, Office files) open in a right-side drawer instead of a new window. PDFs are drawn
+     page by page with pdf.js when the file can be fetched, otherwise with the browser's own PDF viewer.
+     Ctrl/Cmd/middle-click still opens the link in a new tab. */
+  (function () {
+    "use strict";
+    const msgs = document.getElementById("messages");
+    if (!msgs || document.getElementById("hx-viewer")) return;
+    const app = document.getElementById("app");
+    const root = document.documentElement;
+    const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+    const EXT = {
+      pdf: "pdf", png: "img", jpg: "img", jpeg: "img", gif: "img", webp: "img", svg: "img", bmp: "img", avif: "img",
+      txt: "text", log: "text", xml: "text", yaml: "text", yml: "text", ini: "text", md: "md", markdown: "md",
+      csv: "csv", tsv: "csv", json: "json", html: "html", htm: "html",
+      doc: "office", docx: "office", xls: "office", xlsx: "office", ppt: "office", pptx: "office", odt: "office", ods: "office",
+      mp4: "video", webm: "video", mov: "video", mp3: "audio", wav: "audio", m4a: "audio", ogg: "audio"
+    };
+    const BADGE = { pdf: "pdf", img: "img", text: "text", md: "text", csv: "sheet", json: "text", html: "text", video: "media", audio: "media" };
+    const OFFICE_BADGE = { doc: "doc", docx: "doc", odt: "doc", xls: "sheet", xlsx: "sheet", ods: "sheet", ppt: "slides", pptx: "slides" };
+    const DRIVE = { document: ["Google Doc", "doc", "Doc"], spreadsheets: ["Google Sheet", "sheet", "Sheet"], presentation: ["Google Slides", "slides", "Slides"], drawings: ["Google Drawing", "img", "Draw"] };
+    const ART_RE = /\/api\/artefacts\/([0-9a-fA-F-]{36})\/view/;
+    const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const extOf = (s) => { const m = String(s || "").toLowerCase().split(/[?#]/)[0].match(/\.([a-z0-9]{2,8})$/); return m ? m[1] : ""; };
+    const baseName = (u) => { try { return decodeURIComponent(new URL(u, location.href).pathname.split("/").pop() || ""); } catch (_) { return ""; } };
+    const ICON = {
+      tab: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+      dl: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>',
+      x: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+    };
+
+    /* ── Drawer ── */
+    const el = document.createElement("aside");
+    el.className = "hx-viewer"; el.id = "hx-viewer";
+    el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "File viewer"); el.setAttribute("aria-hidden", "true");
+    el.innerHTML =
+      '<div class="hx-v-grip" title="Drag to resize"></div>' +
+      '<header class="hx-v-head"><span class="hx-v-badge"></span><div class="hx-v-meta"><div class="hx-v-name"></div><div class="hx-v-sub"></div></div>' +
+      '<div class="hx-v-acts"><div class="hx-v-zoom" hidden><button type="button" data-z="-1" aria-label="Zoom out">&minus;</button><span>100%</span><button type="button" data-z="1" aria-label="Zoom in">+</button></div>' +
+      '<a class="hx-v-btn" data-a="dl" title="Download" aria-label="Download">' + ICON.dl + "</a>" +
+      '<a class="hx-v-btn" data-a="tab" target="_blank" rel="noopener" title="Open in new tab" aria-label="Open in new tab">' + ICON.tab + "</a>" +
+      '<button type="button" class="hx-v-btn" data-a="close" title="Close (Esc)" aria-label="Close">' + ICON.x + "</button></div></header>" +
+      '<div class="hx-v-body"></div><div class="hx-v-pill"></div>';
+    document.body.appendChild(el);
+    const $ = (s) => el.querySelector(s);
+    const body = $(".hx-v-body"), badge = $(".hx-v-badge"), nameEl = $(".hx-v-name"), subEl = $(".hx-v-sub"), pill = $(".hx-v-pill");
+    const dlBtn = $('[data-a="dl"]'), tabBtn = $('[data-a="tab"]'), zoomEl = $(".hx-v-zoom"), zoomLbl = zoomEl.querySelector("span");
+    const S = { tok: 0, link: null, blob: null, pdf: null, zoom: 1, io: null, pillT: 0 };
+
+    try { const w = parseInt(localStorage.getItem("hx-viewer-w"), 10); if (w > 300) root.style.setProperty("--hxv-w", w + "px"); } catch (_) {}
+
+    function reset() {
+      S.tok++;
+      if (S.io) { S.io.disconnect(); S.io = null; }
+      if (S.pdf) { try { S.pdf.destroy(); } catch (_) {} S.pdf = null; }
+      if (S.blob) { URL.revokeObjectURL(S.blob); S.blob = null; }
+      body.innerHTML = ""; body.classList.remove("flush"); body.scrollTop = 0;
+      zoomEl.hidden = true; pill.classList.remove("on");
+      return S.tok;
+    }
+    function head(f) {
+      nameEl.textContent = f.name || "File"; nameEl.title = f.name || "";
+      badge.dataset.k = f.badge || "text"; badge.textContent = f.tag || (f.ext || "file").slice(0, 4);
+      subEl.textContent = f.sub || "";
+      setLinks(f.url, f.name);
+    }
+    function setLinks(url, name, dl) {
+      tabBtn.hidden = !url; if (url) tabBtn.href = url;
+      const d = dl || url;
+      dlBtn.hidden = !d;
+      if (d) {
+        dlBtn.href = d;
+        if (name) dlBtn.setAttribute("download", name); else dlBtn.removeAttribute("download");
+        // Cross-origin links ignore "download", so open them in a new tab instead of leaving the app.
+        if (/^blob:/.test(d)) dlBtn.removeAttribute("target"); else { dlBtn.target = "_blank"; dlBtn.rel = "noopener"; }
+      }
+    }
+    function open() {
+      if (el.classList.contains("open")) return;
+      const side = document.getElementById("artefact-side");
+      if (side && !side.hidden) document.getElementById("artefact-side-close")?.click();
+      el.classList.add("open"); el.setAttribute("aria-hidden", "false");
+      root.classList.add("hx-viewer-open");
+    }
+    function close() {
+      if (!el.classList.contains("open")) return;
+      el.classList.remove("open"); el.setAttribute("aria-hidden", "true");
+      root.classList.remove("hx-viewer-open");
+      const back = S.link;
+      if (S.link) S.link.classList.remove("hx-v-active");
+      S.link = null;
+      setTimeout(() => { if (!el.classList.contains("open")) reset(); }, 420);
+      if (back && back.isConnected) back.focus({ preventScroll: true });
+    }
+    $('[data-a="close"]').addEventListener("click", close);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && el.classList.contains("open")) close(); });
+    if (app) new MutationObserver(() => { if (app.dataset.view !== "agent") close(); }).observe(app, { attributes: true, attributeFilter: ["data-view"] });
+
+    /* Resize from the left edge */
+    const grip = $(".hx-v-grip");
+    grip.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId); el.classList.add("resizing");
+      const move = (ev) => {
+        const w = Math.round(Math.max(380, Math.min(innerWidth - 360, innerWidth - ev.clientX)));
+        root.style.setProperty("--hxv-w", w + "px");
+      };
+      const up = () => {
+        grip.removeEventListener("pointermove", move); el.classList.remove("resizing");
+        try { localStorage.setItem("hx-viewer-w", parseInt(getComputedStyle(root).getPropertyValue("--hxv-w"), 10) || ""); } catch (_) {}
+        if (S.pdf) rerenderPdf();
+      };
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("pointerup", up, { once: true });
+      grip.addEventListener("pointercancel", up, { once: true });
+    });
+
+    /* ── States ── */
+    function skeleton() { body.innerHTML = '<div class="hx-v-skel"><i></i><i></i></div>'; }
+    function failed(url, msg) {
+      body.innerHTML = '<div class="hx-v-empty"><b>Can\u2019t preview this file here</b><p>' + esc(msg || "This file type can\u2019t be shown in the viewer.") + "</p>" +
+        (url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener">' + ICON.tab + "Open in new tab</a>" : "") + "</div>";
+    }
+    function frame(src, opts) {
+      body.classList.add("flush");
+      const f = document.createElement("iframe");
+      f.className = "hx-v-frame" + (opts && opts.dark ? " dark" : "");
+      f.src = src; f.title = nameEl.textContent || "File";
+      if (opts && opts.sandbox) f.setAttribute("sandbox", opts.sandbox);
+      f.setAttribute("allow", "fullscreen");
+      body.innerHTML = ""; body.appendChild(f);
+    }
+
+    /* ── PDF (pdf.js) ── */
+    let pdfjsP = null;
+    function pdfjs() {
+      if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+      if (!pdfjsP) pdfjsP = new Promise((res, rej) => {
+        const s = document.createElement("script");
+        s.src = PDFJS + "pdf.min.js";
+        s.onload = () => { const L = window.pdfjsLib; if (!L) return rej(new Error("pdf.js")); L.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js"; res(L); };
+        s.onerror = () => { pdfjsP = null; rej(new Error("pdf.js failed to load")); };
+        document.head.appendChild(s);
+      });
+      return pdfjsP;
+    }
+    async function showPdf(f, tok) {
+      let data;
+      try { const r = await fetch(f.url); if (!r.ok) throw new Error(r.status); data = await r.arrayBuffer(); }
+      catch (_) { if (tok === S.tok) frame(f.url); return; }
+      if (tok !== S.tok) return;
+      S.blob = URL.createObjectURL(new Blob([data], { type: "application/pdf" }));
+      setLinks(f.url, f.name, S.blob);
+      let L;
+      try { L = await pdfjs(); } catch (_) { if (tok === S.tok) frame(S.blob); return; }
+      let doc;
+      try { doc = await L.getDocument({ data }).promise; } catch (_) { if (tok === S.tok) frame(S.blob); return; }
+      if (tok !== S.tok) { doc.destroy(); return; }
+      S.pdf = doc;
+      subEl.textContent = "PDF \u00b7 " + doc.numPages + (doc.numPages === 1 ? " page" : " pages");
+      const wrap = document.createElement("div");
+      wrap.className = "hx-v-pages";
+      const first = await doc.getPage(1);
+      const vp1 = first.getViewport({ scale: 1 });
+      for (let i = 1; i <= doc.numPages; i++) {
+        const pg = document.createElement("div");
+        pg.className = "hx-v-page"; pg.dataset.n = i;
+        pg.style.aspectRatio = vp1.width + " / " + vp1.height;
+        wrap.appendChild(pg);
+      }
+      body.innerHTML = ""; body.appendChild(wrap);
+      zoomEl.hidden = false; setZoom(1, true);
+      S.io = new IntersectionObserver((ents) => ents.forEach((en) => { if (en.isIntersecting) drawPage(en.target, tok); }), { root: body, rootMargin: "800px 0px" });
+      wrap.querySelectorAll(".hx-v-page").forEach((p) => S.io.observe(p));
+    }
+    async function drawPage(pg, tok) {
+      if (!S.pdf || pg.dataset.busy || pg.dataset.w == String(pg.clientWidth)) return;
+      pg.dataset.busy = "1";
+      try {
+        const page = await S.pdf.getPage(+pg.dataset.n);
+        if (tok !== S.tok) return;
+        const v1 = page.getViewport({ scale: 1 });
+        pg.style.aspectRatio = v1.width + " / " + v1.height;
+        const w = pg.clientWidth, dpr = Math.min(2.5, window.devicePixelRatio || 1);
+        const vp = page.getViewport({ scale: (w * dpr) / v1.width });
+        const c = document.createElement("canvas");
+        c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+        await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+        if (tok !== S.tok) return;
+        pg.replaceChildren(c); pg.classList.add("drawn"); pg.dataset.w = String(w);
+      } catch (_) {} finally { delete pg.dataset.busy; }
+    }
+    function rerenderPdf() {
+      const tok = S.tok;
+      body.querySelectorAll(".hx-v-page").forEach((pg) => {
+        const r = pg.getBoundingClientRect(), b = body.getBoundingClientRect();
+        if (r.bottom > b.top - 800 && r.top < b.bottom + 800) drawPage(pg, tok);
+      });
+    }
+    const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+    function setZoom(z, silent) {
+      S.zoom = z;
+      const wrap = body.querySelector(".hx-v-pages");
+      if (wrap) wrap.style.width = z * 100 + "%";
+      zoomLbl.textContent = Math.round(z * 100) + "%";
+      if (!silent) rerenderPdf();
+    }
+    zoomEl.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-z]"); if (!b) return;
+      const i = ZOOMS.indexOf(S.zoom), n = Math.max(0, Math.min(ZOOMS.length - 1, (i < 0 ? 2 : i) + +b.dataset.z));
+      const mid = (body.scrollTop + body.clientHeight / 2) / Math.max(1, body.scrollHeight);
+      setZoom(ZOOMS[n]);
+      body.scrollTop = mid * body.scrollHeight - body.clientHeight / 2;
+    });
+    body.addEventListener("scroll", () => {
+      if (!S.pdf) return;
+      const pages = body.querySelectorAll(".hx-v-page"), mid = body.getBoundingClientRect().top + body.clientHeight / 2;
+      let cur = 1;
+      for (const p of pages) { const r = p.getBoundingClientRect(); if (r.top <= mid) cur = +p.dataset.n; else break; }
+      pill.textContent = "Page " + cur + " / " + S.pdf.numPages;
+      pill.classList.add("on");
+      clearTimeout(S.pillT); S.pillT = setTimeout(() => pill.classList.remove("on"), 1100);
+    }, { passive: true });
+
+    /* ── Text, Markdown, CSV, JSON ── */
+    function parseCSV(t, sep) {
+      const rows = []; let row = [], cell = "", q = false;
+      for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (q) { if (c === '"') { if (t[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+        else if (c === '"') q = true;
+        else if (c === sep) { row.push(cell); cell = ""; }
+        else if (c === "\n" || c === "\r") { if (c === "\r" && t[i + 1] === "\n") i++; row.push(cell); rows.push(row); row = []; cell = ""; if (rows.length > 1000) break; }
+        else cell += c;
+      }
+      if (cell || row.length) { row.push(cell); rows.push(row); }
+      return rows;
+    }
+    async function showText(f, tok) {
+      let t;
+      try { const r = await fetch(f.url); if (!r.ok) throw new Error(r.status); t = await r.text(); }
+      catch (_) { if (tok === S.tok) frame(f.url, { dark: f.kind !== "html", sandbox: "" }); return; }
+      if (tok !== S.tok) return;
+      if (f.kind === "md" && window.marked && window.DOMPurify) {
+        body.innerHTML = '<div class="hx-v-md">' + window.DOMPurify.sanitize(window.marked.parse(t, { gfm: true, breaks: true })) + "</div>";
+        body.querySelectorAll(".hx-v-md a").forEach((a) => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
+      } else if (f.kind === "csv") {
+        const rows = parseCSV(t, f.ext === "tsv" ? "\t" : ",").filter((r) => r.some((c) => c !== ""));
+        const [h, ...rest] = rows;
+        subEl.textContent = (f.ext || "csv").toUpperCase() + " \u00b7 " + rest.length + (rest.length >= 1000 ? "+" : "") + " rows";
+        body.innerHTML = '<table class="hx-v-table"><thead><tr>' + (h || []).map((c) => "<th>" + esc(c) + "</th>").join("") + "</tr></thead><tbody>" +
+          rest.slice(0, 1000).map((r) => "<tr>" + r.map((c) => '<td title="' + esc(c) + '">' + esc(c) + "</td>").join("") + "</tr>").join("") + "</tbody></table>" +
+          (rest.length >= 1000 ? '<div class="hx-v-note">Showing the first 1,000 rows.</div>' : "");
+      } else if (f.kind === "html") {
+        frame(URL.createObjectURL(new Blob([t], { type: "text/html" })), { sandbox: "" });
+      } else {
+        if (f.kind === "json") { try { t = JSON.stringify(JSON.parse(t), null, 2); } catch (_) {} }
+        body.innerHTML = '<pre class="hx-v-text">' + esc(t.length > 400000 ? t.slice(0, 400000) + "\n\u2026" : t) + "</pre>";
+      }
+    }
+
+    /* ── Show a file ── */
+    async function show(f) {
+      const tok = reset();
+      head(f); open();
+      if (f.kind === "presign") {
+        skeleton();
+        try {
+          const r = await fetch("/api/media/presign?uri=" + encodeURIComponent(f.uri));
+          const j = await r.json();
+          if (!r.ok || !j.url) throw new Error(j.error || "Couldn\u2019t get a link for this file.");
+          if (tok !== S.tok) return;
+          f.url = j.url; f.kind = EXT[f.ext] || "other"; setLinks(f.url, f.name);
+        } catch (e) { if (tok === S.tok) failed(f.href && f.href !== "#" ? f.href : "", e.message); return; }
+      }
+      switch (f.kind) {
+        case "pdf": skeleton(); return showPdf(f, tok);
+        case "img": {
+          body.innerHTML = '<div class="hx-v-imgwrap"><img alt=""></div>';
+          const w = body.firstChild, img = w.firstChild;
+          img.alt = f.name || ""; img.src = f.url;
+          img.addEventListener("load", () => { if (tok === S.tok) subEl.textContent = (f.ext || "image").toUpperCase() + " \u00b7 " + img.naturalWidth + " \u00d7 " + img.naturalHeight; });
+          img.addEventListener("error", () => { if (tok === S.tok) failed(f.url, "The image couldn\u2019t be loaded."); });
+          img.addEventListener("click", () => w.classList.toggle("actual"));
+          return;
+        }
+        case "video": case "audio":
+          body.innerHTML = '<div class="hx-v-media"><' + f.kind + ' controls preload="metadata"></' + f.kind + "></div>";
+          body.querySelector(f.kind).src = f.url;
+          return;
+        case "text": case "md": case "csv": case "json": case "html": skeleton(); return showText(f, tok);
+        case "office":
+          if (/^https:/i.test(f.url) && !/^https:\/\/(localhost|127\.)/i.test(f.url)) return frame("https://view.officeapps.live.com/op/embed.aspx?src=" + encodeURIComponent(f.url));
+          return failed(f.url, "Office files can only be previewed from a public link.");
+        case "embed": return frame(f.embed);
+        case "report": return frame(f.url);
+        case "artefact":
+          frame(f.url, { sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox" });
+          fetch("/api/artefacts/" + encodeURIComponent(f.id)).then((r) => (r.ok ? r.json() : null)).then((j) => {
+            if (tok === S.tok && j && j.artefact && j.artefact.title) { nameEl.textContent = j.artefact.title; nameEl.title = j.artefact.title; }
+          }).catch(() => {});
+          return;
+        default: return failed(f.url);
+      }
+    }
+
+    /* ── Which chat links count as files ── */
+    function classify(a) {
+      const label = (a.getAttribute("title") || a.textContent || "").replace(/^[\s\u{1F4CE}\u{1F3A8}]+/u, "").trim();
+      if (a.classList.contains("tool-media-file") && a.dataset.s3Uri) {
+        const name = label || baseName(a.dataset.s3Uri), ext = extOf(name) || extOf(a.dataset.s3Uri);
+        return file({ kind: "presign", uri: a.dataset.s3Uri, href: a.getAttribute("href"), name, ext });
+      }
+      const href = a.getAttribute("href") || "";
+      if (!href || href === "#" || /^(mailto|tel|javascript):/i.test(href)) return null;
+      let u; try { u = new URL(href, location.href); } catch (_) { return null; }
+      const art = a.dataset.artefactId || (u.pathname.match(ART_RE) || [])[1];
+      if (art) return { kind: "artefact", id: art, url: "/api/artefacts/" + encodeURIComponent(art) + "/view?refresh=1&_=" + Date.now(), name: label && !/\/api\/artefacts\//.test(label) ? label : "Artifact", badge: "img", tag: "Art", sub: "Artifact" };
+      let m;
+      if (u.hostname === "docs.google.com" && (m = u.pathname.match(/^\/(document|spreadsheets|presentation|drawings)\/d\/([\w-]+)/))) {
+        const d = DRIVE[m[1]];
+        return { kind: "embed", embed: "https://docs.google.com/" + m[1] + "/d/" + m[2] + "/preview", url: u.href, name: label && label !== u.href ? label : d[0], badge: d[1], tag: d[2], sub: d[0] };
+      }
+      if (u.hostname === "drive.google.com") {
+        const id = (u.pathname.match(/\/file\/d\/([\w-]+)/) || [])[1] || (/^\/(open|uc)/.test(u.pathname) ? u.searchParams.get("id") : null);
+        if (id) {
+          const ext = extOf(label);
+          return { kind: "embed", embed: "https://drive.google.com/file/d/" + id + "/preview", url: u.href, name: label && label !== u.href ? label : "Drive file", ext, badge: BADGE[EXT[ext]] || OFFICE_BADGE[ext] || "doc", tag: ext || "Drive", sub: "Google Drive" + (ext ? " \u00b7 " + ext.toUpperCase() : "") };
+        }
+        return null;
+      }
+      // Scheduled-job reports (e.g. /api/reviews/report/<date>) are HTML pages served by the app.
+      if (u.origin === location.origin && (/^\/api\/[\w-]+\/reports?\//.test(u.pathname) || a.classList.contains("jb-report-link"))) {
+        const date = (u.pathname.match(/(\d{4}-\d{2}-\d{2})/) || [])[1];
+        const what = (u.pathname.match(/^\/api\/([\w-]+)\//) || [])[1] || "";
+        const title = what ? what.charAt(0).toUpperCase() + what.slice(1).replace(/-/g, " ") + " report" : "Report";
+        return { kind: "report", url: u.href, name: title + (date ? " \u00b7 " + date : ""), badge: "sheet", tag: "Report", sub: "Scheduled job report" };
+      }
+      const ext = extOf(u.pathname) || (u.pathname.startsWith("/api/media") ? extOf(label) : "");
+      if (!ext || !EXT[ext]) return null;
+      const name = label && label !== href && !/^https?:\/\//.test(label) ? label : baseName(u.href);
+      return file({ kind: EXT[ext], url: u.href, name, ext });
+    }
+    function file(f) {
+      const k = f.kind === "presign" ? EXT[f.ext] : f.kind;
+      f.badge = k === "office" ? OFFICE_BADGE[f.ext] || "doc" : BADGE[k] || "text";
+      f.tag = f.ext || "file";
+      f.sub = (f.ext ? f.ext.toUpperCase() : "File") + (k === "office" ? " \u00b7 Office" : "");
+      return f;
+    }
+
+    document.addEventListener("click", (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = e.target.closest && e.target.closest("a");
+      if (!a || !(msgs.contains(a) || a.closest("#jobs-view"))) return;
+      const f = classify(a);
+      if (!f) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (S.link) S.link.classList.remove("hx-v-active");
+      S.link = a; a.classList.add("hx-v-active");
+      root.classList.toggle("hx-viewer-top", !!a.closest(".tk-overlay"));
+      show(f);
+    }, true);
+
+    const pick = (ev) => !(ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey);
+    const mark = (node) => { if (S.link) S.link.classList.remove("hx-v-active"); S.link = node; if (node) node.classList.add("hx-v-active"); root.classList.remove("hx-viewer-top"); };
+    function openStored(uri, name) {
+      name = name || baseName(uri) || "File";
+      return show(file({ kind: "presign", uri, href: "#", name, ext: extOf(name) || extOf(uri) }));
+    }
+    function openArtefact(id, title) {
+      return show({ kind: "artefact", id, url: "/api/artefacts/" + encodeURIComponent(id) + "/view?refresh=1&_=" + Date.now(), name: title || "Artifact", badge: "img", tag: "Art", sub: "Artifact" });
+    }
+    // Files tab: a file opens here instead of a new tab (folders still navigate).
+    document.addEventListener("click", (ev) => {
+      if (!pick(ev)) return;
+      const it = ev.target.closest && ev.target.closest("#files-view .file-item.file[data-uri]");
+      if (!it) return;
+      ev.preventDefault(); ev.stopImmediatePropagation();
+      const key = it.getAttribute("title") || "", nm = it.querySelector(".file-item-name");
+      mark(it);
+      openStored(it.dataset.uri, key.split("/").pop() || (nm && nm.textContent.trim()));
+    }, true);
+    // Artifacts tab: a card opens here instead of the full-screen canvas (Sync / Delete keep working).
+    document.addEventListener("click", (ev) => {
+      if (!pick(ev)) return;
+      const card = ev.target.closest && ev.target.closest("#artefacts-view [data-open]");
+      if (!card || ev.target.closest("[data-sync], [data-delete], button")) return;
+      ev.preventDefault(); ev.stopImmediatePropagation();
+      const t = card.querySelector(".tk-card-name");
+      mark(card.closest(".tk-card") || card);
+      openArtefact(card.dataset.open, t ? t.textContent.trim() : "");
+    }, true);
+
+    // Library → Files: "Open" previews here instead of a new tab (Ctrl/middle-click still opens one).
+    document.addEventListener("click", (ev) => {
+      if (!pick(ev)) return;
+      const a = ev.target.closest && ev.target.closest("#lib-files a[data-uri]");
+      if (!a || !a.dataset.uri) return;
+      ev.preventDefault(); ev.stopImmediatePropagation();
+      mark(a.closest(".tk-card") || a);
+      openStored(a.dataset.uri, a.dataset.name);
+    }, true);
+
+    window.HermesViewer = { open: show, close, openFile: openStored, openArtefact };
+  })();
+  </script>
+  <script id="hx-ab-pop-js">
+  (function () {
+    "use strict";
+    const ab = document.getElementById("agent-bar");
+    if (!ab) return;
+    const close = () => { const b = ab.querySelector(".v2-ab-more"); if (ab.classList.contains("v2-open") && b) b.click(); };
+    document.addEventListener("pointerdown", (e) => { if (!ab.contains(e.target)) close(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  })();
+  </script>
+  <script id="hx-mic-jarvis">
+  /* Agent mic → Jarvis: opens Home and starts Hermes Live on the orb (listening + speaking)
+     instead of the old voice call. Falls back to the old call if Hermes Live isn't available. */
+  (function () {
+    "use strict";
+    document.addEventListener("click", function (e) {
+      const btn = e.target.closest && e.target.closest("#voice-btn");
+      if (!btn || !window.HermesLive) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const app = document.getElementById("app");
+      if (app) app.classList.remove("mobile-open");
+      const home = document.querySelector('.strip-tab[data-view="home"]');
+      if (home && (!app || app.dataset.view !== "home")) home.click();
+      if (!window.HermesLive.active) setTimeout(function () { window.HermesLive.start(); }, 120);
+    }, true);
+    const b = document.getElementById("voice-btn");
+    if (b && window.HermesLive) { b.title = "Talk to Jarvis"; b.setAttribute("aria-label", "Talk to Jarvis"); }
+  })();
+  </script>
+  <script id="hx-mobile-js">
+  /* Hermes · phone layout helpers: bottom tab bar, menu button and a per-tab "new" action in the top bar.
+     Only visible on phone-size screens (see #hx-mobile styles). */
+  (function () {
+    "use strict";
+    const app = document.getElementById("app");
+    if (!app) return;
+    const tab = (v) => document.querySelector('.strip-tab[data-view="' + v + '"]');
+    const menu = document.getElementById("hx-tb-menu"), act = document.getElementById("hx-tb-act");
+    if (menu) menu.addEventListener("click", () => app.classList.toggle("mobile-open"));
+    const MAIN = [["home", "Home"], ["agent", "Agent"], ["bills", "Billing"], ["tasks", "Tasks"]];
+    const bar = document.createElement("nav");
+    bar.className = "hx-tabbar"; bar.id = "hx-tabbar"; bar.setAttribute("aria-label", "Sections");
+    MAIN.forEach(([v, label]) => {
+      const src = tab(v);
+      if (!src) return;
+      const b = document.createElement("button");
+      b.type = "button"; b.dataset.go = v;
+      const svg = src.querySelector("svg");
+      if (svg) b.appendChild(svg.cloneNode(true));
+      const s = document.createElement("span"); s.textContent = label; b.appendChild(s);
+      b.addEventListener("click", () => { app.classList.remove("mobile-open"); src.click(); });
+      bar.appendChild(b);
+    });
+    const more = document.createElement("button");
+    more.type = "button"; more.dataset.go = "more";
+    more.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg><span>More</span>';
+    more.addEventListener("click", () => app.classList.toggle("mobile-open"));
+    bar.appendChild(more);
+    document.body.appendChild(bar);
+    const ACT = { agent: ["reset-btn", "New conversation"], tasks: ["task-new-btn", "New task"], meeting: ["meeting-new-btn", "New meeting"] };
+    if (act) act.addEventListener("click", () => { const a = ACT[app.dataset.view]; const el = a && document.getElementById(a[0]); if (el) el.click(); });
+    const sync = () => {
+      const v = app.dataset.view, inMain = MAIN.some((m) => m[0] === v), open = app.classList.contains("mobile-open");
+      bar.querySelectorAll("button").forEach((b) => {
+        const on = b.dataset.go === "more" ? (open || !inMain) : (!open && b.dataset.go === v);
+        b.classList.toggle("on", on);
+        if (b.dataset.go !== "more") b.setAttribute("aria-current", on ? "page" : "false");
+      });
+      if (act) { const a = ACT[v]; act.hidden = !a; if (a) { act.setAttribute("aria-label", a[1]); act.title = a[1]; } }
+    };
+    new MutationObserver(sync).observe(app, { attributes: true, attributeFilter: ["data-view", "class"] });
+    sync();
+  })();
+  </script>
+</body>
+</html>
