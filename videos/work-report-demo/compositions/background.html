@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /></head>
+<body>
+<template>
+<style>
+#bgc-root{position:absolute;inset:0;overflow:hidden;}
+
+#bgc-root{background:#143221;}
+#bgc-glow{position:absolute;left:1100px;top:-300px;width:1200px;height:1200px;border-radius:50%;background:radial-gradient(circle,rgba(226,176,74,.16) 0%,rgba(226,176,74,0) 65%);}
+#bgc-lines{position:absolute;left:0;top:0;width:1920px;height:1300px;}
+.hl{position:absolute;left:0;width:1920px;height:1px;background:rgba(147,219,179,.10);}
+</style>
+<div id="bgc-root" data-composition-id="bgc" data-width="1920" data-height="1080" data-duration="308.648">
+<div id="bgc-glow" data-layout-allow-overflow></div><div id="bgc-lines" data-layout-allow-overflow><div class="hl" style="top:40px"></div><div class="hl" style="top:100px"></div><div class="hl" style="top:160px"></div><div class="hl" style="top:220px"></div><div class="hl" style="top:280px"></div><div class="hl" style="top:340px"></div><div class="hl" style="top:400px"></div><div class="hl" style="top:460px"></div><div class="hl" style="top:520px"></div><div class="hl" style="top:580px"></div><div class="hl" style="top:640px"></div><div class="hl" style="top:700px"></div><div class="hl" style="top:760px"></div><div class="hl" style="top:820px"></div><div class="hl" style="top:880px"></div><div class="hl" style="top:940px"></div><div class="hl" style="top:1000px"></div><div class="hl" style="top:1060px"></div><div class="hl" style="top:1120px"></div><div class="hl" style="top:1180px"></div></div>
+</div>
+<script>
+(function(){
+const tl = gsap.timeline({ paused: true });
+tl.fromTo("#bgc-lines",{y:0},{y:-120,duration:308.648,ease:"none"},0);
+tl.fromTo("#bgc-glow",{scale:1,opacity:.55},{scale:1.15,opacity:.8,duration:6,yoyo:true,repeat:51,ease:"sine.inOut"},0);
+window.__timelines["bgc"] = tl;
+})();
+</script>
+</template>
+</body></html>

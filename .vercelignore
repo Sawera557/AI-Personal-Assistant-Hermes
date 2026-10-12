@@ -8,3 +8,6 @@ venv
 __pycache__
 *.pyc
 .claude
+
+# Sawera's personal fork lives here; never ship it with the Hermes deploy
+Sawera-AI-Assistant

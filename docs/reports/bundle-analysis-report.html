@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gandi AI Assistant — Git Bundle Analysis Report</title>
+<style>
+  :root {
+    --surface-0: #f7f6f3;
+    --surface-1: #f0efe9;
+    --surface-2: #ffffff;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --border: rgba(11,11,11,0.10);
+    --grid: #e1e0d9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--surface-0);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  header { margin-bottom: 2rem; }
+  header p.eyebrow { font-size: 13px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 6px; }
+  h1 { font-size: 26px; font-weight: 500; margin: 0 0 6px; }
+  header p.sub { font-size: 14px; color: var(--text-secondary); margin: 0; }
+  h2 { font-size: 18px; font-weight: 500; margin: 2.5rem 0 1rem; padding-top: 1.5rem; border-top: 0.5px solid var(--border); }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+  p { font-size: 15px; color: var(--text-secondary); }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 1rem; }
+  .metric { background: var(--surface-1); border-radius: 8px; padding: 1rem; }
+  .metric .label { font-size: 13px; color: var(--text-secondary); margin: 0 0 4px; }
+  .metric .value { font-size: 24px; font-weight: 500; margin: 0; }
+  .chart-box { position: relative; width: 100%; margin: 1rem 0 1.5rem; background: var(--surface-2); border-radius: 12px; border: 0.5px solid var(--border); padding: 1.25rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--text-secondary); margin: 0.5rem 0 1.5rem; }
+  .legend span { display: flex; align-items: center; gap: 4px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 1rem 0 1.5rem; background: var(--surface-2); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 0.5px solid var(--border); }
+  th { color: var(--text-secondary); font-weight: 500; background: var(--surface-1); }
+  td.num, th.num { text-align: right; }
+  footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 0.5px solid var(--border); font-size: 13px; color: var(--text-muted); }
+  code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--surface-1); padding: 2px 5px; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Git bundle analysis</p>
+  <h1>Gandi AI Assistant — repository history report</h1>
+  <p class="sub">Bundle: D:\gandi-ai-assistant.bundle · 719 KB · 64 refs · HEAD 3704df3 · generated 2026-07-21</p>
+</header>
+
+<div class="metrics">
+  <div class="metric"><p class="label">Total commits</p><p class="value">95</p></div>
+  <div class="metric"><p class="label">Refs bundled</p><p class="value">64</p></div>
+  <div class="metric"><p class="label">Merge commits</p><p class="value">11</p></div>
+  <div class="metric"><p class="label">Active span</p><p class="value">30 days</p></div>
+  <div class="metric"><p class="label">Files at HEAD</p><p class="value">105</p></div>
+  <div class="metric"><p class="label">Bundle size</p><p class="value">719 KB</p></div>
+</div>
+
+<h2>Commits by contributor (owner-confirmed attribution)</h2>
+<p>All 87 commits made under the <code>gandikediye-afk</code> display name — both the <code>sawerakhadium557@gmail.com</code> address and the <code>gandikediye@gmail.com</code> address — were authored by Sawera Khadium, per the repo owner. Git itself only records whichever name/email was configured on the committing machine and cannot verify who typed the commit; this attribution reflects the owner's direct confirmation, not something derivable from commit metadata alone. The <code>.mailmap</code> committed on 2026-07-21 currently only remaps the <code>sawerakhadium557@gmail.com</code> address — the <code>gandikediye@gmail.com</code> address has not yet been remapped in git itself.</p>
+<div class="chart-box"><div style="position:relative; height:120px;">
+  <canvas id="authorChart" role="img" aria-label="Horizontal bar chart: Sawera Khadium 87 commits, Haider Ali 8 commits"></canvas>
+</div></div>
+
+<table>
+  <thead><tr><th>Contributor</th><th class="num">Commits</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Sawera Khadium</td><td class="num">87</td><td>75 under <code>gandikediye-afk</code> / <code>sawerakhadium557@gmail.com</code> (mailmap-corrected) + 8 under <code>gandikediye-afk</code> / <code>gandikediye@gmail.com</code> (owner-confirmed, not yet mailmap-corrected) + 4 GitHub PR-merge commits under her real name</td></tr>
+    <tr><td>Haider Ali</td><td class="num">8</td><td><code>haiderali333222@gmail.com</code>, all in the final week (Jul 15–19)</td></tr>
+  </tbody>
+</table>
+
+<h2>Weekly commits by contributor</h2>
+<div class="chart-box"><div style="position:relative; height:260px;">
+  <canvas id="weekChart" role="img" aria-label="Stacked bar chart of weekly commits by contributor across weeks 26 to 30 of 2026"></canvas>
+</div></div>
+<div class="legend">
+  <span><span class="swatch" style="background:#e87ba4"></span>Sawera Khadium</span>
+  <span><span class="swatch" style="background:#1baf7a"></span>Haider Ali</span>
+</div>
+<p>Heavy founding burst in week 26 (38 commits, all Sawera), steady pace through weeks 27–29, Haider's 8 commits land entirely in weeks 28–29, tapering to 8 commits in the final partial week (week 30, capped by the <code>.mailmap</code> commit).</p>
+
+<h2>Commits by branch (top 12)</h2>
+<div class="chart-box"><div style="position:relative; height:520px;">
+  <canvas id="branchChart" role="img" aria-label="Horizontal bar chart of commit counts for the 12 most active branches"></canvas>
+</div></div>
+<p><code>newfeatures_by_Haider</code> and <code>main</code> are tied at 87 commits each, followed by <code>scheduled-updated</code> (76) and <code>scheduled-tasks-read-docs</code> / <code>Bills-Feature-resolve</code> (74 each) — reflecting a long-running scheduled-tasks feature effort plus a late integration branch from Haider.</p>
+
+<h2>File types at HEAD (105 files)</h2>
+<div class="chart-box"><div style="position:relative; height:220px;">
+  <canvas id="fileChart" role="img" aria-label="Donut chart of file extensions: 49 Python, 16 SQL, 16 Markdown, 10 JavaScript, 14 other"></canvas>
+</div></div>
+<div class="legend">
+  <span><span class="swatch" style="background:#2a78d6"></span>py 49</span>
+  <span><span class="swatch" style="background:#008300"></span>sql 16</span>
+  <span><span class="swatch" style="background:#e87ba4"></span>md 16</span>
+  <span><span class="swatch" style="background:#eda100"></span>js 10</span>
+  <span><span class="swatch" style="background:#898781"></span>other 14</span>
+</div>
+
+<h2>Most-changed files (on main)</h2>
+<table>
+  <thead><tr><th>File</th><th class="num">Commits touching it</th></tr></thead>
+  <tbody>
+    <tr><td>static/style.css</td><td class="num">34</td></tr>
+    <tr><td>app.py</td><td class="num">32</td></tr>
+    <tr><td>templates/index.html</td><td class="num">31</td></tr>
+    <tr><td>static/app.js</td><td class="num">22</td></tr>
+    <tr><td>hermes/tools.py</td><td class="num">22</td></tr>
+    <tr><td>hermes/config.py</td><td class="num">21</td></tr>
+    <tr><td>hermes/agent.py</td><td class="num">19</td></tr>
+    <tr><td>.env.example</td><td class="num">16</td></tr>
+  </tbody>
+</table>
+
+<h2>Structure at HEAD</h2>
+<p>105 tracked files, dominated by Python (49), SQL migrations (16), and Markdown docs (16). The <code>hermes/</code> package holds 33 modules (agent, bills, calendar, memory, meeting_copilot, reviews_scraper, scheduler, voice, wati, worldbank, jobs, etc.), alongside <code>app.py</code>, <code>templates/</code>, <code>static/</code>, <code>migrations/</code>, <code>tests/</code>, <code>scripts/</code>, and the newly added <code>.mailmap</code>.</p>
+
+<footer>
+  Not included in this bundle: uncommitted working-directory files (PROJECT_SCOPE.md, ingestion-service/, scripts/_*.py, tests/test_bills.py) — those aren't part of any commit yet.<br>
+  Generated from D:\gandi-ai-assistant.bundle, HEAD 3704df3, 2026-07-21.
+</footer>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const muted = '#898781';
+const grid = '#e1e0d9';
+
+new Chart(document.getElementById('authorChart'), {
+  type: 'bar',
+  data: {
+    labels: ['Sawera Khadium','Haider Ali'],
+    datasets: [{ data: [87,8], backgroundColor: ['#e87ba4','#1baf7a'], borderRadius: 4, barThickness: 26 }]
+  },
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { beginAtZero: true, grid: { color: grid }, ticks: { color: muted, font: { size: 11 } } },
+      y: { grid: { display: false }, ticks: { color: muted, font: { size: 11 } } }
+    }
+  }
+});
+
+new Chart(document.getElementById('weekChart'), {
+  type: 'bar',
+  data: {
+    labels: ['W26','W27','W28','W29','W30'],
+    datasets: [
+      { label: 'Sawera Khadium', data: [38,17,11,13,8], backgroundColor: '#e87ba4', borderRadius: 4 },
+      { label: 'Haider Ali', data: [0,0,1,7,0], backgroundColor: '#1baf7a', borderRadius: 4 }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { stacked: true, grid: { display: false }, ticks: { color: muted, font: { size: 11 } } },
+      y: { stacked: true, beginAtZero: true, grid: { color: grid }, ticks: { color: muted, font: { size: 11 } } }
+    }
+  }
+});
+
+new Chart(document.getElementById('branchChart'), {
+  type: 'bar',
+  data: {
+    labels: ['newfeatures_by_Haider','main','scheduled-updated','scheduled-tasks-read-docs','Bills-Feature-resolve','scheduled-tasks-full','scheduled-tasks','Analytics-research','read_document_tool','S3-Bucket-file-upload','persistant-memory-feature','persistant-memory'],
+    datasets: [{ data: [87,87,76,74,74,71,71,65,60,60,59,58], backgroundColor: '#2a78d6', borderRadius: 4, barThickness: 22 }]
+  },
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { beginAtZero: true, grid: { color: grid }, ticks: { color: muted, font: { size: 11 } } },
+      y: { grid: { display: false }, ticks: { color: muted, font: { size: 11 } } }
+    }
+  }
+});
+
+new Chart(document.getElementById('fileChart'), {
+  type: 'doughnut',
+  data: {
+    labels: ['py','sql','md','js','other'],
+    datasets: [{ data: [49,16,16,10,14], backgroundColor: ['#2a78d6','#008300','#e87ba4','#eda100','#898781'], borderColor: '#ffffff', borderWidth: 2 }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    cutout: '65%'
+  }
+});
+</script>
+</body>
+</html>

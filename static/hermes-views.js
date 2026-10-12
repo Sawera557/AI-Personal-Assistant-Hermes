@@ -69,7 +69,7 @@
       docsLoading = null;
       if (!r.documents) return;
       SX.docs = r.documents;
-      if (SX.d.mems) { SX.d.docs = SX.docs; if (view() === "schema") sxRender(); }
+      if (SX.d.loaded) { SX.d.docs = SX.docs; if (view() === "schema") sxRender(); }
     });
   }
   async function sxData() {
@@ -80,10 +80,13 @@
       get("/api/agents"), get("/api/settings/model"), get("/api/documents?entity_id=all&source_system=business_skill"),
     ]);
     if (!SX.paths) get("/openapi.json").then((o) => { if (!o.paths) return; SX.paths = o.paths; if (view() === "schema") sxRender(); });
+    // A failed or timed-out request is null, not [] — the node then shows its
+    // descriptive text instead of a false "0" (e.g. Maton slow → "0 apps").
+    const arr = (v) => (Array.isArray(v) ? v : null);
     SX.d = {
-      docs: SX.docs || null, mems: mems.memories || [], conns: (conns.data && conns.data.connections) || [],
-      usage: usage.totals || {}, tasks: tasks.tasks || [], jobs: jobs.jobs || [], gr: gr.guardrails || [], biz: biz.businesses || [],
-      agents: agents.agents || [], models: models.options || [], active: models.active || "", skills: skills.documents || [],
+      loaded: true, docs: SX.docs || null, mems: arr(mems.memories), conns: arr(conns.data && conns.data.connections),
+      usage: usage.totals || null, tasks: arr(tasks.tasks), jobs: arr(jobs.jobs), gr: arr(gr.guardrails), biz: arr(biz.businesses),
+      agents: arr(agents.agents), models: arr(models.options), active: models.active || "", skills: arr(skills.documents),
     };
   }
   // "Claude · Opus 5 (most capable)" -> provider "Claude", name "Opus 5".
@@ -93,7 +96,7 @@
   };
   const optValue = (o) => (o && (o.value || o.id || o.model)) || "";
   function activeModel(d) {
-    const o = d.models.find((m) => optValue(m) === d.active);
+    const o = (d.models || []).find((m) => optValue(m) === d.active);
     return o ? modelParts(o.label) : { prov: "", name: d.active || selText("model-select") };
   }
   const countBy = (arr, key) => arr.reduce((m, x) => { const k = key(x); if (k) m.set(k, (m.get(k) || 0) + 1); return m; }, new Map());
@@ -138,52 +141,56 @@
     const el = $("schema-view");
     if (!el) return;
     const d = SX.d, ctxOff = !SX.ctx, appsOff = !SX.apps;
-    const live = d.conns.filter((c) => (c.status || "").toUpperCase() === "ACTIVE").length;
-    const armed = d.tasks.filter((t) => t.enabled).length;
-    const ns = d.biz.map((b) => ENTITY[b.slug] ? "entity__" + ENTITY[b.slug] : null).filter(Boolean);
+    const L = (a) => a || [];  // null = request failed; count from [] only where text is guarded
+    const live = L(d.conns).filter((c) => (c.status || "").toUpperCase() === "ACTIVE").length;
+    const armed = L(d.tasks).filter((t) => t.enabled).length;
+    const ns = L(d.biz).map((b) => ENTITY[b.slug] ? "entity__" + ENTITY[b.slug] : null).filter(Boolean);
     const am = activeModel(d);
-    const provs = countBy(d.models, (m) => modelParts(m.label).prov);
+    const provs = countBy(L(d.models), (m) => modelParts(m.label).prov);
     const nEndpoints = SX.paths ? Object.values(SX.paths).reduce((s, v) => s + Object.keys(v).length, 0) : null;
-    const liveAgents = d.agents.filter((a) => a.enabled !== false);
-    const memScopes = countBy(d.mems, (m) => m.scope_type);
+    const liveAgents = L(d.agents).filter((a) => a.enabled !== false);
+    const memScopes = countBy(L(d.mems), (m) => m.scope_type);
     const kbDocs = d.docs ? d.docs.filter((x) => x.source_system !== "business_skill").length : null;
     const N = {
-      web: node({ id: "web", t: "Web app", f: "templates/index.html · static/*.js", s: "Jinja page and view scripts, served by the API.", chips: chip(d.biz.length + " businesses"), goto: "agent" }),
+      web: node({ id: "web", t: "Web app", f: "templates/index.html · static/*.js", s: "Jinja page and view scripts, served by the API.", chips: d.biz ? chip(d.biz.length + " businesses") : "", goto: "agent" }),
       voice: node({ id: "voice", t: "Voice", f: "voice.py · gemini_live.py · /api/voice", s: "Speech-to-text in, spoken replies out, live voice sessions." }),
       meet: node({ id: "meet", t: "Meeting Copilot", f: "meeting_copilot.py · fathom.py", s: "Live guidance and notes during calls.", goto: "meeting" }),
       api: node({ id: "api", cls: "tall", t: "FastAPI", f: "app.py · Swagger at /docs", s: "One API for every tab, worker and integration." + (nEndpoints ? " <b>" + nEndpoints + "</b> endpoints." : ""),
         x: '<div class="ax-routes">' + routeRows() + "</div>" }),
       agents: node({ id: "agents", t: "Multi-agents", f: "agents.py · agent_tools.py · /api/agents", goto: "multiagents",
-        s: "<b>" + liveAgents.length + "</b> of " + d.agents.length + " agents on · each has its own role prompt, tool whitelist and autonomy.",
-        chips: d.agents.slice(0, 6).map((a) => chip(a.name, a.enabled === false ? "off" : "on")).join("") + (d.agents.length > 6 ? chip("+" + (d.agents.length - 6)) : "") }),
+        s: d.agents ? "<b>" + liveAgents.length + "</b> of " + d.agents.length + " agents on · each has its own role prompt, tool whitelist and autonomy."
+          : "Specialist agents, each with its own role prompt, tool whitelist and autonomy.",
+        chips: L(d.agents).slice(0, 6).map((a) => chip(a.name, a.enabled === false ? "off" : "on")).join("") + (L(d.agents).length > 6 ? chip("+" + (d.agents.length - 6)) : "") }),
       core: node({ id: "core", cls: "core", t: "Hermes agent", f: "agent.py · tools.py · turn_router.py", goto: "agent",
         s: "Tool-use loop · routes each turn to <b>CHAT</b> or <b>FULL</b>",
-        x: '<div class="ax-stats"><div>Reasoning<b id="sx-effort">' + esc(selText("effort-select").split(" — ")[0]) + "</b></div><div>Tokens<b>" + Number(d.usage.tokens || 0).toLocaleString() + "</b></div><div>Spend<b>" + usd(d.usage.cost_usd, 2) + "</b></div></div>" }),
+        x: '<div class="ax-stats"><div>Reasoning<b id="sx-effort">' + esc(selText("effort-select").split(" — ")[0]) + "</b></div><div>Tokens<b>" + (d.usage ? Number(d.usage.tokens || 0).toLocaleString() : "—") + "</b></div><div>Spend<b>" + (d.usage ? usd(d.usage.cost_usd, 2) : "—") + "</b></div></div>" }),
       model: node({ id: "model", t: "Model switch", f: "models.py · /api/settings/model", goto: "agent",
-        s: 'Active: <b id="sx-model">' + esc(am.name) + "</b>" + (am.prov ? " · " + esc(am.prov) : "") + "<br>" + d.models.length + " models · change it from the model picker, next turn uses it",
+        s: 'Active: <b id="sx-model">' + esc(am.name) + "</b>" + (am.prov ? " · " + esc(am.prov) : "") + "<br>" + (d.models ? d.models.length + " models · " : "") + "change it from the model picker, next turn uses it",
         chips: [...provs].map(([p, n]) => chip(p + " ×" + n, p === am.prov ? "on" : "")).join("") }),
       guard: node({ id: "guard", t: "Guardrails", f: "guardrails.py", goto: "settings",
         s: "Checked on every tool call, before it runs.",
-        chips: d.gr.length ? d.gr.map((g) => chip(g.key, g.enabled ? "on" : "off")).join("") : chip("confirm_writes") + chip("business_isolation") }),
+        chips: L(d.gr).length ? d.gr.map((g) => chip(g.key, g.enabled ? "on" : "off")).join("") : chip("confirm_writes") + chip("business_isolation") }),
       mem: node({ id: "mem", t: "Memory", f: "memory_retrieve.py · conversation_retrieve.py", goto: "context", off: ctxOff,
-        s: "<b>" + d.mems.length + "</b> memories · standing rules always load, the rest by relevance to your message.",
+        s: (d.mems ? "<b>" + d.mems.length + "</b> memories · s" : "S") + "tanding rules always load, the rest by relevance to your message.",
         chips: [...memScopes].map(([s, n]) => chip(s + " " + n)).join("") }),
       skills: node({ id: "skills", t: "Skills", f: "Context › Skills · rag.py", goto: "context", off: ctxOff,
-        s: "<b>" + d.skills.length + "</b> playbooks · pulled into the turn when your request matches one.",
-        chips: d.skills.slice(0, 4).map((k) => chip(k.title || "untitled")).join("") + (d.skills.length > 4 ? chip("+" + (d.skills.length - 4)) : "") }),
+        s: d.skills ? "<b>" + d.skills.length + "</b> playbooks · pulled into the turn when your request matches one."
+          : "Playbooks pulled into the turn when your request matches one.",
+        chips: L(d.skills).slice(0, 4).map((k) => chip(k.title || "untitled")).join("") + (L(d.skills).length > 4 ? chip("+" + (d.skills.length - 4)) : "") }),
       ctx: node({ id: "ctx", t: "Knowledge retrieval", f: "rag.py · context_packs.py", goto: "context", off: ctxOff,
         s: "<b>" + (kbDocs == null ? "…" : kbDocs) + "</b> documents · pgvector + Pinecone, ranked per message." }),
       pg: node({ id: "pg", t: "Postgres 17", f: "AWS RDS · hermes/db", s: "Chats, memories, documents, tasks, bills, usage.", chips: chip("pgvector") + chip("24 tables") }),
       s3: node({ id: "s3", t: "S3", f: "AWS S3 · storage.py", goto: "files", s: "Original files and everything Hermes generates.", chips: ["bills/", "generated/", "drive-files/", "wati-media/"].map((p) => chip(p)).join("") }),
       pine: node({ id: "pine", t: "Pinecone", f: "pinecone_store.py · serverless", off: ctxOff, s: "One search namespace per business.", chips: (ns.length ? ns : ["entity__<slug>"]).map((x) => chip(x)).join("") }),
       maton: node({ id: "maton", t: "Maton gateway", f: "maton.py · OAuth connectors", off: appsOff,
-        s: "<b>" + live + "</b> of " + d.conns.length + " accounts connected · <b>" + appGroups(d.conns).length + "</b> apps",
-        chips: appGroups(d.conns).map((g) => chip(g.label + (g.total > 1 ? " ×" + g.total : ""), g.active === g.total ? "on" : g.active || g.pending ? "warn" : "off")).join("") }),
-      llm: node({ id: "llm", t: "Model providers", f: "Anthropic · OpenAI · Gemini · NIM APIs", s: "Whichever model the switch picks answers the turn.",
-        chips: [...provs.keys()].map((p) => chip(PROVIDER[p] || p, p === am.prov ? "on" : "")).join("") }),
+        s: d.conns ? "<b>" + live + "</b> of " + d.conns.length + " accounts connected · <b>" + appGroups(d.conns).length + "</b> apps"
+          : "One OAuth gateway for every business app. Couldn't reach Maton just now; reopen System to retry.",
+        chips: appGroups(L(d.conns)).map((g) => chip(g.label + (g.total > 1 ? " ×" + g.total : ""), g.active === g.total ? "on" : g.active || g.pending ? "warn" : "off")).join("") }),
+      llm: node({ id: "llm", t: "Model providers", f: "Anthropic · OpenAI · Gemini · NIM APIs", s: d.models ? "Whichever model the switch picks answers the turn." : "Switchable per conversation.",
+        chips: d.models ? [...provs.keys()].map((p) => chip(PROVIDER[p] || p, p === am.prov ? "on" : "")).join("") : chip("Anthropic") + chip("OpenAI") + chip("NVIDIA NIM") }),
       tools: node({ id: "tools", t: "Direct integrations", f: "wati.py · worldbank.py · extract.py", off: appsOff, chips: chip("WhatsApp · WATI") + chip("World Bank") + chip("Web search") + chip("NuExtract OCR") }),
-      sched: node({ id: "sched", t: "Scheduler", f: "scheduler.py", goto: "tasks", s: "<b>" + armed + "</b> of " + d.tasks.length + " tasks armed" }),
-      jobs: node({ id: "jobs", t: "Job runner", f: "job_runner.py", goto: "jobs", s: "<b>" + d.jobs.length + "</b> jobs · reviews, World Bank, Drive" }),
+      sched: node({ id: "sched", t: "Scheduler", f: "scheduler.py", goto: "tasks", s: d.tasks ? "<b>" + armed + "</b> of " + d.tasks.length + " tasks armed" : "Runs scheduled tasks on their cadence." }),
+      jobs: node({ id: "jobs", t: "Job runner", f: "job_runner.py", goto: "jobs", s: (d.jobs ? "<b>" + d.jobs.length + "</b> jobs · r" : "R") + "eviews, World Bank, Drive" }),
       ingest: node({ id: "ingest", t: "Ingestion service", f: "ingestion-service/", s: "Gmail and Drive into pgvector and Pinecone." }),
       bills: node({ id: "bills", t: "Bills pipeline", f: "email_attachments.py → register.py", goto: "bills", s: "Inbox PDFs to the bills register." }),
       notify: node({ id: "notify", t: "Notify", f: "notify.py", s: "Task results back to you." }),

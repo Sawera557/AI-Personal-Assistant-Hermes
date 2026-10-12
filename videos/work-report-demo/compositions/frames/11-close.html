@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /></head>
+<body>
+<template>
+<style>
+#s11-root{position:absolute;inset:0;overflow:hidden;color:#FFFFF4;font-family:'Montserrat',sans-serif;}
+.abs{position:absolute;}
+.kicker{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:22px;letter-spacing:.22em;color:#E2B04A;text-transform:uppercase;}
+.serif{font-family:'EB Garamond',serif;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+.h1{font-family:'EB Garamond',serif;font-weight:400;font-size:88px;line-height:1.02;letter-spacing:-.01em;color:#FFFFF4;}
+.h2{font-family:'EB Garamond',serif;font-weight:400;font-size:60px;line-height:1.05;color:#FFFFF4;}
+.gold{color:#E2B04A;} .mint{color:#93DBB3;} .brick{color:#E06A4E;}
+.scenelabel{position:absolute;left:60px;top:34px;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.18em;color:#93DBB3;}
+.card{position:absolute;background:#173b29;border:2px solid rgba(255,255,244,.16);border-radius:14px;padding:30px 34px;box-shadow:0 24px 60px rgba(0,0,0,.35);}
+.card .ct{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.2em;color:#E2B04A;margin-bottom:18px;}
+.card .ch{font-family:'EB Garamond',serif;font-size:40px;line-height:1.1;margin-bottom:14px;}
+.li{display:flex;align-items:center;gap:16px;font-size:28px;font-weight:700;line-height:1.25;margin:14px 0;color:#FFFFF4;}
+.li .tk{flex:0 0 34px;height:34px;border-radius:50%;border:2px solid #93DBB3;color:#93DBB3;font-size:20px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;}
+.chip{display:inline-flex;align-items:center;gap:10px;padding:10px 18px;border-radius:999px;background:#173b29;border:2px solid rgba(255,255,244,.22);font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.06em;color:#FFFFF4;}
+.chip.on{border-color:#E2B04A;color:#E2B04A;}
+.stamp{position:absolute;font-family:'IBM Plex Mono',monospace;font-weight:700;letter-spacing:.14em;border:5px solid #E06A4E;color:#E06A4E;padding:14px 26px;border-radius:10px;background:rgba(20,50,33,.9);}
+/* browser frame */
+.bf{position:absolute;left:210px;top:96px;width:1500px;height:773px;border-radius:18px;overflow:hidden;background:#0f2619;border:2px solid rgba(255,255,244,.18);box-shadow:0 30px 80px rgba(0,0,0,.45);}
+.bf-bar{position:absolute;left:0;top:0;width:1500px;height:34px;background:#0f2619;display:flex;align-items:center;gap:8px;padding:0 16px;}
+.bf-bar i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,244,.25);display:block;}
+.bf-url{margin-left:14px;font-family:'IBM Plex Mono',monospace;font-size:16px;color:rgba(255,255,244,.7);}
+.bf-priv{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:14px;letter-spacing:.12em;color:#93DBB3;}
+.bf-view{position:absolute;left:0;top:34px;width:1500px;height:739px;overflow:hidden;background:#fffff4;}
+.zo{position:absolute;left:0;top:0;width:1500px;height:739px;transform-origin:50% 50%;}
+.zi{position:absolute;left:0;top:0;width:1500px;height:739px;}
+.shot{position:absolute;left:0;top:0;width:1500px;height:739px;display:block;opacity:0;}
+.scrim{position:absolute;left:0;top:34px;width:1500px;height:739px;background:#143221;opacity:0;}
+.scrimR{position:absolute;left:0;top:34px;width:1500px;height:739px;opacity:0;background:linear-gradient(to left,rgba(20,50,33,.94) 0%,rgba(20,50,33,.86) 40%,rgba(20,50,33,0) 66%);}
+</style>
+<div id="s11-root" data-composition-id="s11" data-width="1920" data-height="1080" data-duration="24.547">
+
+<style>
+.pr{height:96px;border-top:2px solid rgba(255,255,244,.2);display:flex;align-items:center;gap:22px;font-family:'EB Garamond',serif;font-size:46px;}
+.pr .pn{font-family:'IBM Plex Mono',monospace;font-size:20px;color:#E2B04A;}
+.rs{width:250px;height:58px;border:2px solid #E2B04A;border-radius:10px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:22px;letter-spacing:.1em;color:#E2B04A;}
+</style>
+<div class="abs" id="s11-rail" style="left:140px;top:90px;width:1640px;display:flex;justify-content:space-between"><div class="rs" id="s11-rs0">SOURCE</div><div class="rs" id="s11-rs1">VERIFY</div><div class="rs" id="s11-rs2">SHEET</div><div class="rs" id="s11-rs3">DASHBOARD</div><div class="rs" id="s11-rs4">HUMAN</div></div>
+<div class="abs h2" id="s11-head" style="left:140px;top:200px;width:1640px">Across all of it, the same rules hold.</div>
+<div class="abs" id="s11-grid" style="left:140px;top:330px;width:1640px;display:grid;grid-template-columns:1fr 1fr;column-gap:80px"><div class="pr" id="s11-p0"><span class="pn">01</span>Source-backed updates</div><div class="pr" id="s11-p1"><span class="pn">02</span>Verify ≠ write</div><div class="pr" id="s11-p2"><span class="pn">03</span>Every change auditable</div><div class="pr" id="s11-p3"><span class="pn">04</span>No duplicates</div><div class="pr" id="s11-p4"><span class="pn">05</span>Each business isolated</div><div class="pr" id="s11-p5"><span class="pn">06</span>Live dashboards</div><div class="pr" id="s11-p6"><span class="pn">07</span>No guessing, ever</div><div class="pr" id="s11-p7"><span class="pn">08</span>Automated maintenance</div></div>
+<div class="abs" id="s11-end" data-layout-allow-overlap style="left:0;top:0;width:1920px;height:1080px;background:#143221;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px">
+  <div class="kicker">Automation &amp; dashboard work</div>
+  <div class="serif" style="font-size:120px;line-height:1">Sawera Khadium</div>
+  <div class="serif gold" style="font-size:48px">AI automation · live dashboards · source-backed data</div>
+  <div class="mono" style="font-size:26px;color:#93DBB3;margin-top:20px">linkedin.com/in/sawera-khadium</div></div>
+</div>
+<script>
+(function(){
+const SID = "s11";
+const tl = gsap.timeline({ paused: true });
+const $ = (s) => "#" + SID + "-" + s;
+const VW = 1500, VH = 739, SC = VW / 1920;
+function cam(t, cx, cy, S, dur, ease) {
+  const fx = cx * SC, fy = cy * SC;
+  let ox = fx - VW / 2, oy = fy - VH / 2;
+  const mx = VW / 2 - VW / (2 * S), my = VH / 2 - VH / (2 * S);
+  ox = Math.max(-mx, Math.min(mx, ox)); oy = Math.max(-my, Math.min(my, oy));
+  tl.to($("zo"), { scale: S, duration: dur, ease: ease || "sine.inOut" }, t);
+  tl.to($("zi"), { x: -ox, y: -oy, duration: dur, ease: ease || "sine.inOut" }, t);
+}
+function show(t, id, d) { tl.fromTo($(id), { opacity: 0 }, { opacity: 1, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function inUp(t, id, d, dy) { tl.fromTo($(id), { opacity: 0, y: dy == null ? 26 : dy }, { opacity: 1, y: 0, duration: d || 0.5, ease: "power3.out" }, t); }
+function inLeft(t, id, d) { tl.fromTo($(id), { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: d || 0.45, ease: "power3.out" }, t); }
+function pop(t, id, d) { tl.fromTo($(id), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: d || 0.45, ease: "back.out(2)" }, t); }
+function slam(t, id, rot) { tl.fromTo($(id), { opacity: 0, scale: 1.8, rotation: rot || -6 }, { opacity: 1, scale: 1, rotation: rot || -6, duration: 0.35, ease: "power4.in" }, t); }
+function out(t, id, d) { tl.to($(id), { opacity: 0, duration: d || 0.35, ease: "power1.in" }, t); }
+function scrim(t, id, a, d) { tl.to($(id), { opacity: a, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function count(t, id, from, to, d, fmt) { const o = { v: from }; const el = document.getElementById(SID + "-" + id);
+  tl.to(o, { v: to, duration: d, ease: "power2.out", onUpdate: () => { el.textContent = fmt(o.v); } }, t); }
+tl.set($("end"),{opacity:0},0);
+pop(0.3,'rs0',0.4);
+pop(0.42,'rs1',0.4);
+pop(0.54,'rs2',0.4);
+pop(0.6599999999999999,'rs3',0.4);
+pop(0.78,'rs4',0.4);
+
+inUp(0.4,"head",0.6);
+inLeft(2.96,'p0',0.45);
+inLeft(4.24,'p1',0.45);
+inLeft(6.98,'p2',0.45);
+inLeft(8.48,'p3',0.45);
+inLeft(9.78,'p4',0.45);
+inLeft(11.72,'p5',0.45);
+inLeft(13.46,'p6',0.45);
+inLeft(17.08,'p7',0.45);
+
+tl.to([$("grid"),$("head"),$("rail")],{opacity:0,duration:0.6,ease:"power1.in"},20.15 - 0.3);
+tl.fromTo($("end"),{opacity:0},{opacity:1,duration:0.9,ease:"power2.inOut"},20.15);
+tl.to($("end"),{opacity:0,duration:0.8,ease:"power1.in"},23.047);
+
+window.__timelines["s11"] = tl;
+})();
+</script>
+</template>
+</body></html>
