@@ -57,21 +57,27 @@ def create_document(
     doc_type: str | None,
     sensitivity_level: str,
     message_id: str | None = None,
+    session_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     body_text: str | None = None,
 ) -> None:
+    # session_id joins the chat a file came from (migration 0024). The column
+    # is only included when a value is supplied so this INSERT still works
+    # against a schema that predates 0024.
+    cols = ["document_id", "entity_id", "message_id", "source_system", "doc_type",
+            "title", "s3_uri", "sensitivity_level", "metadata", "body_text"]
+    vals: list[Any] = [
+        document_id, entity_uuid, message_id, source_system, doc_type,
+        title, s3_uri, sensitivity_level, json.dumps(metadata or {}), body_text,
+    ]
+    if session_id:
+        cols.append("session_id")
+        vals.append(session_id)
     with cursor() as cur:
         cur.execute(
-            """
-            INSERT INTO documents
-                (document_id, entity_id, message_id, source_system, doc_type,
-                 title, s3_uri, sensitivity_level, metadata, body_text)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
-            """,
-            (
-                document_id, entity_uuid, message_id, source_system, doc_type,
-                title, s3_uri, sensitivity_level, json.dumps(metadata or {}), body_text,
-            ),
+            f"INSERT INTO documents ({', '.join(cols)}) "
+            f"VALUES ({', '.join(['%s'] * len(cols))});",
+            vals,
         )
 
 

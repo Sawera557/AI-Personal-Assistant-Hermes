@@ -111,7 +111,8 @@ class Harness:
             "usage": {"input_tokens": 100, "output_tokens": 10},
         }
 
-    def dispatch(self, name, tool_input, active_business, autonomy=None):
+    def dispatch(self, name, tool_input, active_business, autonomy=None,
+                 session_id=None):
         self.dispatched.append(name)
         return '{"results": []}', False, None, None
 

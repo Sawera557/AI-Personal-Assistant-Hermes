@@ -105,7 +105,8 @@ class Harness:
         yield {"type": "_final", "content": step["content"], "stop_reason": step["stop_reason"],
                "usage": {"input_tokens": 10, "output_tokens": 2}}
 
-    def dispatch(self, name, tool_input, active_business, autonomy=None):
+    def dispatch(self, name, tool_input, active_business, autonomy=None,
+                 session_id=None):
         self.dispatched.append(name)
         return '{"ok": true}', False, None, None
 

@@ -421,7 +421,8 @@ class Conversation:
         yield {"type": "_final", "content": content, "stop_reason": stop,
                "usage": {"input_tokens": 10, "output_tokens": 2}}
 
-    def _dispatch(self, name, tool_input, active_business, autonomy=None):
+    def _dispatch(self, name, tool_input, active_business, autonomy=None,
+                  session_id=None):
         self.dispatched.append((name, dict(tool_input)))
         if name == "email_with_attachment" and not tool_input.get("confirm"):
             return json.dumps({"status": 200, "ok": True, "data": {
@@ -864,7 +865,8 @@ class FailingOnce:
     def __init__(self, convo):
         self.convo, self.failed = convo, False
 
-    def __call__(self, name, tool_input, active_business, autonomy=None):
+    def __call__(self, name, tool_input, active_business, autonomy=None,
+                 session_id=None):
         self.convo.dispatched.append((name, dict(tool_input)))
         if name == "send_email" and not self.failed:
             self.failed = True

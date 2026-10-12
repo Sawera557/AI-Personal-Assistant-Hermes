@@ -62,6 +62,7 @@ from hermes.agent import run_turn, stream_turn
 from hermes.attachments import ATTACHMENT_TEXT_PREFIX, store as attachment_store
 from hermes.bills import check_paid_bills, extract_bill, fetch_gmail_body, guess_business, scan_drive, scan_gmail
 from hermes.businesses import to_business_slug, to_entity_slug
+from hermes import projects as hermes_projects
 from hermes import calendar as hermes_calendar
 from hermes.config import Config
 from hermes.fathom import find_recording_link as find_fathom_link
@@ -589,6 +590,58 @@ def _agent_kwargs(agent: dict | None, agent_mode) -> dict:
     return {"agent": agent, "agent_mode": agent_mode} if agent else {}
 
 
+def _persist_upload(
+    entity_id: str | None, session_id: str | None,
+    filename: str, mime: str, raw: bytes,
+) -> str | None:
+    """Persist a chat upload: bytes -> S3 under ``<project>/uploads/…`` and a
+    ``documents`` row (``source_system='chat_upload'``) tied to the project and
+    the conversation it arrived in (migration 0024). Returns the s3_uri.
+
+    Best-effort: a failure anywhere logs and returns None — an upload must
+    never break the turn it rides in on. The in-memory attachment store still
+    carries the content block for the current turn regardless."""
+    try:
+        if not s3.enabled():
+            return None
+        slug = None if not entity_id or entity_id == "all" else (
+            to_entity_slug(entity_id) or entity_id
+        )
+        key = s3.project_file_key("uploads", slug, filename, subdir=session_id or None)
+        s3_uri = s3.put(key, raw, mime or "application/octet-stream")
+        if not s3_uri:
+            return None
+
+        if os.getenv("HERMES_DISABLE_DB", "").strip().lower() in {"1", "true", "yes", "on"}:
+            return s3_uri
+        try:
+            entity_uuid = None
+            if slug:
+                from hermes.db import cursor as _cursor
+
+                with _cursor(commit=False) as cur:
+                    resolved = docs_repo.resolve_entity(cur, slug)
+                if resolved:
+                    entity_uuid = resolved[0]
+            docs_repo.create_document(
+                document_id=str(uuid.uuid4()),
+                entity_uuid=entity_uuid,
+                title=filename,
+                s3_uri=s3_uri,
+                source_system="chat_upload",
+                doc_type=mime or None,
+                sensitivity_level="internal",
+                session_id=session_id,
+                metadata={"filename": filename, "mime": mime, "via": "chat"},
+            )
+        except Exception as exc:  # noqa: BLE001 — row is bookkeeping; bytes count
+            log.warning("chat_upload doc row failed (%s) — bytes are in S3 anyway", exc)
+        return s3_uri
+    except Exception as exc:  # noqa: BLE001
+        log.warning("_persist_upload skipped: %s", exc)
+        return None
+
+
 @app.post("/api/chat")
 async def chat(request: Request):
     """Run one user turn through the Claude + Maton agent.
@@ -662,6 +715,14 @@ async def chat(request: Request):
         active_business = locked or "all"
     else:
         active_business = (entity_id or "").strip() or "all"
+
+    # Any files attached to this turn also land durably in the project's
+    # uploads/ folder in S3, tagged with this conversation (migration 0024).
+    if content_type.startswith("multipart/") and files:
+        for _fname, _fmime, _fraw in files:
+            await run_in_threadpool(
+                _persist_upload, active_business, session_id, _fname, _fmime, _fraw
+            )
 
     try:
         result = await run_in_threadpool(
@@ -791,6 +852,14 @@ async def chat_stream(request: Request):
         active_business = locked or "all"
     else:
         active_business = (entity_id or "").strip() or "all"
+
+    # Any files attached to this turn also land durably in the project's
+    # uploads/ folder in S3, tagged with this conversation (migration 0024).
+    if content_type.startswith("multipart/") and files:
+        for _fname, _fmime, _fraw in files:
+            await run_in_threadpool(
+                _persist_upload, active_business, session_id, _fname, _fmime, _fraw
+            )
 
     file_names = [name for name, _, _ in files]
     n_files = len(file_names) + len(attachment_ids)
@@ -948,13 +1017,23 @@ async def upload_attachments(request: Request):
     for upload in uploads:
         raw = await upload.read()
         block, kind = _block_for(upload.filename, upload.content_type or "", raw)
-        rec = attachment_store.add(entity_id, upload.filename, kind, len(raw), block)
+        s3_uri = await run_in_threadpool(
+            # Bytes -> <project>/uploads/… + a chat_upload documents row.
+            _persist_upload, entity_id, None,
+            upload.filename, upload.content_type or "", raw,
+        )
+        rec = attachment_store.add(
+            entity_id, upload.filename, kind, len(raw), block, s3_uri=s3_uri
+        )
         out.append(
             {
                 "attachment_id": rec["attachment_id"],
                 "filename": rec["filename"],
                 "type": rec["type"],
                 "bytes": rec["bytes"],
+                # True once the bytes sit in per-project S3 storage; False means
+                # the attachment exists only for this process (legacy behavior).
+                "stored": s3_uri is not None,
             }
         )
     return {"attachments": out, "entity_id": entity_id}
@@ -1663,35 +1742,202 @@ def reset(body: ResetRequest):
 #  Billing & Invoices API
 # ════════════════════════════════════════════════════════════════════════════
 
-# ── Businesses ──────────────────────────────────────────────────────────────
+# ── Projects / Businesses ────────────────────────────────────────────────────
+#
+# `entities` rows ARE the user's projects (PLAN.md §2.0). `/api/projects/*` is
+# the real CRUD surface; `/api/businesses` is the legacy shape the existing
+# sidebar (`static/business.js`) reads — both answer from hermes/projects.py.
+
+
+def _business_view(p: dict) -> dict:
+    """Project row -> the fields the legacy business switcher reads."""
+    return {
+        "slug": p.get("slug"),
+        "name": p.get("name"),
+        "emoji": p.get("icon") or "🏢",
+        "color": p.get("color") or "#9aa3b2",
+        "connected": Config.maton_key_for_slug(p.get("slug")) is not None,
+    }
+
 
 @app.get("/api/businesses")
 def api_list_businesses():
-    businesses = list_businesses()
-    for b in businesses:
-        b["connected"] = Config.maton_key_for_slug(b.get("slug")) is not None
+    try:
+        businesses = [_business_view(p) for p in hermes_projects.list_projects()]
+    except Exception as exc:  # noqa: BLE001 — never 500 the app shell
+        log.warning("api_list_businesses failed: %s", exc)
+        businesses = []
     return {"businesses": businesses}
 
 
 class BusinessBody(BaseModel):
     name: str
-    slug: str
+    slug: str | None = None
     emoji: str = "🏢"
     color: str = "#9aa3b2"
     industry: str | None = None
-    business_id: str | None = None
 
 
 @app.post("/api/businesses")
 def api_upsert_business(body: BusinessBody):
+    """Create a project from the old business endpoint shape. Updates go
+    through PATCH /api/projects/{slug} — projects are immutable-slug."""
     try:
-        biz = upsert_business(
-            name=body.name, slug=body.slug, emoji=body.emoji,
-            color=body.color, industry=body.industry, business_id=body.business_id,
+        proj = hermes_projects.create_project(
+            body.name,
+            slug=body.slug or None,
+            icon=body.emoji or None,
+            color=body.color or None,
+            description=body.industry,
         )
-        return {"business": biz}
-    except Exception as exc:
+        return {"business": _business_view(proj)}
+    except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+# ── Projects (PLAN.md §2.0) ─────────────────────────────────────────────────-
+
+class ProjectBody(BaseModel):
+    name: str | None = None
+    slug: str | None = None
+    icon: str | None = None
+    color: str | None = None
+    cover: str | None = None
+    description: str | None = None
+    template: str | None = None
+    modules: list[str] | None = None
+    context: dict | None = None
+    connections: dict | None = None
+    default_agent: str | None = None
+    settings: dict | None = None
+    sort_order: int | None = None
+    pinned: bool | None = None
+    confirm: str | None = None  # DELETE: must equal the project name
+
+
+@app.get("/api/projects")
+def api_list_projects():
+    try:
+        rows = hermes_projects.list_projects()
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return {"projects": rows}
+
+
+@app.get("/api/projects/templates")
+def api_list_project_templates():
+    try:
+        rows = hermes_projects.list_templates()
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return {"templates": rows}
+
+
+@app.post("/api/projects")
+def api_create_project(body: ProjectBody):
+    if not body.name or not body.name.strip():
+        return JSONResponse({"error": "name is required"}, status_code=400)
+    fields = {
+        k: v
+        for k, v in body.model_dump(exclude={"name", "slug", "confirm"}).items()
+        if v is not None
+    }
+    try:
+        row = hermes_projects.create_project(body.name, slug=body.slug, **fields)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"project": row}
+
+
+@app.get("/api/projects/{slug}")
+def api_get_project(slug: str):
+    try:
+        row = hermes_projects.get_project(slug)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    if row is None:
+        return JSONResponse({"error": f"Unknown project: {slug}"}, status_code=404)
+    return {"project": row}
+
+
+@app.patch("/api/projects/{slug}")
+def api_update_project(slug: str, body: ProjectBody):
+    fields = {
+        k: v
+        for k, v in body.model_dump(exclude={"slug", "confirm"}).items()
+        if v is not None
+    }
+    try:
+        row = hermes_projects.update_project(slug, **fields)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    if row is None:
+        return JSONResponse({"error": f"Unknown project: {slug}"}, status_code=404)
+    return {"project": row}
+
+
+@app.post("/api/projects/{slug}/archive")
+def api_archive_project(slug: str):
+    row = hermes_projects.archive_project(slug)
+    if row is None:
+        return JSONResponse({"error": f"Unknown project: {slug}"}, status_code=404)
+    return {"project": row}
+
+
+@app.post("/api/projects/{slug}/restore")
+def api_restore_project(slug: str):
+    row = hermes_projects.restore_project(slug)
+    if row is None:
+        return JSONResponse({"error": f"Unknown project: {slug}"}, status_code=404)
+    return {"project": row}
+
+
+@app.post("/api/projects/{slug}/duplicate")
+def api_duplicate_project(slug: str, body: ProjectBody):
+    if not body.name or not body.name.strip():
+        return JSONResponse({"error": "name is required"}, status_code=400)
+    row = hermes_projects.duplicate_project(slug, body.name, slug=body.slug)
+    if row is None:
+        return JSONResponse({"error": f"Unknown project: {slug}"}, status_code=404)
+    return {"project": row}
+
+
+@app.delete("/api/projects/{slug}")
+def api_delete_project(slug: str, confirm: str = ""):
+    """Soft delete (30-day restore window via /restore). Guardrail from
+    PLAN §2.0: the caller must pass the project's exact name as `confirm`."""
+    row = hermes_projects.get_project(slug)
+    if row is None:
+        return JSONResponse({"error": f"Unknown project: {slug}"}, status_code=404)
+    if confirm != row.get("name"):
+        return JSONResponse(
+            {"error": "Pass the exact project name as ?confirm= to delete."},
+            status_code=400,
+        )
+    row = hermes_projects.delete_project(slug)
+    return {"project": row, "status": "deleted"}
+
+
+# ── Profile ("About Sawera", PLAN §2.1) ──────────────────────────────────────
+
+@app.get("/api/profile")
+def api_get_profile():
+    try:
+        row = hermes_projects.profile_get()
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return {"profile": row or {}}
+
+
+@app.put("/api/profile")
+def api_put_profile(body: dict):
+    try:
+        row = hermes_projects.profile_put(**body)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"profile": row}
 
 
 # ── Bills ───────────────────────────────────────────────────────────────────

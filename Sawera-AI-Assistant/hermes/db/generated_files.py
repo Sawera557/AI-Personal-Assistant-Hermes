@@ -86,23 +86,33 @@ def record_file(
     content_type: str | None,
     s3_uri: str,
     size_bytes: int | None,
+    session_id: str | None = None,
     created_at: datetime | str | None = None,
 ) -> str | None:
     """Insert a generated-file row and return its file_id (or None on failure).
     Best-effort: the caller must never let a failure here break file creation.
+    `session_id` links the file to the conversation whose turn produced it
+    (migration 0024); omitted gracefully against older schemas.
     `created_at` defaults to now(); the storage backfill passes the S3 object's
     LastModified so old files sort where they belong."""
+    cols = ["user_id", "entity_id", "business_slug", "filename", "content_type",
+            "s3_uri", "size_bytes", "created_at"]
+    placeholders = ["%s"] * (len(cols) - 1) + ["COALESCE(%s::timestamptz, now())"]
     try:
         with cursor() as cur:
             owner = _owner(cur)
             ent = _resolve_entity_id(cur, entity_slug)
+            vals: list = [owner, ent, business_slug, filename, content_type,
+                          s3_uri, size_bytes, created_at]
+            if session_id:
+                cols.append("session_id")
+                placeholders.append("%s")
+                vals.append(session_id)
             cur.execute(
-                """INSERT INTO generated_files
-                       (user_id, entity_id, business_slug, filename, content_type, s3_uri,
-                        size_bytes, created_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, now()))
-                   RETURNING file_id;""",
-                (owner, ent, business_slug, filename, content_type, s3_uri, size_bytes, created_at),
+                f"""INSERT INTO generated_files ({", ".join(cols)})
+                    VALUES ({", ".join(placeholders)})
+                    RETURNING file_id;""",
+                vals,
             )
             return str(cur.fetchone()[0])
     except Exception as exc:  # noqa: BLE001

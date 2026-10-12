@@ -103,6 +103,18 @@ def connect() -> psycopg.Connection:
             "sslmode": cfg["sslmode"],
             "connect_timeout": 10,
         }
+        # psycopg's prepared statements (enabled by default, threshold 5) break
+        # against Neon/Supabase-style PgBouncer in transaction mode. Default to
+        # off (PLAN §9b.4); DB_PREPARE_THRESHOLD=<int> opts back in for a host
+        # with real session state (plain RDS).
+        prep = (os.getenv("DB_PREPARE_THRESHOLD", "") or "").strip().lower()
+        if prep in {"", "none", "off", "0"}:
+            kwargs["prepare_threshold"] = None
+        else:
+            try:
+                kwargs["prepare_threshold"] = int(prep)
+            except ValueError:
+                kwargs["prepare_threshold"] = None
         if cfg["sslrootcert"]:
             kwargs["sslrootcert"] = cfg["sslrootcert"]
         try:

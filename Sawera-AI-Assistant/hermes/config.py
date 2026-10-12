@@ -78,10 +78,11 @@ class Config:
     MATON_API_KEY: str = os.getenv("MATON_API_KEY", "").strip()
     MATON_BASE_URL: str = os.getenv("MATON_BASE_URL", "https://api.maton.ai").rstrip("/")
 
-    # Per-business Maton API keys. Each business (see `businesses` table / slug
-    # column) can have its own key connecting its own Gmail/Drive/Calendar/etc.
-    # "per" (Personal & Family) intentionally aliases the plain default key —
-    # it's the original shared personal inbox, not a dedicated business account.
+    # Per-project Maton API keys are looked up via the project registry
+    # (entities.connections.maton_key_env → that env var), falling back to the
+    # shared MATON_API_KEY — see hermes/projects.py::maton_key_for_slug
+    # (PLAN.md §2.0). MATON_BUSINESS_KEYS below is the legacy per-Gandi-business
+    # override table, kept for compatibility and as the offline fallback.
     MATON_BUSINESS_KEYS: dict[str, str] = {
         "afk": os.getenv("AFROFARMS_MATON_API_KEY", "").strip(),
         "gak": os.getenv("GAK_PROPERTIES_MATON_API_KEY", "").strip(),
@@ -93,15 +94,28 @@ class Config:
 
     @classmethod
     def maton_key_for_slug(cls, slug: str | None) -> str | None:
-        """The Maton API key configured for a business slug, or None if unset."""
-        if not slug:
-            return None
-        return cls.MATON_BUSINESS_KEYS.get(slug) or None
+        """The Maton API key for a project slug, or None if unset.
+
+        Delegates to the project registry (per-project `connections` in the
+        `entities` table) when the DB is available, with the legacy
+        MATON_BUSINESS_KEYS env map as the offline/test fallback."""
+        try:
+            from .projects import maton_key_for_slug as resolve
+
+            return resolve(slug)
+        except Exception as exc:  # noqa: BLE001 — never 500 a turn on config
+            log.warning("project key lookup failed for %r: %s", slug, exc)
+            return cls.MATON_BUSINESS_KEYS.get(slug or "") or None
 
     @classmethod
     def connected_business_slugs(cls) -> list[str]:
-        """Business slugs that currently have a configured Maton key."""
-        return [slug for slug, key in cls.MATON_BUSINESS_KEYS.items() if key]
+        """Slugs with a resolvable Maton key (drives the tool-schema enum)."""
+        try:
+            from .projects import connected_slugs
+
+            return connected_slugs()
+        except Exception:  # noqa: BLE001
+            return [slug for slug, key in cls.MATON_BUSINESS_KEYS.items() if key]
 
     # ── Owner-notification channel (hermes/notify.py) ────────────────────────
     # Hermes emails the owner (and any per-task "notify to" address) through one

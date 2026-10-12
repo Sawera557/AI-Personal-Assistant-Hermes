@@ -11,7 +11,7 @@ Six businesses · 40+ apps connected to Claude · three custom MCP servers · $3
 
 ## What I was walking into
 
-My client runs six businesses across three countries: a million-dollar farming
+My client runs six businesses across two countries: a million-dollar farming
 operation in Kenya, three US property and commodity entities, a spa, and his
 personal and family affairs. Each one had its own email, calendar, drive,
 accounting, messaging and meeting-notes accounts. There was no single place to see

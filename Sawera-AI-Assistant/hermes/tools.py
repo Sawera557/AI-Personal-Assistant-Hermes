@@ -1602,7 +1602,10 @@ def _search_business_knowledge(tool_input: dict[str, Any], active_business: str 
 _CREATED_FILE_LINK_EXPIRES = 24 * 60 * 60
 
 
-def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dict[str, Any]:
+def _create_file(
+    tool_input: dict[str, Any], active_business: str | None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
     """Write model-authored text content to S3 and return a download link. No
     Maton client involved — pure storage.py, same as _search_business_knowledge."""
     if not storage.enabled():
@@ -1629,7 +1632,12 @@ def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dic
         raise MatonError(f"Could not render this content as {filename!r}: {exc}") from exc
 
     scope = _attachment_scope(tool_input, active_business) or "general"
-    key = f"generated/{scope}/{uuid.uuid4().hex}/{filename}"
+    # Project-first layout (PLAN §9b.7): <slug>/generated/<session>/<filename>
+    # with the session id as the subdir, so each conversation's generated
+    # files sit together in the bucket.
+    key = storage.project_file_key(
+        "generated", scope, filename, subdir=session_id or uuid.uuid4().hex
+    )
 
     s3_uri = storage.put(key, raw, content_type)
 
@@ -1642,7 +1650,7 @@ def _create_file(tool_input: dict[str, Any], active_business: str | None) -> dic
         file_id = gen_files_db.record_file(
             entity_slug=to_entity_slug(business_slug) if business_slug else None,
             business_slug=business_slug, filename=filename, content_type=content_type,
-            s3_uri=s3_uri, size_bytes=len(raw),
+            s3_uri=s3_uri, size_bytes=len(raw), session_id=session_id,
         )
     except Exception as exc:  # noqa: BLE001 — indexing is non-critical
         log.warning("Could not index generated file %s: %s", filename, exc)
@@ -2564,6 +2572,7 @@ def dispatch(
     tool_input: dict[str, Any],
     active_business: str | None = None,
     autonomy: str | None = None,
+    session_id: str | None = None,
 ) -> tuple[str, bool, dict[str, Any] | None, list[dict[str, Any]] | None]:
     """Execute a local tool. Returns (content_string, is_error, media, blocks).
 
@@ -2611,7 +2620,7 @@ def dispatch(
             result = _search_business_knowledge(tool_input, active_business)
         elif name == "create_file":
             # No Maton client involved at all — pure S3 write.
-            result = _create_file(tool_input, active_business)
+            result = _create_file(tool_input, active_business, session_id=session_id)
         elif name == "create_scheduled_task":
             # No Maton client — writes a row via the scheduled-tasks store.
             result = _create_scheduled_task(tool_input, active_business)

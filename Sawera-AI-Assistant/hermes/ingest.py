@@ -174,9 +174,10 @@ def ingest_document(
     s3_uri = None
     recorded = False
     try:
-        # 1) Bytes -> S3 (optional).
+        # 1) Bytes -> S3 (optional). Project-first layout (PLAN §9b.7):
+        #    "<project-slug>/uploads/<document_id>/<filename>"
         if raw is not None and storage.enabled():
-            key = f"{slug or 'global'}/{document_id}/{filename}"
+            key = f"{slug or 'global'}/uploads/{document_id}/{storage.sanitize_filename(filename)}"
             s3_uri = storage.put(key, raw, mime or "application/octet-stream")
 
         # 2) Record the document.

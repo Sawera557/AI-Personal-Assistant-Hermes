@@ -1,18 +1,27 @@
-"""Bridges the two business-identity schemes in this app.
+"""LEGACY SHIM for the old two-scheme business identity (PLAN.md §2.0).
 
-`businesses` (Postgres table, powers Bills — slugs like "afk", "gak") and
-`entities` (powers chat history + document search — slugs like "afro_farm",
-"gak_properties") were built by separate features and never reconciled. This
-module is the single place that maps between them, so the rest of the app can
-talk in `businesses.slug` (what the frontend's business dropdown sends) and
-still reach `entities`-keyed storage correctly.
+Gandi's Hermes split business identity across two tables — `businesses`
+(slugs like "afk") and `entities` (slugs like "afro_farm") — and bridged them
+with hard-coded dicts here, plus per-business env keys in hermes/config.py.
+Sawera's assistant replaces both with dynamic **Projects**: every project is
+one `entities` row and its slug is the single handle (create/update/archive
+from the UI, no code changes — see `hermes/db/migrations/0023_projects.sql`
+and `hermes/projects.py`).
 
-Two `entities` rows — "comfort_services" and "kenya_ventures" — are archived
-and intentionally excluded here; they have no corresponding business.
+Everything below keeps the ~68 old call sites working: the public names are
+now proxies onto `hermes.projects`, and the three `_LEGACY_*` dicts survive
+ONLY as the fallback for runs with no database (local dev, the offline test
+suite). PLAN §12 deletes this file once the old call sites are migrated.
+
+New code: use `hermes.projects` directly, never this module.
 """
 from __future__ import annotations
 
-BUSINESS_TO_ENTITY_SLUG: dict[str, str] = {
+from collections.abc import Mapping
+
+from . import projects as _projects
+
+_LEGACY_BUSINESS_TO_ENTITY: dict[str, str] = {
     "afk": "afro_farm",
     "gak": "gak_properties",
     "gif": "gif_properties",
@@ -20,26 +29,10 @@ BUSINESS_TO_ENTITY_SLUG: dict[str, str] = {
     "nh": "nour_hammam",
     "per": "personal",
 }
-
-ENTITY_TO_BUSINESS_SLUG: dict[str, str] = {
-    v: k for k, v in BUSINESS_TO_ENTITY_SLUG.items()
+_LEGACY_ENTITY_TO_BUSINESS: dict[str, str] = {
+    v: k for k, v in _LEGACY_BUSINESS_TO_ENTITY.items()
 }
-
-# The human names the owner actually types ("how is Nour Hammam doing"), keyed
-# by business slug. Neither table above carries them: `businesses` rows hold
-# only slugs here, and `entities.name` (migration 0002_seed) says "Personal"
-# where the UI and the tool descriptions say "Personal & Family".
-#
-# Taken from the names already in use, not invented: the `business` parameter
-# description in hermes/tools.py (afk … per), the entity seed names, and the
-# ingestion-service's account map for `comfort_pca` — a business the ingestion
-# service ingests (Comfort PCA, PHI) that has no `businesses` slug in this app,
-# which is exactly why it cannot be derived from BUSINESS_TO_ENTITY_SLUG.
-#
-# First consumer: hermes/turn_router.py, where any of these names in a message
-# is a FULL signal (TURN_COST_PLAN §2 rule 7) — a turn that names a business
-# needs that business's tools and data, never the cheap tool-free tiers.
-BUSINESS_DISPLAY_NAMES: dict[str, str] = {
+_LEGACY_DISPLAY_NAMES: dict[str, str] = {
     "afk": "Afro Farm",
     "gak": "GAK Properties",
     "gif": "GIF Properties",
@@ -50,38 +43,48 @@ BUSINESS_DISPLAY_NAMES: dict[str, str] = {
 }
 
 
+class _DynamicMap(Mapping):
+    """A Mapping facade answered live by the project registry (or the legacy
+    fallback), so `sorted(map)`, `map[k]` and `k in map` always see current
+    projects without every call site caching a stale copy."""
+
+    def __init__(self, resolve):
+        self._resolve = resolve
+
+    def _data(self) -> dict:
+        try:
+            return self._resolve()
+        except Exception:  # noqa: BLE001 — fail safe to the legacy statics
+            return {}
+
+    def __getitem__(self, key):
+        return self._data()[key]
+
+    def __iter__(self):
+        return iter(self._data())
+
+    def __len__(self):
+        return len(self._data())
+
+
+BUSINESS_TO_ENTITY_SLUG: Mapping[str, str] = _DynamicMap(_projects.identity_map)
+ENTITY_TO_BUSINESS_SLUG: Mapping[str, str] = _DynamicMap(_projects.identity_map)
+BUSINESS_DISPLAY_NAMES: Mapping[str, str] = _DynamicMap(_projects.display_names)
+
+
 def to_entity_slug(business_slug: str | None) -> str | None:
-    """businesses.slug -> entities.slug (or None if unmapped/blank)."""
-    if not business_slug:
-        return None
-    return BUSINESS_TO_ENTITY_SLUG.get(business_slug)
+    """businesses.slug -> entities.slug. With projects these are the same key
+    (identity); this shim keeps the old call sites working."""
+    return _projects.to_entity_slug(business_slug)
 
 
 def to_business_slug(entity_slug: str | None) -> str | None:
-    """entities.slug -> businesses.slug (or None if unmapped/blank/archived)."""
-    if not entity_slug:
-        return None
-    return ENTITY_TO_BUSINESS_SLUG.get(entity_slug)
+    """entities.slug -> businesses.slug. Identity under projects."""
+    return _projects.to_business_slug(entity_slug)
 
 
 def key_business(key: str) -> str | None:
-    """The business slug an S3 key belongs to, by our prefix conventions:
-
-    * ``wati-media/{business}/...``, ``drive-files/{business}/...`` and
-      ``generated/{business}/...`` are keyed by the *business* slug (afk, gak, ...)
-      — see `_wati_get_media`/`_drive_read_file`/`_create_file`. The `generated/`
-      case is what lets Hermes read back a file it created with `create_file`.
-    * A bare ``{entity}/...`` KB-document key is keyed by the *entity* slug
-      (afro_farm, ...); map it back to its business slug.
-
-    Returns None for anything that doesn't resolve to a known business (the
-    `unsorted/` hole, `bills/...` — keyed by a business *id*, not slug, so
-    resolve those separately — `generated/general/...`, or an unknown tenant).
-    """
-    parts = [p for p in key.split("/") if p]
-    if not parts:
-        return None
-    if parts[0] in ("wati-media", "drive-files", "generated"):
-        seg = parts[1] if len(parts) >= 3 else None
-        return seg if seg in BUSINESS_TO_ENTITY_SLUG else None
-    return to_business_slug(parts[0])
+    """The project slug an S3 key belongs to, by the prefix conventions
+    (`wati-media/<slug>/…`, `drive-files/<slug>/…`, `generated/<slug>/…`, or a
+    bare `<slug>/…` KB key)."""
+    return _projects.key_business(key)

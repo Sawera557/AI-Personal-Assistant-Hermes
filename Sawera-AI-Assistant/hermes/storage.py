@@ -14,6 +14,8 @@ S3_BUCKET to turn the locker on.
 from __future__ import annotations
 
 import os
+import re
+import uuid
 from urllib.parse import quote
 
 
@@ -25,10 +27,45 @@ def enabled() -> bool:
     return bool(bucket())
 
 
+# ── Per-project key conventions (PLAN §9b.7) ─────────────────────────────────
+# Everything lives under the project slug so a bucket listing is a project
+# folder tree and `key_business` attributes one segment:
+#     <project-slug>/uploads/…    — files the owner uploads (chat, Library)
+#     <project-slug>/generated/…  — files the agent writes (create_file)
+# Legacy prefixes (`generated/<slug>/…`, `wati-media/<slug>/…`) are read-only
+# history; new writes always use the project-first layout.
+
+_UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._ -]")
+
+
+def sanitize_filename(filename: str) -> str:
+    """Keep a filename readable but S3-safe (no slashes, no control chars)."""
+    name = (filename or "").replace("/", "-").replace("\\", "-").strip()
+    name = _UNSAFE_FILENAME.sub("_", name)
+    return name[:120] or "file"
+
+
+def project_file_key(area: str, slug: str | None, filename: str, subdir: str | None = None) -> str:
+    """Build a per-project S3 key: ``<slug>/<area>/[<subdir>/]<uuid>-<filename>``
+    ; slug None/blank -> 'general'. Lexical sort inside the folder is by
+    recency when callers pass a date or session id as ``subdir``."""
+    scope = (slug or "").strip() or "general"
+    tail = f"{uuid.uuid4().hex}-{sanitize_filename(filename)}"
+    if subdir:
+        return f"{scope}/{area.strip('/')}/{subdir.strip('/')}/{tail}"
+    return f"{scope}/{area.strip('/')}/{tail}"
+
+
 def _client():
     import boto3  # lazy
 
-    return boto3.client("s3", region_name=os.getenv("AWS_REGION", "us-east-1"))
+    kwargs: dict = {"region_name": os.getenv("AWS_REGION", "us-east-1")}
+    # Cloudflare R2 (the free-tier file store, PLAN §9b.7) / MinIO / any
+    # S3-compatible endpoint — set S3_ENDPOINT_URL to its host.
+    endpoint = os.getenv("S3_ENDPOINT_URL", "").strip()
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+    return boto3.client("s3", **kwargs)
 
 
 def _split(s3_uri: str) -> tuple[str, str] | None:
@@ -137,7 +174,13 @@ def list_objects(prefix: str = "") -> list[dict]:
 
 # Only keys under this prefix may ever be handed out as public URLs. create_file
 # writes here (see tools._create_file); ingestion and attachments do not.
+# Matches both layouts: legacy "generated/<slug>/…" and project-first
+# "<slug>/generated/…" (PLAN §9b.7).
 PUBLIC_PREFIX = "generated/"
+
+
+def _is_generated_key(key: str) -> bool:
+    return key.startswith(PUBLIC_PREFIX) or "generated" in key.split("/")
 
 
 def public_base() -> str:
@@ -163,7 +206,7 @@ def public_url(s3_uri: str) -> str | None:
     if not base:
         return None
     key = key_of(s3_uri)
-    if not key or not key.startswith(PUBLIC_PREFIX):
+    if not key or not _is_generated_key(key):
         return None
     return f"{base}/{quote(key)}"
 

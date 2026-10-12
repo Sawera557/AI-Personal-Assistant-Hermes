@@ -10,18 +10,9 @@ INSERT INTO roles (name, description) VALUES
 ON CONFLICT (name) DO NOTHING;
 
 -- ---- entities (the 8 businesses) ------------------------------------------
--- region pinned to us-east-1 per the current decision; country tags Kenya
--- businesses so a future data-residency move is a data change, not a schema one.
-INSERT INTO entities (slug, name, business_type, country, region) VALUES
-    ('gak_properties',  'GAK Properties',  'real_estate',  'US', 'us-east-1'),
-    ('gif_properties',  'GIF Properties',  'real_estate',  'US', 'us-east-1'),
-    ('comfort_services','Comfort Services', 'services',      'US', 'us-east-1'),
-    ('afro_farm',       'Afro Farm',        'agriculture',  'KE', 'us-east-1'),
-    ('gak_commodities', 'GAK Commodities',  'commodities',  'KE', 'us-east-1'),
-    ('nour_hammam',     'Nour Hammam',      'services',      'US', 'us-east-1'),
-    ('personal',        'Personal',         'personal',      'US', 'us-east-1'),
-    ('kenya_ventures',  'Kenya Ventures',   'holding',       'KE', 'us-east-1')
-ON CONFLICT (slug) DO NOTHING;
+-- Gandi seed removed for Sawera's assistant (PLAN.md §2.0 step 9): projects
+-- are created from the UI/API, nothing project-specific lives in code or seed
+-- data. First launch = empty registry until the first project is created.
 
 -- ---- connected_apps (the app catalog) -------------------------------------
 -- Slugs match HERMES_APPS so the agent's tool layer and the DB agree.

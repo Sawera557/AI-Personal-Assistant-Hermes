@@ -78,7 +78,9 @@ def test_public_url_percent_encodes_filenames(monkeypatch):
     "s3://bkt/attachments/afk/invoice.png",
     "s3://bkt/wati/media/voice-note.ogg",
     "s3://bkt/generated-elsewhere/x.md",   # prefix must not match by substring
-    "s3://bkt/nested/generated/x.md",      # ...nor anywhere but the start
+    "s3://bkt/proj-x/uploads/x.md",        # uploads stay private even per-project
+    # Note: "<slug>/generated/…" IS the new public layout (PLAN §9b.7), so a
+    # nested "generated" segment is deliberately allowed.
 ])
 def test_public_url_refuses_keys_outside_generated_prefix(monkeypatch, uri):
     monkeypatch.setenv("S3_PUBLIC_BASE_URL", BUCKET_ORIGIN)
@@ -164,7 +166,7 @@ def test_prefers_permanent_public_url(monkeypatch, s3, indexed):
     monkeypatch.setenv("S3_PUBLIC_BASE_URL", BUCKET_ORIGIN)
     monkeypatch.setattr(Config, "PUBLIC_BASE_URL", "https://app.example.com")
     out = create()
-    assert out["download_url"].startswith(f"{BUCKET_ORIGIN}/generated/afk/")
+    assert out["download_url"].startswith(f"{BUCKET_ORIGIN}/afk/generated/")
     assert out["link_expires"] is False
     assert out["public_link"] is True
     assert "X-Amz-Signature" not in out["download_url"]
@@ -213,5 +215,6 @@ def test_indexing_failure_never_breaks_file_creation(monkeypatch, s3, indexed):
 def test_generated_key_is_scoped_to_the_business(monkeypatch, s3, indexed):
     monkeypatch.setenv("S3_PUBLIC_BASE_URL", BUCKET_ORIGIN)
     out = create()
-    assert out["s3_uri"].startswith("s3://bkt/generated/afk/")
+    # Project-first layout (PLAN §9b.7): <slug>/generated/…
+    assert out["s3_uri"].startswith("s3://bkt/afk/generated/")
     assert out["business"] == "afk"

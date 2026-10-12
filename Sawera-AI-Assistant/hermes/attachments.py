@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 # Public metadata fields (everything except the heavy Claude content block).
-_META_FIELDS = ("attachment_id", "filename", "type", "bytes", "entity_id")
+_META_FIELDS = ("attachment_id", "filename", "type", "bytes", "entity_id", "s3_uri")
 
 # Prefix used when a non-PDF/non-image upload is inlined as a plain text block
 # (see app._block_for). Because such attachments look like ordinary text blocks,
@@ -40,8 +40,14 @@ class AttachmentStore:
         kind: str,
         size: int,
         block: dict[str, Any],
+        *,
+        s3_uri: str | None = None,
     ) -> dict[str, Any]:
-        """Store a pre-built Claude content block and return its metadata record."""
+        """Store a pre-built Claude content block and return its metadata record.
+
+        ``s3_uri`` records where the bytes were durably persisted (the upload
+        lives past process restarts / serverless freezes); the warm in-memory
+        block is still what the active turn reads."""
         attachment_id = uuid.uuid4().hex
         record = {
             "attachment_id": attachment_id,
@@ -49,6 +55,7 @@ class AttachmentStore:
             "filename": filename,
             "type": kind,
             "bytes": size,
+            "s3_uri": s3_uri,
             "block": block,
         }
         with self._lock:

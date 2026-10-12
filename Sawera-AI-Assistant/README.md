@@ -1,7 +1,13 @@
-# Hermes AI Agent — API Backend
+# Sawera's AI Personal Assistant — API Backend
 
-A headless **FastAPI** JSON API for **Hermes**, an AI executive assistant powered by Claude
-that acts across your connected business apps (via the [Maton](https://maton.ai)
+> **Read [PLAN.md](PLAN.md) first.** This codebase is a fork of Gandi's Hermes
+> (the upstream business assistant), on its way to becoming Sawera's personal
+> assistant organized around **Projects** instead of businesses. The runtime
+> below is still the Hermes engine — the delta so far is the dynamic Projects
+> registry (PLAN §2.0) and the free-tier infra wiring (PLAN §9b).
+
+A headless **FastAPI** JSON API for an AI executive assistant powered by Claude
+that acts across your connected apps (via the [Maton](https://maton.ai)
 gateway), the web, and your documents — plus a voice layer (speech-to-text and
 text-to-speech).
 

@@ -2526,7 +2526,8 @@ def stream_turn(
                     continue
 
                 content_str, is_error, media, blocks = dispatch(
-                    name, tool_input, active_business, autonomy=autonomy
+                    name, tool_input, active_business, autonomy=autonomy,
+                    session_id=session_id,
                 )
                 if used_token and not is_error:
                     succeeded_tokens.add(used_token)
