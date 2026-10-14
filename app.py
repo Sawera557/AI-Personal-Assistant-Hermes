@@ -93,6 +93,7 @@ from hermes.memory import store
 from hermes.memory_extract import extract_async
 from hermes.conversation_write import record_turn_async
 from hermes import models as hermes_models
+from hermes.utils.security import decrypt_payload, hash_token
 from hermes import guardrails as hermes_guardrails
 from hermes import scheduler as hermes_scheduler
 from hermes.db import scheduled_tasks as tasks_db
@@ -214,6 +215,10 @@ app.include_router(artefacts_router)
 # Generated files (the Library tab's Files list) — hermes/generated_files_api.py.
 from hermes.generated_files_api import router as generated_files_router
 app.include_router(generated_files_router)
+
+# Authentication endpoints
+from hermes.auth import auth_bp
+app.register_blueprint(auth_bp)
 # Multi-agents roster (the Multi-agents tab) — hermes/agents_api.py.
 from hermes.agents_api import router as agents_router
 app.include_router(agents_router)
@@ -246,6 +251,52 @@ async def _limit_upload_size(request: Request, call_next):
     length = request.headers.get("content-length")
     if length and length.isdigit() and int(length) > _MAX_UPLOAD_BYTES:
         return JSONResponse({"error": "Request body too large (max 25 MB)."}, status_code=413)
+    return await call_next(request)
+
+
+# Authentication middleware
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # Exempt paths
+    path = request.url.path
+    if path.startswith("/api/auth/") or path == "/api/health":
+        return await call_next(request)
+    
+    # For web UI routes, we let them through and let the frontend handle auth
+    if path.startswith("/static/") or path == "/" or path.startswith("/agent") or path.startswith("/system") or path.startswith("/billing") or path.startswith("/meetings") or path.startswith("/context") or path.startswith("/tasks") or path.startswith("/files") or path.startswith("/jobs") or path.startswith("/artifacts") or path.startswith("/usage") or path.startswith("/settings") or path.startswith("/multi-agents"):
+        return await call_next(request)
+    
+    # For all other paths (API endpoints), require authentication
+    encrypted_token = request.cookies.get("hermes_session")
+    if not encrypted_token:
+        return JSONResponse({"error": "Authentication required"}, status_code=401)
+    
+    # Decrypt token to get session_id
+    try:
+        payload = decrypt_payload(encrypted_token)
+        session_id = payload.get('session_id')
+        if not session_id:
+            return JSONResponse({"error": "Invalid session"}, status_code=401)
+    except Exception:
+        return JSONResponse({"error": "Invalid session"}, status_code=401)
+    
+    # Hash the session_id to look up in database
+    hashed_session_id = hash_token(session_id)
+    
+    # Verify session still exists in DB and is valid
+    row = db.fetchone("""
+        SELECT email, project_scope, device_fingerprint, expires_at
+        FROM user_sessions
+        WHERE token_hash = ? AND expires_at > datetime('now')
+    """, (hashed_session_id,))
+    
+    if not row:
+        return JSONResponse({"error": "Session expired or invalid"}, status_code=401)
+    
+    # Set the user and project scope on the request state for endpoints to use
+    request.state.user_email = row['email']
+    request.state.project_scope = row['project_scope']
+    
     return await call_next(request)
 
 
