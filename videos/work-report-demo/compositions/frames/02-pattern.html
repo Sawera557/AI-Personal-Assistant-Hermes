@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /></head>
+<body>
+<template>
+<style>
+#s02-root{position:absolute;inset:0;overflow:hidden;color:#FFFFF4;font-family:'Montserrat',sans-serif;}
+.abs{position:absolute;}
+.kicker{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:22px;letter-spacing:.22em;color:#E2B04A;text-transform:uppercase;}
+.serif{font-family:'EB Garamond',serif;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+.h1{font-family:'EB Garamond',serif;font-weight:400;font-size:88px;line-height:1.02;letter-spacing:-.01em;color:#FFFFF4;}
+.h2{font-family:'EB Garamond',serif;font-weight:400;font-size:60px;line-height:1.05;color:#FFFFF4;}
+.gold{color:#E2B04A;} .mint{color:#93DBB3;} .brick{color:#E06A4E;}
+.scenelabel{position:absolute;left:60px;top:34px;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.18em;color:#93DBB3;}
+.card{position:absolute;background:#173b29;border:2px solid rgba(255,255,244,.16);border-radius:14px;padding:30px 34px;box-shadow:0 24px 60px rgba(0,0,0,.35);}
+.card .ct{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.2em;color:#E2B04A;margin-bottom:18px;}
+.card .ch{font-family:'EB Garamond',serif;font-size:40px;line-height:1.1;margin-bottom:14px;}
+.li{display:flex;align-items:center;gap:16px;font-size:28px;font-weight:700;line-height:1.25;margin:14px 0;color:#FFFFF4;}
+.li .tk{flex:0 0 34px;height:34px;border-radius:50%;border:2px solid #93DBB3;color:#93DBB3;font-size:20px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;}
+.chip{display:inline-flex;align-items:center;gap:10px;padding:10px 18px;border-radius:999px;background:#173b29;border:2px solid rgba(255,255,244,.22);font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.06em;color:#FFFFF4;}
+.chip.on{border-color:#E2B04A;color:#E2B04A;}
+.stamp{position:absolute;font-family:'IBM Plex Mono',monospace;font-weight:700;letter-spacing:.14em;border:5px solid #E06A4E;color:#E06A4E;padding:14px 26px;border-radius:10px;background:rgba(20,50,33,.9);}
+/* browser frame */
+.bf{position:absolute;left:210px;top:96px;width:1500px;height:773px;border-radius:18px;overflow:hidden;background:#0f2619;border:2px solid rgba(255,255,244,.18);box-shadow:0 30px 80px rgba(0,0,0,.45);}
+.bf-bar{position:absolute;left:0;top:0;width:1500px;height:34px;background:#0f2619;display:flex;align-items:center;gap:8px;padding:0 16px;}
+.bf-bar i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,244,.25);display:block;}
+.bf-url{margin-left:14px;font-family:'IBM Plex Mono',monospace;font-size:16px;color:rgba(255,255,244,.7);}
+.bf-priv{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:14px;letter-spacing:.12em;color:#93DBB3;}
+.bf-view{position:absolute;left:0;top:34px;width:1500px;height:739px;overflow:hidden;background:#fffff4;}
+.zo{position:absolute;left:0;top:0;width:1500px;height:739px;transform-origin:50% 50%;}
+.zi{position:absolute;left:0;top:0;width:1500px;height:739px;}
+.shot{position:absolute;left:0;top:0;width:1500px;height:739px;display:block;opacity:0;}
+.scrim{position:absolute;left:0;top:34px;width:1500px;height:739px;background:#143221;opacity:0;}
+.scrimR{position:absolute;left:0;top:34px;width:1500px;height:739px;opacity:0;background:linear-gradient(to left,rgba(20,50,33,.94) 0%,rgba(20,50,33,.86) 40%,rgba(20,50,33,0) 66%);}
+</style>
+<div id="s02-root" data-composition-id="s02" data-width="1920" data-height="1080" data-duration="17.970000000000002">
+
+<style>
+.st{width:280px;height:200px;border:2px solid rgba(255,255,244,.2);border-radius:14px;background:rgba(23,59,41,.6);padding:24px;}
+.st .num{font-family:'IBM Plex Mono',monospace;font-size:20px;color:rgba(255,255,244,.55);}
+.st .nm{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:30px;letter-spacing:.08em;margin:18px 0 12px;color:#FFFFF4;}
+.st .ds{font-size:22px;font-weight:400;line-height:1.3;color:rgba(255,255,244,.8);}
+.ln{width:60px;height:4px;background:#E2B04A;transform-origin:0 50%;}
+</style>
+<div class="abs kicker" id="s02-kick" style="left:140px;top:170px">The pattern</div>
+<div class="abs h2" id="s02-head" style="left:140px;top:220px;width:1500px">Every system follows the same pattern.</div>
+<div class="abs st" id="s02-b0" style="left:140px;top:430px"><div class="num">01</div><div class="nm" id="s02-n0">SOURCE</div><div class="ds">email · QuickBooks · bills</div></div><div class="abs ln" id="s02-l0" style="left:420px;top:524px"></div><div class="abs st" id="s02-b1" style="left:480px;top:430px"><div class="num">02</div><div class="nm" id="s02-n1">VERIFY</div><div class="ds">a scheduled task checks it</div></div><div class="abs ln" id="s02-l1" style="left:760px;top:524px"></div><div class="abs st" id="s02-b2" style="left:820px;top:430px"><div class="num">03</div><div class="nm" id="s02-n2">SHEET</div><div class="ds">the source of truth</div></div><div class="abs ln" id="s02-l2" style="left:1100px;top:524px"></div><div class="abs st" id="s02-b3" style="left:1160px;top:430px"><div class="num">04</div><div class="nm" id="s02-n3">DASHBOARD</div><div class="ds">live, never a copy</div></div><div class="abs ln" id="s02-l3" style="left:1440px;top:524px"></div><div class="abs st" id="s02-b4" style="left:1500px;top:430px"><div class="num">05</div><div class="nm" id="s02-n4">HUMAN</div><div class="ds">only when it's needed</div></div>
+<div class="abs mono" id="s02-foot" style="left:140px;top:720px;font-size:24px;color:#93DBB3;letter-spacing:.06em">Source data → automation → sheet → live dashboard → a person, only for real decisions.</div>
+</div>
+<script>
+(function(){
+const SID = "s02";
+const tl = gsap.timeline({ paused: true });
+const $ = (s) => "#" + SID + "-" + s;
+const VW = 1500, VH = 739, SC = VW / 1920;
+function cam(t, cx, cy, S, dur, ease) {
+  const fx = cx * SC, fy = cy * SC;
+  let ox = fx - VW / 2, oy = fy - VH / 2;
+  const mx = VW / 2 - VW / (2 * S), my = VH / 2 - VH / (2 * S);
+  ox = Math.max(-mx, Math.min(mx, ox)); oy = Math.max(-my, Math.min(my, oy));
+  tl.to($("zo"), { scale: S, duration: dur, ease: ease || "sine.inOut" }, t);
+  tl.to($("zi"), { x: -ox, y: -oy, duration: dur, ease: ease || "sine.inOut" }, t);
+}
+function show(t, id, d) { tl.fromTo($(id), { opacity: 0 }, { opacity: 1, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function inUp(t, id, d, dy) { tl.fromTo($(id), { opacity: 0, y: dy == null ? 26 : dy }, { opacity: 1, y: 0, duration: d || 0.5, ease: "power3.out" }, t); }
+function inLeft(t, id, d) { tl.fromTo($(id), { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: d || 0.45, ease: "power3.out" }, t); }
+function pop(t, id, d) { tl.fromTo($(id), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: d || 0.45, ease: "back.out(2)" }, t); }
+function slam(t, id, rot) { tl.fromTo($(id), { opacity: 0, scale: 1.8, rotation: rot || -6 }, { opacity: 1, scale: 1, rotation: rot || -6, duration: 0.35, ease: "power4.in" }, t); }
+function out(t, id, d) { tl.to($(id), { opacity: 0, duration: d || 0.35, ease: "power1.in" }, t); }
+function scrim(t, id, a, d) { tl.to($(id), { opacity: a, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function count(t, id, from, to, d, fmt) { const o = { v: from }; const el = document.getElementById(SID + "-" + id);
+  tl.to(o, { v: to, duration: d, ease: "power2.out", onUpdate: () => { el.textContent = fmt(o.v); } }, t); }
+inUp(0.2,'kick',0.5,14); inUp(0.4,'head',0.6);
+inUp(2.83, 'b0', 0.45);
+tl.to($('b0'), {borderColor:'#E2B04A', backgroundColor:'#1d4632', duration:0.3}, 2.98);
+tl.to($('n0'), {color:'#E2B04A', duration:0.3}, 2.98);
+inUp(4.47, 'b1', 0.45);
+tl.to($('b1'), {borderColor:'#E2B04A', backgroundColor:'#1d4632', duration:0.3}, 4.62);
+tl.to($('n1'), {color:'#E2B04A', duration:0.3}, 4.62);
+tl.fromTo($('l0'), {scaleX:0}, {scaleX:1, duration:0.35, ease:'power2.out'}, 4.32);
+inUp(7.609999999999999, 'b2', 0.45);
+tl.to($('b2'), {borderColor:'#E2B04A', backgroundColor:'#1d4632', duration:0.3}, 7.76);
+tl.to($('n2'), {color:'#E2B04A', duration:0.3}, 7.76);
+tl.fromTo($('l1'), {scaleX:0}, {scaleX:1, duration:0.35, ease:'power2.out'}, 7.46);
+inUp(10.23, 'b3', 0.45);
+tl.to($('b3'), {borderColor:'#E2B04A', backgroundColor:'#1d4632', duration:0.3}, 10.38);
+tl.to($('n3'), {color:'#E2B04A', duration:0.3}, 10.38);
+tl.fromTo($('l2'), {scaleX:0}, {scaleX:1, duration:0.35, ease:'power2.out'}, 10.08);
+inUp(12.91, 'b4', 0.45);
+tl.to($('b4'), {borderColor:'#E2B04A', backgroundColor:'#1d4632', duration:0.3}, 13.06);
+tl.to($('n4'), {color:'#E2B04A', duration:0.3}, 13.06);
+tl.fromTo($('l3'), {scaleX:0}, {scaleX:1, duration:0.35, ease:'power2.out'}, 12.76);
+inUp(15.780000000000001, 'foot', 0.5, 14);
+
+window.__timelines["s02"] = tl;
+})();
+</script>
+</template>
+</body></html>

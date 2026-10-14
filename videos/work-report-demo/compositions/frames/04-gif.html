@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /></head>
+<body>
+<template>
+<style>
+#s04-root{position:absolute;inset:0;overflow:hidden;color:#FFFFF4;font-family:'Montserrat',sans-serif;}
+.abs{position:absolute;}
+.kicker{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:22px;letter-spacing:.22em;color:#E2B04A;text-transform:uppercase;}
+.serif{font-family:'EB Garamond',serif;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+.h1{font-family:'EB Garamond',serif;font-weight:400;font-size:88px;line-height:1.02;letter-spacing:-.01em;color:#FFFFF4;}
+.h2{font-family:'EB Garamond',serif;font-weight:400;font-size:60px;line-height:1.05;color:#FFFFF4;}
+.gold{color:#E2B04A;} .mint{color:#93DBB3;} .brick{color:#E06A4E;}
+.scenelabel{position:absolute;left:60px;top:34px;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.18em;color:#93DBB3;}
+.card{position:absolute;background:#173b29;border:2px solid rgba(255,255,244,.16);border-radius:14px;padding:30px 34px;box-shadow:0 24px 60px rgba(0,0,0,.35);}
+.card .ct{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.2em;color:#E2B04A;margin-bottom:18px;}
+.card .ch{font-family:'EB Garamond',serif;font-size:40px;line-height:1.1;margin-bottom:14px;}
+.li{display:flex;align-items:center;gap:16px;font-size:28px;font-weight:700;line-height:1.25;margin:14px 0;color:#FFFFF4;}
+.li .tk{flex:0 0 34px;height:34px;border-radius:50%;border:2px solid #93DBB3;color:#93DBB3;font-size:20px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;}
+.chip{display:inline-flex;align-items:center;gap:10px;padding:10px 18px;border-radius:999px;background:#173b29;border:2px solid rgba(255,255,244,.22);font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.06em;color:#FFFFF4;}
+.chip.on{border-color:#E2B04A;color:#E2B04A;}
+.stamp{position:absolute;font-family:'IBM Plex Mono',monospace;font-weight:700;letter-spacing:.14em;border:5px solid #E06A4E;color:#E06A4E;padding:14px 26px;border-radius:10px;background:rgba(20,50,33,.9);}
+/* browser frame */
+.bf{position:absolute;left:210px;top:96px;width:1500px;height:773px;border-radius:18px;overflow:hidden;background:#0f2619;border:2px solid rgba(255,255,244,.18);box-shadow:0 30px 80px rgba(0,0,0,.45);}
+.bf-bar{position:absolute;left:0;top:0;width:1500px;height:34px;background:#0f2619;display:flex;align-items:center;gap:8px;padding:0 16px;}
+.bf-bar i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,244,.25);display:block;}
+.bf-url{margin-left:14px;font-family:'IBM Plex Mono',monospace;font-size:16px;color:rgba(255,255,244,.7);}
+.bf-priv{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:14px;letter-spacing:.12em;color:#93DBB3;}
+.bf-view{position:absolute;left:0;top:34px;width:1500px;height:739px;overflow:hidden;background:#fffff4;}
+.zo{position:absolute;left:0;top:0;width:1500px;height:739px;transform-origin:50% 50%;}
+.zi{position:absolute;left:0;top:0;width:1500px;height:739px;}
+.shot{position:absolute;left:0;top:0;width:1500px;height:739px;display:block;opacity:0;}
+.scrim{position:absolute;left:0;top:34px;width:1500px;height:739px;background:#143221;opacity:0;}
+.scrimR{position:absolute;left:0;top:34px;width:1500px;height:739px;opacity:0;background:linear-gradient(to left,rgba(20,50,33,.94) 0%,rgba(20,50,33,.86) 40%,rgba(20,50,33,0) 66%);}
+</style>
+<div id="s04-root" data-composition-id="s04" data-width="1920" data-height="1080" data-duration="30.41">
+
+<div class="scenelabel" id="s04-lab" data-layout-allow-overlap>01 · GIF PROPERTIES</div>
+<div class="bf" id="s04-bf">
+  <div class="bf-bar"><i></i><i></i><i></i><span class="bf-url" data-layout-allow-overlap>GIF Properties — rent, arrears &amp; utility tracker</span><span class="bf-priv">CLIENT DATA BLURRED FOR PRIVACY</span></div>
+  <div class="bf-view"><div class="zo" id="s04-zo" data-layout-allow-overflow><div class="zi" id="s04-zi">
+<img class="shot" id="s04-i1" src="assets/footage/gif_now.png" alt="" />
+<img class="shot" id="s04-i2" src="assets/footage/gif_arrears.png" alt="" />
+<img class="shot" id="s04-i3" src="assets/footage/gif_issues.png" alt="" />
+<img class="shot" id="s04-i4" src="assets/footage/gif_sheet.png" alt="" />
+  </div></div></div>
+  <div class="scrimR" id="s04-scrimR"></div>
+  <div class="scrim" id="s04-scrim"></div>
+</div>
+<div class="abs" id="s04-tag" style="left:250px;top:780px;display:flex;gap:14px"><span class="chip on" id="s04-t1">2 weekly automations</span><span class="chip" id="s04-t2">rent · arrears · utilities</span></div>
+<div class="card" data-layout-allow-overlap id="s04-up" style="left:1130px;top:200px;width:540px">
+  <div class="ct">UPDATER · WEEKLY</div><div class="ch">Keeps the data current</div>
+  <div class="li" id="s04-u1"><span class="tk">✓</span><span>Records rent payments</span></div><div class="li" id="s04-u2"><span class="tk">✓</span><span>Rolls arrears forward</span></div><div class="li" id="s04-u3"><span class="tk">✓</span><span>Refreshes utility readings</span></div><div class="li" id="s04-u4"><span class="tk">✓</span><span>Updates tenant &amp; unit status</span></div>
+</div>
+<div class="card" data-layout-allow-overlap id="s04-ve" style="left:1130px;top:200px;width:540px">
+  <div class="ct">VERIFIER · WEEKLY</div><div class="ch">Audits before anything changes</div>
+  <div class="li" id="s04-v1"><span class="tk">!</span><span>Missing or duplicate rent</span></div><div class="li" id="s04-v2"><span class="tk">!</span><span>Balances that don’t reconcile</span></div><div class="li" id="s04-v3"><span class="tk">!</span><span>Stale utility readings</span></div><div class="li" id="s04-v4"><span class="tk">!</span><span>Missing lease data</span></div>
+  <div class="chip on" id="s04-ro" style="margin-top:16px">READ-ONLY · flags, never edits</div>
+</div>
+<div class="card" id="s04-k1" style="left:300px;top:330px;width:620px;text-align:left"><div class="ct">UPDATER</div><div class="h2">keeps it <span class="mint">current.</span></div></div>
+<div class="card" id="s04-k2" style="left:1000px;top:330px;width:620px"><div class="ct">VERIFIER</div><div class="h2">keeps it <span class="gold">trustworthy.</span></div></div>
+</div>
+<script>
+(function(){
+const SID = "s04";
+const tl = gsap.timeline({ paused: true });
+const $ = (s) => "#" + SID + "-" + s;
+const VW = 1500, VH = 739, SC = VW / 1920;
+function cam(t, cx, cy, S, dur, ease) {
+  const fx = cx * SC, fy = cy * SC;
+  let ox = fx - VW / 2, oy = fy - VH / 2;
+  const mx = VW / 2 - VW / (2 * S), my = VH / 2 - VH / (2 * S);
+  ox = Math.max(-mx, Math.min(mx, ox)); oy = Math.max(-my, Math.min(my, oy));
+  tl.to($("zo"), { scale: S, duration: dur, ease: ease || "sine.inOut" }, t);
+  tl.to($("zi"), { x: -ox, y: -oy, duration: dur, ease: ease || "sine.inOut" }, t);
+}
+function show(t, id, d) { tl.fromTo($(id), { opacity: 0 }, { opacity: 1, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function inUp(t, id, d, dy) { tl.fromTo($(id), { opacity: 0, y: dy == null ? 26 : dy }, { opacity: 1, y: 0, duration: d || 0.5, ease: "power3.out" }, t); }
+function inLeft(t, id, d) { tl.fromTo($(id), { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: d || 0.45, ease: "power3.out" }, t); }
+function pop(t, id, d) { tl.fromTo($(id), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: d || 0.45, ease: "back.out(2)" }, t); }
+function slam(t, id, rot) { tl.fromTo($(id), { opacity: 0, scale: 1.8, rotation: rot || -6 }, { opacity: 1, scale: 1, rotation: rot || -6, duration: 0.35, ease: "power4.in" }, t); }
+function out(t, id, d) { tl.to($(id), { opacity: 0, duration: d || 0.35, ease: "power1.in" }, t); }
+function scrim(t, id, a, d) { tl.to($(id), { opacity: a, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function count(t, id, from, to, d, fmt) { const o = { v: from }; const el = document.getElementById(SID + "-" + id);
+  tl.to(o, { v: to, duration: d, ease: "power2.out", onUpdate: () => { el.textContent = fmt(o.v); } }, t); }
+tl.fromTo($("bf"), {opacity:0, y:30}, {opacity:1, y:0, duration:0.6, ease:"power3.out"}, 0.1); inLeft(0.2,"lab");
+show(0,"i1",0.01); cam(0,960,473,1,0.01); cam(0.3,700,420,1.08,6.5);
+pop(4.96,"t1"); pop(1.38,"t2");
+// updater on the arrears view
+show(7.32,"i2",0.5); cam(7.32,960,473,1.0,0.5,"power2.inOut"); cam(7.32+0.6,600,380,1.12,6.0);
+tl.set($("up"),{opacity:0},0); tl.set($("ve"),{opacity:0},0); tl.set($("k1"),{opacity:0},0); tl.set($("k2"),{opacity:0},0);
+out(7.32,"tag",0.3);
+scrim(7.32,"scrimR",1); inUp(7.32+0.1,"up",0.5);
+["u1","u2","u3","u4"].forEach(k=>tl.set($(k),{opacity:0},0));
+inLeft(8.06,"u1"); inLeft(9.62,"u2"); inLeft(11.2,"u3"); inLeft(13.18,"u4");
+// verifier on the issues view
+out(14.26-0.2,"up",0.3); show(14.26,"i3",0.5); cam(14.26,960,473,1.0,0.5,"power2.inOut"); cam(14.26+0.6,700,560,1.1,7.0);
+inUp(14.26+0.1,"ve",0.5);
+["v1","v2","v3","v4","ro"].forEach(k=>tl.set($(k),{opacity:0},0));
+inLeft(16.6,"v1"); inLeft(18.76,"v2"); inLeft(20.62,"v3"); inLeft(21.54,"v4"); pop(23.14,"ro");
+// the split: current vs trustworthy
+out(25.78-0.2,"ve",0.3); show(25.78,"i4",0.5); cam(25.78,960,473,1.0,0.5); scrim(25.78,"scrimR",0,0.4); scrim(25.78,"scrim",0.72,0.5);
+inUp(26.58 - 0.3,"k1",0.5); inUp(27.44,"k2",0.5);
+
+window.__timelines["s04"] = tl;
+})();
+</script>
+</template>
+</body></html>

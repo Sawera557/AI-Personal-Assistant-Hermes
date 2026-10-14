@@ -1,0 +1,67 @@
+{
+ "provider": "gemini",
+ "tts_model": "gemini-3.8-flash-tts",
+ "voice": "Kore",
+ "lang": "en",
+ "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences.",
+ "lines": [
+  {
+   "id": "line01",
+   "text": "A founder running businesses in Kenya and the US was keeping rent, farm operations, a spa, and dozens of bills alive by hand, in spreadsheets. I turned that into systems that update themselves, check their own work, and report on live dashboards. And along the way, I cut about thirty-three thousand dollars a year in recurring costs.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Calm, assured; lift slightly on 'thirty-three thousand dollars'."
+  },
+  {
+   "id": "line02",
+   "text": "Every system follows the same pattern. Source data comes in. An automation verifies or processes it. It lands in a Google Sheet that stays the source of truth. A live dashboard reads from that sheet. And a person only steps in when a real decision is needed.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Measured, one beat per station."
+  },
+  {
+   "id": "line03",
+   "text": "Eight scheduled tasks across five businesses, and all of them start from one place. Every dashboard, one door.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Light; land 'one door'."
+  },
+  {
+   "id": "line04",
+   "text": "GIF Properties tracks rent, arrears and utilities. Two weekly automations split the work. The Updater records rent payments, rolls arrears forward, and refreshes utility readings and tenant status. The Verifier audits the workbook for missing or duplicate rent, balances that don't reconcile, stale readings and missing lease data, and flags what's wrong without touching the data. One keeps it current. The other keeps it trustworthy.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Explanatory; crisp contrast on the last two sentences."
+  },
+  {
+   "id": "line05",
+   "text": "GAK Properties goes a step further. Every Friday, the Verifier reads all fifteen tabs of the workbook, plus tenant notices, utility bills, QuickBooks statements and bank alerts from a dedicated inbox, and emails a numbered list of findings: proposals, conflicts, and notices. A reply drives the Updater. Yes adds the figure. Correct writes the fixed value. OK just acknowledges. Every write is deduplicated, cross-checked, logged with evidence, and locked to GAK, so it can never touch GIF.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Brisk through the list; deliberate on YES / CORRECT / OK."
+  },
+  {
+   "id": "line06",
+   "text": "For Nour Hammam, a spa, a daily task acts as the registrar for the operations workbook. It reads six tabs: register, people, decisions, gates, money, and the change log. It only writes what a source supports, and every changed cell is logged with its old value, new value, and evidence. When something is missing or contradictory, it doesn't guess. It marks it: needs ruling. On the owner's dashboard, Refresh Data pulls all six tabs live, and re-maps every task to its current row, so edits land in the right place. Refresh. Review. Edit.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Steady; a small pause before 'needs ruling'. Three clipped words at the end."
+  },
+  {
+   "id": "line07",
+   "text": "Afrofarms, a farming operation in Kenya, gets a daily update from the farm's own M C P operating system, so its command deck always matches the operations data underneath.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Brief and warm."
+  },
+  {
+   "id": "line08",
+   "text": "Bills and subscriptions span six entities: seventy-one recurring bills in one register. Every two weeks, an automation searches five mailboxes for invoices, renewals, payment confirmations and cancellations, and updates the register in place. It marks bills paid or cancelled, adds new ones, keeps the deadlines current, and stores evidence for every change. The rule is simple: nothing is estimated. If an amount can't be verified, it's marked unverified. The CEO dashboard turns it into four screens: the brief, decisions, dates, and every bill. And a separate task emails only the urgent items.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Firm on 'nothing is estimated'."
+  },
+  {
+   "id": "line09",
+   "text": "I also audited every subscription, plan and tool. Oversized storage plans came down. Unused AI and software seats were cancelled. Plans like Maton, Vercel and Wati were downgraded. Afrofarms' recurring costs dropped from about thirteen hundred and eighty euros a month to about four hundred and twenty. Altogether, that's around thirty-three thousand dollars a year already saved. And about thirty-five thousand seven hundred once the last pending cancellation goes through.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Building; let the total land, pause, then the Manus line softer."
+  },
+  {
+   "id": "line10",
+   "text": "Underneath it all is the A I operating layer. Three custom M C P integrations: Maton, NuExtract, and Pinecone. More than forty apps connected to Claude through Maton, including QuickBooks, which had to be routed through Maton when a direct connection wasn't possible. Twilio and WhatsApp for sending and reading messages, and an email-to-S M S flow that texts a manager the moment Claude emails them. Global instructions give every agent, dashboard and task the same rules, and a cleanup of skills and plugins keeps Claude's context focused. I also turned research reports into a structured research artifact, and extracted and cleaned a local database to feed the dashboards.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Engineer-to-engineer, steady pace."
+  },
+  {
+   "id": "line11",
+   "text": "Across all of it, the same rules hold. Source-backed updates. Verification kept apart from writes. Every change auditable. No duplicates. Each business isolated. Live dashboards. And no guessing, ever. Manual operations, turned into automated, auditable systems.",
+   "style": "Warm, confident and unhurried, like a builder proudly walking a peer through real work. Natural conversational pace, short pauses between sentences. Slower, conclusive."
+  }
+ ],
+ "bgm": {
+  "mode": "none"
+ }
+}

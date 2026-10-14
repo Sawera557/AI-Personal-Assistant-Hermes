@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1920, height=1080" />
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#143221;}
+#root{position:relative;width:100%;height:100%;overflow:hidden;background:#143221;}
+[data-composition-id="main"] > div[data-composition-src]{position:absolute;inset:0;}
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="308.648" data-width="1920" data-height="1080">
+<div id="h-bgc" data-composition-id="bgc" data-composition-src="compositions/background.html" data-start="0" data-duration="308.648" data-track-index="0" data-width="1920" data-height="1080"></div>
+<div id="h-s01" data-composition-id="s01" data-composition-src="compositions/frames/01-hook.html" data-start="0.0" data-duration="24.39" data-track-index="1" data-width="1920" data-height="1080"></div>
+<div id="h-s02" data-composition-id="s02" data-composition-src="compositions/frames/02-pattern.html" data-start="23.79" data-duration="17.97" data-track-index="2" data-width="1920" data-height="1080"></div>
+<div id="h-s03" data-composition-id="s03" data-composition-src="compositions/frames/03-hub.html" data-start="41.16" data-duration="8.987" data-track-index="1" data-width="1920" data-height="1080"></div>
+<div id="h-s04" data-composition-id="s04" data-composition-src="compositions/frames/04-gif.html" data-start="49.547" data-duration="30.41" data-track-index="2" data-width="1920" data-height="1080"></div>
+<div id="h-s05" data-composition-id="s05" data-composition-src="compositions/frames/05-gak.html" data-start="79.357" data-duration="36.91" data-track-index="1" data-width="1920" data-height="1080"></div>
+<div id="h-s06" data-composition-id="s06" data-composition-src="compositions/frames/06-nour-hammam.html" data-start="115.667" data-duration="38.467" data-track-index="2" data-width="1920" data-height="1080"></div>
+<div id="h-s07" data-composition-id="s07" data-composition-src="compositions/frames/07-afrofarms.html" data-start="153.534" data-duration="13.67" data-track-index="1" data-width="1920" data-height="1080"></div>
+<div id="h-s08" data-composition-id="s08" data-composition-src="compositions/frames/08-billing.html" data-start="166.604" data-duration="41.99" data-track-index="2" data-width="1920" data-height="1080"></div>
+<div id="h-s09" data-composition-id="s09" data-composition-src="compositions/frames/09-savings.html" data-start="207.994" data-duration="33.777" data-track-index="1" data-width="1920" data-height="1080"></div>
+<div id="h-s10" data-composition-id="s10" data-composition-src="compositions/frames/10-infrastructure.html" data-start="241.171" data-duration="44.13" data-track-index="2" data-width="1920" data-height="1080"></div>
+<div id="h-s11" data-composition-id="s11" data-composition-src="compositions/frames/11-close.html" data-start="284.701" data-duration="23.947" data-track-index="1" data-width="1920" data-height="1080"></div>
+<div id="h-rail" data-composition-id="rail" data-composition-src="compositions/rail.html" data-start="41.16" data-duration="167.434" data-track-index="3" data-width="1920" data-height="1080"></div>
+<div id="h-cap1" data-composition-id="cap1" data-composition-src="compositions/captions-cap1.html" data-start="1.27" data-duration="62.707" data-track-index="4" data-width="1920" data-height="1080"></div>
+<div id="h-cap2" data-composition-id="cap2" data-composition-src="compositions/captions-cap2.html" data-start="63.937" data-duration="62.22" data-track-index="4" data-width="1920" data-height="1080"></div>
+<div id="h-cap3" data-composition-id="cap3" data-composition-src="compositions/captions-cap3.html" data-start="126.057" data-duration="59.177" data-track-index="4" data-width="1920" data-height="1080"></div>
+<div id="h-cap4" data-composition-id="cap4" data-composition-src="compositions/captions-cap4.html" data-start="185.134" data-duration="66.727" data-track-index="4" data-width="1920" data-height="1080"></div>
+<div id="h-cap5" data-composition-id="cap5" data-composition-src="compositions/captions-cap5.html" data-start="251.761" data-duration="53.21" data-track-index="4" data-width="1920" data-height="1080"></div>
+<audio id="a-line01" src="assets/vo/line01.wav" data-start="1.2" data-duration="21.89" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line02" src="assets/vo/line02.wav" data-start="24.29" data-duration="16.27" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line03" src="assets/vo/line03.wav" data-start="41.66" data-duration="7.287" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line04" src="assets/vo/line04.wav" data-start="50.047" data-duration="28.71" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line05" src="assets/vo/line05.wav" data-start="79.857" data-duration="35.21" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line06" src="assets/vo/line06.wav" data-start="116.167" data-duration="36.767" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line07" src="assets/vo/line07.wav" data-start="154.034" data-duration="11.97" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line08" src="assets/vo/line08.wav" data-start="167.104" data-duration="40.29" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line09a" src="assets/vo/line09a.wav" data-start="208.494" data-duration="24.35" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line09b" src="assets/vo/line09b.wav" data-start="234.644" data-duration="5.627" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line10" src="assets/vo/line10.wav" data-start="241.671" data-duration="42.43" data-track-index="6" data-volume="1"></audio>
+<audio id="a-line11" src="assets/vo/line11.wav" data-start="285.201" data-duration="19.247" data-track-index="6" data-volume="1"></audio>
+</div>
+<script>
+const tl = gsap.timeline({ paused: true });
+tl.fromTo("#h-s01",{xPercent:0},{xPercent:-100,duration:0.6,ease:"power3.inOut",immediateRender:false},23.79);
+tl.fromTo("#h-s02",{xPercent:100},{xPercent:0,duration:0.6,ease:"power3.inOut"},23.79);
+tl.fromTo("#h-s02",{opacity:1},{opacity:0,duration:0.6,ease:"power1.inOut",immediateRender:false},41.16);
+tl.fromTo("#h-s03",{opacity:0},{opacity:1,duration:0.6,ease:"power1.inOut"},41.16);
+tl.fromTo("#h-s03",{xPercent:0},{xPercent:-100,duration:0.6,ease:"power3.inOut",immediateRender:false},49.547);
+tl.fromTo("#h-s04",{xPercent:100},{xPercent:0,duration:0.6,ease:"power3.inOut"},49.547);
+tl.fromTo("#h-s04",{xPercent:0},{xPercent:-100,duration:0.6,ease:"power3.inOut",immediateRender:false},79.357);
+tl.fromTo("#h-s05",{xPercent:100},{xPercent:0,duration:0.6,ease:"power3.inOut"},79.357);
+tl.fromTo("#h-s05",{xPercent:0},{xPercent:-100,duration:0.6,ease:"power3.inOut",immediateRender:false},115.667);
+tl.fromTo("#h-s06",{xPercent:100},{xPercent:0,duration:0.6,ease:"power3.inOut"},115.667);
+tl.fromTo("#h-s06",{xPercent:0},{xPercent:-100,duration:0.6,ease:"power3.inOut",immediateRender:false},153.534);
+tl.fromTo("#h-s07",{xPercent:100},{xPercent:0,duration:0.6,ease:"power3.inOut"},153.534);
+tl.fromTo("#h-s07",{xPercent:0},{xPercent:-100,duration:0.6,ease:"power3.inOut",immediateRender:false},166.604);
+tl.fromTo("#h-s08",{xPercent:100},{xPercent:0,duration:0.6,ease:"power3.inOut"},166.604);
+tl.fromTo("#h-s08",{yPercent:0},{yPercent:-100,duration:0.6,ease:"power3.inOut",immediateRender:false},207.994);
+tl.fromTo("#h-s09",{yPercent:100},{yPercent:0,duration:0.6,ease:"power3.inOut"},207.994);
+tl.fromTo("#h-s09",{scale:1,opacity:1},{scale:1.25,opacity:0,duration:0.6,ease:"power2.in",immediateRender:false},241.171);
+tl.fromTo("#h-s10",{scale:0.85,opacity:0},{scale:1,opacity:1,duration:0.6,ease:"power2.out"},241.171);
+tl.fromTo("#h-s10",{opacity:1},{opacity:0,duration:0.6,ease:"power1.inOut",immediateRender:false},284.701);
+tl.fromTo("#h-s11",{opacity:0},{opacity:1,duration:0.6,ease:"power1.inOut"},284.701);
+window.__timelines["main"] = tl;
+</script>
+</body>
+</html>

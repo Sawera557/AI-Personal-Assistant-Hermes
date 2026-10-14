@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes — Load-Bearing Files Report</title>
+<style>
+  :root {
+    --surface-0: #f7f6f3;
+    --surface-1: #f0efe9;
+    --surface-2: #ffffff;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --border: rgba(11,11,11,0.10);
+    --accent: #185fa5;
+    --accent-bg: #e6f1fb;
+    --accent-text: #0c447c;
+    --good-bg: #eaf3de; --good-text: #27500a;
+    --warn-bg: #faeeda; --warn-text: #633806;
+    --bad-bg: #fcebeb; --bad-text: #791f1f;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--surface-0);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.65;
+  }
+  .layout { display: grid; grid-template-columns: 230px minmax(0,1fr); gap: 2.5rem; max-width: 1120px; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+  nav.toc { position: sticky; top: 2rem; align-self: start; font-size: 13px; }
+  nav.toc a { display: flex; align-items: center; gap: 6px; padding: 5px 0; color: var(--text-secondary); text-decoration: none; border-left: 2px solid transparent; padding-left: 10px; }
+  nav.toc a:hover { color: var(--text-primary); border-left-color: var(--accent); }
+  nav.toc p.label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0 0 8px; padding-left: 10px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot.good { background: #639922; } .dot.warn { background: #ba7517; } .dot.bad { background: #a32d2d; }
+
+  header.hero { margin-bottom: 2rem; }
+  header.hero p.eyebrow { font-size: 13px; color: var(--accent-text); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 8px; font-weight: 500; }
+  header.hero h1 { font-size: 30px; font-weight: 500; margin: 0 0 12px; }
+  header.hero p.lede { font-size: 16px; color: var(--text-secondary); max-width: 700px; margin: 0; }
+  header.hero p.meta { font-size: 13px; color: var(--text-muted); margin: 10px 0 0; }
+
+  .status-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 1.75rem 0; }
+  .status { border-radius: 8px; padding: 0.8rem 0.9rem; }
+  .status .name { font-size: 13px; font-weight: 500; margin: 0 0 4px; }
+  .status .verdict { font-size: 12px; margin: 0; }
+  .status.good { background: var(--good-bg); } .status.good .name { color: var(--good-text); } .status.good .verdict { color: var(--good-text); }
+  .status.warn { background: var(--warn-bg); } .status.warn .name { color: var(--warn-text); } .status.warn .verdict { color: var(--warn-text); }
+  .status.bad { background: var(--bad-bg); } .status.bad .name { color: var(--bad-text); } .status.bad .verdict { color: var(--bad-text); }
+
+  section { margin: 3.25rem 0; scroll-margin-top: 1.5rem; }
+  section > p.kicker { font-size: 13px; color: var(--accent-text); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+  h2 { font-size: 20px; font-weight: 500; margin: 0 0 0.5rem; }
+  h3 { font-size: 15px; font-weight: 500; margin: 1.5rem 0 0.5rem; }
+  p { font-size: 15px; color: var(--text-secondary); margin: 0.5rem 0; }
+  p.section-intro { font-size: 15px; color: var(--text-secondary); max-width: 760px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 1rem 0; background: var(--surface-2); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 0.5px solid var(--border); vertical-align: top; }
+  th { color: var(--text-secondary); font-weight: 500; background: var(--surface-1); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+  td { font-size: 13.5px; color: var(--text-secondary); }
+  td.path { font-size: 13px; word-break: break-word; }
+  code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--surface-1); padding: 2px 5px; border-radius: 4px; font-size: 12.5px; color: var(--text-primary); }
+
+  .callout { border-left: 3px solid var(--accent); background: var(--accent-bg); border-radius: 0 8px 8px 0; padding: 0.9rem 1.1rem; margin: 1.1rem 0; }
+  .callout p { color: var(--accent-text); margin: 0; font-size: 13.5px; }
+  .callout.warn { border-left-color: #ba7517; background: var(--warn-bg); }
+  .callout.warn p { color: var(--warn-text); }
+  .callout.bad { border-left-color: #a32d2d; background: var(--bad-bg); }
+  .callout.bad p { color: var(--bad-text); }
+
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 0.5px solid var(--border); font-size: 13px; color: var(--text-muted); }
+
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc">
+  <p class="label">Contents</p>
+  <a href="#orchestration"><span class="dot good"></span>Orchestration</a>
+  <a href="#state"><span class="dot good"></span>State handling</a>
+  <a href="#tools"><span class="dot good"></span>Tool / retrieval use</a>
+  <a href="#guardrails"><span class="dot warn"></span>Guardrails</a>
+  <a href="#tests"><span class="dot good"></span>Tests / evals</a>
+  <a href="#logging"><span class="dot bad"></span>Logging</a>
+</nav>
+
+<main>
+
+<header class="hero">
+  <p class="eyebrow">System architecture audit</p>
+  <h1>Load-bearing files — Hermes backend</h1>
+  <p class="lede">The files that actually run the system, grouped by what they're load-bearing for: orchestration, state, tools/retrieval, guardrails, tests, and logging — read directly from the committed source, not from documentation.</p>
+  <p class="meta">Source: D:\gandi-ai-assistant.bundle · HEAD 3704df3 · verified against the actual code, not docs</p>
+</header>
+
+<div class="status-row">
+  <div class="status good"><p class="name">Orchestration</p><p class="verdict">Present, bounded</p></div>
+  <div class="status good"><p class="name">State handling</p><p class="verdict">Present, layered</p></div>
+  <div class="status good"><p class="name">Tools / retrieval</p><p class="verdict">Present, split-brain</p></div>
+  <div class="status warn"><p class="name">Guardrails</p><p class="verdict">Mostly prompt-level</p></div>
+  <div class="status good"><p class="name">Tests / evals</p><p class="verdict">Present, thin (4 files)</p></div>
+  <div class="status bad"><p class="name">Logging</p><p class="verdict">No central config</p></div>
+</div>
+
+<section id="orchestration">
+  <p class="kicker"><span class="dot good"></span>Present</p>
+  <h2>Orchestration / control flow</h2>
+  <p class="section-intro">The files that decide what happens next — routing a request, running the model's tool-use loop, and firing unattended work on a schedule.</p>
+  <table>
+    <colgroup><col style="width:22%"><col style="width:78%"></colgroup>
+    <thead><tr><th>File</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td class="path"><code>app.py</code></td><td>The FastAPI route layer — every HTTP endpoint in the system. Wires requests to the agent, tools, and database; runs startup steps (applying migrations, launching the scheduled-task poller); wraps route logic in broad exception handling to return clean JSON errors instead of raw stack traces.</td></tr>
+      <tr><td class="path"><code>hermes/agent.py</code></td><td>The actual agent loop — <code>run_turn</code> / <code>stream_turn</code>. Builds the system prompt, calls Claude (or OpenAI as an alternate provider), and dispatches whatever tool calls the model makes. Bounded by <code>Config.MAX_TOOL_ITERATIONS</code> — a fixed <code>for</code> loop, not open-ended recursion.</td></tr>
+      <tr><td class="path"><code>hermes/tools.py</code></td><td><code>build_tools()</code> assembles the tool list, gated by which apps are actually connected for the current business. <code>dispatch()</code> routes a model's tool-call to its handler. This is the real control-flow hinge between "the model decided to act" and "something actually happened."</td></tr>
+      <tr><td class="path"><code>hermes/scheduler.py</code></td><td>Turns a saved Scheduled Task into a bounded, unattended agent run — schedule math (daily/weekly/hourly), restricting the toolset to the task's allowed apps, and prepending the autonomy guardrail text.</td></tr>
+      <tr><td class="path"><code>hermes/job_runner.py</code></td><td>The sibling orchestrator for code-driven Jobs (not agent-prompt-driven) — a plain Python function registry (<code>REGISTRY</code>) that mirrors the scheduler's timing logic but fires a registered function instead of a prompt.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="state">
+  <p class="kicker"><span class="dot good"></span>Present</p>
+  <h2>State handling</h2>
+  <p class="section-intro">Two distinct layers: fast in-process memory for the live conversation, and Postgres for anything that needs to survive a restart.</p>
+  <table>
+    <colgroup><col style="width:22%"><col style="width:78%"></colgroup>
+    <thead><tr><th>File</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td class="path"><code>hermes/memory.py</code></td><td>In-process, thread-safe conversation store keyed by <code>session_id</code> — the Claude message list (the model's actual working memory) plus a lightweight display transcript for the UI's history sidebar. Explicitly documented as swappable for Redis/a database; on its own it does not survive a process restart.</td></tr>
+      <tr><td class="path"><code>hermes/db/connection.py</code></td><td>The real durability layer — Postgres on AWS RDS. Two auth modes: a static password, or a short-lived (~15 min) IAM token generated fresh per connection via boto3. SSL is mandatory. This is where everything that needs to persist actually lands.</td></tr>
+      <tr><td class="path"><code>hermes/db/bills.py, conversations.py, meetings.py, scheduled_tasks.py, jobs.py, documents.py, memories.py</code></td><td>One module per persisted concern — the read/write layer for each table (bills, chat history, meeting sessions, scheduled tasks, jobs, knowledge-base documents, extracted memories).</td></tr>
+      <tr><td class="path"><code>hermes/memory_extract.py</code> / <code>hermes/memory_retrieve.py</code></td><td>Cross-turn persistent memory — silently extracts durable owner/business facts after each turn (background thread, no added latency), and recalls relevant ones semantically before future turns.</td></tr>
+      <tr><td class="path"><code>hermes/attachments.py</code></td><td>Multi-tenant attachment store scoped by <code>entity_id</code> — upload once, reference by id across chat turns.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="tools">
+  <p class="kicker"><span class="dot good"></span>Present — with one real split</p>
+  <h2>Tool / retrieval use</h2>
+  <p class="section-intro">How the assistant reaches external systems, and how it searches its own knowledge base.</p>
+  <table>
+    <colgroup><col style="width:22%"><col style="width:78%"></colgroup>
+    <thead><tr><th>File</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td class="path"><code>hermes/tools.py</code></td><td>Tool definitions and dispatch — dedicated tools (<code>send_email</code>, <code>calendar_list_upcoming</code>, etc.) plus the universal <code>maton_request</code>, which can hit any endpoint of any connected app.</td></tr>
+      <tr><td class="path"><code>hermes/maton.py</code></td><td>The actual outbound gateway client — proxies calls to Gmail, Calendar, QuickBooks, and every other connected app through Maton's OAuth-holding API.</td></tr>
+      <tr><td class="path"><code>hermes/search.py</code> + <code>hermes/vector_store.py</code></td><td>Retrieval for the main app — pgvector-backed semantic search over the knowledge base, scoped by business and a sensitivity ceiling (public &lt; internal &lt; confidential &lt; restricted).</td></tr>
+      <tr><td class="path"><code>hermes/ingest.py</code></td><td>The chunk → embed → upsert pipeline that populates that pgvector store from uploaded documents.</td></tr>
+      <tr><td class="path"><code>ingestion-service/ingestion/pinecone_store.py</code></td><td>A <b>separate</b>, still-Pinecone-backed retrieval index used by the standalone background ingestion service. This is a real architectural split, not just a documentation caveat — see the callout below.</td></tr>
+      <tr><td class="path"><code>hermes/wati.py, hermes/fathom.py, hermes/worldbank.py, hermes/voice.py</code></td><td>Narrower tool-adjacent integrations — WhatsApp Business, meeting notes/recordings, public macro data, and speech-to-text/text-to-speech.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <p><b>Split-brain retrieval:</b> the main app reads from pgvector, but the standalone ingestion service still writes to Pinecone. Anything that service indexes today does not land where the main assistant's search actually looks — confirmed directly in the code, not just in the docs.</p>
+  </div>
+</section>
+
+<section id="guardrails">
+  <p class="kicker"><span class="dot warn"></span>Present, but mostly at the prompt level</p>
+  <h2>Guardrails / failure handling</h2>
+  <p class="section-intro">Safety in this system is real but largely enforced by instructing the model, not by hard code paths that physically prevent an action. Worth being precise about which is which.</p>
+  <table>
+    <colgroup><col style="width:18%"><col style="width:60%"><col style="width:22%"></colgroup>
+    <thead><tr><th>File</th><th>What it does</th><th>Enforcement</th></tr></thead>
+    <tbody>
+      <tr><td class="path"><code>hermes/agent.py</code></td><td>The system prompt directly instructs the model: for any write or destructive action, state exactly what it will do and stop to wait for confirmation.</td><td>Prompt-level</td></tr>
+      <tr><td class="path"><code>hermes/tools.py</code></td><td>File-send tools use a two-step <code>confirm</code>/<code>draft_id</code> pattern — prepare without <code>confirm</code>, only actually send with <code>confirm=true</code> plus the returned id. <code>_TOOL_REQUIRED_APPS</code> removes a tool from the list entirely if its app isn't connected.</td><td><b>Code-level</b></td></tr>
+      <tr><td class="path"><code>hermes/scheduler.py</code></td><td><code>VALID_AUTONOMY = {"readonly","draft","full"}</code> with guardrail text prepended per unattended run.</td><td>Prompt-level (the toolset restriction to a task's allowed apps is the code-level part)</td></tr>
+      <tr><td class="path"><code>app.py</code></td><td>Dozens of deliberately broad <code>except Exception</code> blocks that convert internal failures into clean JSON error responses instead of raw stack traces; several explicitly wrap startup steps (migrations, the poller) so one failing doesn't block the whole app from booting.</td><td><b>Code-level</b></td></tr>
+      <tr><td class="path"><code>hermes/db/connection.py</code></td><td>Credential guardrail — IAM auth tokens expire in ~15 minutes and are regenerated per connection rather than cached; SSL is mandatory.</td><td><b>Code-level</b></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="tests">
+  <p class="kicker"><span class="dot good"></span>Present, but thin</p>
+  <h2>Tests / evals</h2>
+  <p class="section-intro">Four files total, committed to the repository. One of them is a genuine model-behavior eval, not just a unit test.</p>
+  <table>
+    <colgroup><col style="width:22%"><col style="width:78%"></colgroup>
+    <thead><tr><th>File</th><th>What it actually checks</th></tr></thead>
+    <tbody>
+      <tr><td class="path"><code>tests/test_api.py</code></td><td>Offline end-to-end API tests. Network-bound calls (Claude's <code>run_turn</code>, voice transcribe/synthesize) are monkeypatched, so it runs without real API keys or connectivity.</td></tr>
+      <tr><td class="path"><code>tests/test_scheduled_window.py</code></td><td>Pure unit tests for the scheduled-task date-window/backfill math — <code>advance_window</code>, <code>build_run_prompt</code>, <code>initial_next_run</code>. No database or agent required.</td></tr>
+      <tr><td class="path"><code>tests/test_worldbank_tool_triggering.py</code> + <code>tests/worldbank_tool_questions.json</code></td><td>An actual <b>eval harness</b> — replays the agent's first tool-selection decision against real questions to check whether the <code>worldbank_data</code> tool fires when it should, and doesn't when it shouldn't. This is the one genuine model-behavior eval in the repository.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <p><b>Not in the bundle:</b> <code>tests/test_bills.py</code> exists in the working directory right now but was never committed — it is not part of the git bundle's history at all.</p>
+  </div>
+</section>
+
+<section id="logging">
+  <p class="kicker"><span class="dot bad"></span>Exists, but with no central configuration</p>
+  <h2>Logging</h2>
+  <p class="section-intro">This is the one category where the honest answer is close to "doesn't really exist" as a system — worth saying directly rather than softening it.</p>
+  <p>Python's standard-library <code>logging</code> module is used directly — the pattern <code>import logging</code> / <code>log = logging.getLogger("hermes.scheduler")</code> appears across roughly 18 files in <code>hermes/</code> and in <code>app.py</code>. But:</p>
+  <div class="callout bad">
+    <p>There is no <code>logging.basicConfig</code> call anywhere in the codebase — confirmed by searching the entire repository, not inferred. No central logging configuration, no structured/JSON logging, and no log aggregation or APM/observability service (no Sentry, Datadog, or OpenTelemetry, in the code or in <code>requirements.txt</code>).</p>
+  </div>
+  <p>Practically, this means that without the deployment environment configuring logging separately, most <code>log.info(...)</code> calls default to Python's built-in behavior — WARNING level and above only, printed unformatted to stderr. Routine <code>info</code>-level logging throughout the app is effectively silent in most deployments. This is a real, current gap in the code as it stands, not a stylistic choice.</p>
+</section>
+
+<footer>
+  Read directly from the committed source in D:\gandi-ai-assistant.bundle (HEAD 3704df3) — file contents, not documentation, are the source of truth for every claim above.
+</footer>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /></head>
+<body>
+<template>
+<style>
+#s01-root{position:absolute;inset:0;overflow:hidden;color:#FFFFF4;font-family:'Montserrat',sans-serif;}
+.abs{position:absolute;}
+.kicker{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:22px;letter-spacing:.22em;color:#E2B04A;text-transform:uppercase;}
+.serif{font-family:'EB Garamond',serif;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+.h1{font-family:'EB Garamond',serif;font-weight:400;font-size:88px;line-height:1.02;letter-spacing:-.01em;color:#FFFFF4;}
+.h2{font-family:'EB Garamond',serif;font-weight:400;font-size:60px;line-height:1.05;color:#FFFFF4;}
+.gold{color:#E2B04A;} .mint{color:#93DBB3;} .brick{color:#E06A4E;}
+.scenelabel{position:absolute;left:60px;top:34px;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.18em;color:#93DBB3;}
+.card{position:absolute;background:#173b29;border:2px solid rgba(255,255,244,.16);border-radius:14px;padding:30px 34px;box-shadow:0 24px 60px rgba(0,0,0,.35);}
+.card .ct{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.2em;color:#E2B04A;margin-bottom:18px;}
+.card .ch{font-family:'EB Garamond',serif;font-size:40px;line-height:1.1;margin-bottom:14px;}
+.li{display:flex;align-items:center;gap:16px;font-size:28px;font-weight:700;line-height:1.25;margin:14px 0;color:#FFFFF4;}
+.li .tk{flex:0 0 34px;height:34px;border-radius:50%;border:2px solid #93DBB3;color:#93DBB3;font-size:20px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;}
+.chip{display:inline-flex;align-items:center;gap:10px;padding:10px 18px;border-radius:999px;background:#173b29;border:2px solid rgba(255,255,244,.22);font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.06em;color:#FFFFF4;}
+.chip.on{border-color:#E2B04A;color:#E2B04A;}
+.stamp{position:absolute;font-family:'IBM Plex Mono',monospace;font-weight:700;letter-spacing:.14em;border:5px solid #E06A4E;color:#E06A4E;padding:14px 26px;border-radius:10px;background:rgba(20,50,33,.9);}
+/* browser frame */
+.bf{position:absolute;left:210px;top:96px;width:1500px;height:773px;border-radius:18px;overflow:hidden;background:#0f2619;border:2px solid rgba(255,255,244,.18);box-shadow:0 30px 80px rgba(0,0,0,.45);}
+.bf-bar{position:absolute;left:0;top:0;width:1500px;height:34px;background:#0f2619;display:flex;align-items:center;gap:8px;padding:0 16px;}
+.bf-bar i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,244,.25);display:block;}
+.bf-url{margin-left:14px;font-family:'IBM Plex Mono',monospace;font-size:16px;color:rgba(255,255,244,.7);}
+.bf-priv{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:14px;letter-spacing:.12em;color:#93DBB3;}
+.bf-view{position:absolute;left:0;top:34px;width:1500px;height:739px;overflow:hidden;background:#fffff4;}
+.zo{position:absolute;left:0;top:0;width:1500px;height:739px;transform-origin:50% 50%;}
+.zi{position:absolute;left:0;top:0;width:1500px;height:739px;}
+.shot{position:absolute;left:0;top:0;width:1500px;height:739px;display:block;opacity:0;}
+.scrim{position:absolute;left:0;top:34px;width:1500px;height:739px;background:#143221;opacity:0;}
+.scrimR{position:absolute;left:0;top:34px;width:1500px;height:739px;opacity:0;background:linear-gradient(to left,rgba(20,50,33,.94) 0%,rgba(20,50,33,.86) 40%,rgba(20,50,33,0) 66%);}
+</style>
+<div id="s01-root" data-composition-id="s01" data-width="1920" data-height="1080" data-duration="24.39">
+
+<style>
+#s01-grid{left:1060px;top:250px;width:780px;height:420px;}
+#s01-grid .cell{position:absolute;width:130px;height:70px;border:1px solid rgba(255,255,244,.22);}
+.hw{position:absolute;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:24px;color:#FFFFF4;background:#1d4632;padding:6px 12px;border-radius:6px;}
+.stat{position:absolute;top:0;width:410px;}
+.stat .n{font-family:'EB Garamond',serif;font-size:110px;line-height:1;color:#FFFFF4;}
+.stat .l{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:22px;letter-spacing:.14em;color:#93DBB3;margin-top:10px;text-transform:uppercase;}
+#s01-stats{left:140px;top:740px;width:1640px;height:170px;border-top:2px solid rgba(255,255,244,.25);padding-top:24px;}
+.vr{position:absolute;top:24px;width:2px;height:140px;background:rgba(255,255,244,.18);}
+</style>
+<div class="abs kicker" id="s01-kick" style="left:140px;top:150px">Automation &amp; dashboard work · Sawera Khadium</div>
+<div class="abs h1" id="s01-before" style="left:140px;top:250px;width:860px">Kept alive by hand, in spreadsheets.</div>
+<div class="abs h1" id="s01-head" style="left:140px;top:250px;width:860px">Spreadsheets that <span class="gold">run themselves.</span></div>
+<div class="abs" id="s01-verbs" style="left:140px;top:500px;width:900px;display:flex;gap:14px;flex-wrap:wrap">
+  <span class="chip" id="s01-v1">↻ update themselves</span><span class="chip" id="s01-v2">✓ check their own work</span><span class="chip" id="s01-v3">▦ report on live dashboards</span>
+</div>
+<div class="abs" id="s01-grid"><div class="cell" id="s01-c00" style="left:0px;top:0px"></div><div class="cell" id="s01-c01" style="left:130px;top:0px"></div><div class="cell" id="s01-c02" style="left:260px;top:0px"></div><div class="cell" id="s01-c03" style="left:390px;top:0px"></div><div class="cell" id="s01-c04" style="left:520px;top:0px"></div><div class="cell" id="s01-c05" style="left:650px;top:0px"></div><div class="cell" id="s01-c10" style="left:0px;top:70px"></div><div class="cell" id="s01-c11" style="left:130px;top:70px"></div><div class="cell" id="s01-c12" style="left:260px;top:70px"></div><div class="cell" id="s01-c13" style="left:390px;top:70px"></div><div class="cell" id="s01-c14" style="left:520px;top:70px"></div><div class="cell" id="s01-c15" style="left:650px;top:70px"></div><div class="cell" id="s01-c20" style="left:0px;top:140px"></div><div class="cell" id="s01-c21" style="left:130px;top:140px"></div><div class="cell" id="s01-c22" style="left:260px;top:140px"></div><div class="cell" id="s01-c23" style="left:390px;top:140px"></div><div class="cell" id="s01-c24" style="left:520px;top:140px"></div><div class="cell" id="s01-c25" style="left:650px;top:140px"></div><div class="cell" id="s01-c30" style="left:0px;top:210px"></div><div class="cell" id="s01-c31" style="left:130px;top:210px"></div><div class="cell" id="s01-c32" style="left:260px;top:210px"></div><div class="cell" id="s01-c33" style="left:390px;top:210px"></div><div class="cell" id="s01-c34" style="left:520px;top:210px"></div><div class="cell" id="s01-c35" style="left:650px;top:210px"></div><div class="cell" id="s01-c40" style="left:0px;top:280px"></div><div class="cell" id="s01-c41" style="left:130px;top:280px"></div><div class="cell" id="s01-c42" style="left:260px;top:280px"></div><div class="cell" id="s01-c43" style="left:390px;top:280px"></div><div class="cell" id="s01-c44" style="left:520px;top:280px"></div><div class="cell" id="s01-c45" style="left:650px;top:280px"></div><div class="cell" id="s01-c50" style="left:0px;top:350px"></div><div class="cell" id="s01-c51" style="left:130px;top:350px"></div><div class="cell" id="s01-c52" style="left:260px;top:350px"></div><div class="cell" id="s01-c53" style="left:390px;top:350px"></div><div class="cell" id="s01-c54" style="left:520px;top:350px"></div><div class="cell" id="s01-c55" style="left:650px;top:350px"></div>
+  <div class="hw" id="s01-w1" style="left:14px;top:18px">rent</div>
+  <div class="hw" id="s01-w2" style="left:274px;top:88px">farm operations</div>
+  <div class="hw" id="s01-w3" style="left:144px;top:228px">a spa</div>
+  <div class="hw" id="s01-w4" style="left:404px;top:298px">dozens of bills</div>
+  <div class="abs" id="s01-sweep" style="left:0;top:0;width:780px;height:420px;background:#93DBB3;opacity:0"></div>
+</div>
+<div class="abs" id="s01-stats" style="opacity:0">
+  <div class="stat" id="s01-st1" style="left:0"><div class="n">5</div><div class="l">businesses</div></div>
+  <div class="vr" style="left:390px"></div>
+  <div class="stat" id="s01-st2" style="left:420px"><div class="n">8</div><div class="l">scheduled tasks</div></div>
+  <div class="vr" style="left:810px"></div>
+  <div class="stat" id="s01-st3" style="left:840px"><div class="n">40+</div><div class="l">apps connected</div></div>
+  <div class="vr" style="left:1230px"></div>
+  <div class="stat" id="s01-st4" style="left:1260px"><div class="n gold"><span id="s01-cnt">$0K</span></div><div class="l">saved per year</div></div>
+</div>
+</div>
+<script>
+(function(){
+const SID = "s01";
+const tl = gsap.timeline({ paused: true });
+const $ = (s) => "#" + SID + "-" + s;
+const VW = 1500, VH = 739, SC = VW / 1920;
+function cam(t, cx, cy, S, dur, ease) {
+  const fx = cx * SC, fy = cy * SC;
+  let ox = fx - VW / 2, oy = fy - VH / 2;
+  const mx = VW / 2 - VW / (2 * S), my = VH / 2 - VH / (2 * S);
+  ox = Math.max(-mx, Math.min(mx, ox)); oy = Math.max(-my, Math.min(my, oy));
+  tl.to($("zo"), { scale: S, duration: dur, ease: ease || "sine.inOut" }, t);
+  tl.to($("zi"), { x: -ox, y: -oy, duration: dur, ease: ease || "sine.inOut" }, t);
+}
+function show(t, id, d) { tl.fromTo($(id), { opacity: 0 }, { opacity: 1, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function inUp(t, id, d, dy) { tl.fromTo($(id), { opacity: 0, y: dy == null ? 26 : dy }, { opacity: 1, y: 0, duration: d || 0.5, ease: "power3.out" }, t); }
+function inLeft(t, id, d) { tl.fromTo($(id), { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: d || 0.45, ease: "power3.out" }, t); }
+function pop(t, id, d) { tl.fromTo($(id), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: d || 0.45, ease: "back.out(2)" }, t); }
+function slam(t, id, rot) { tl.fromTo($(id), { opacity: 0, scale: 1.8, rotation: rot || -6 }, { opacity: 1, scale: 1, rotation: rot || -6, duration: 0.35, ease: "power4.in" }, t); }
+function out(t, id, d) { tl.to($(id), { opacity: 0, duration: d || 0.35, ease: "power1.in" }, t); }
+function scrim(t, id, a, d) { tl.to($(id), { opacity: a, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function count(t, id, from, to, d, fmt) { const o = { v: from }; const el = document.getElementById(SID + "-" + id);
+  tl.to(o, { v: to, duration: d, ease: "power2.out", onUpdate: () => { el.textContent = fmt(o.v); } }, t); }
+
+inUp(0.3, "kick", 0.6, 14);
+tl.fromTo($("grid"), {opacity:0}, {opacity:1, duration:1.0, ease:"power1.out"}, 0.6);
+tl.set($("head"), {opacity:0}, 0); tl.set($("verbs"), {opacity:1}, 0);
+["v1","v2","v3"].forEach(v => tl.set($(v), {opacity:0}, 0));
+pop(4.38, "w1"); pop(5.34, "w2"); pop(6.5, "w3"); pop(7.08, "w4");
+inUp(8.54, "before", 0.6);
+// the turn: grid sweeps mint, headline swaps
+tl.to($("sweep"), {opacity:0.35, duration:0.3, ease:"power2.out"}, 10.92);
+tl.to($("sweep"), {opacity:0, duration:0.8, ease:"power2.in"}, 10.92 + 0.3);
+["w1","w2","w3","w4"].forEach((w,i) => tl.to($(w), {backgroundColor:"#E2B04A", color:"#143221", duration:0.3}, 10.92 + 0.1*i));
+tl.to($("before"), {opacity:0, y:-20, duration:0.35, ease:"power2.in"}, 10.92);
+inUp(10.92 + 0.3, "head", 0.6);
+pop(12.68, "v1"); pop(14.34, "v2"); pop(15.92, "v3");
+show(18.34 - 0.2, "stats", 0.3); inUp(18.34, "st1", 0.5); inUp(18.34 + 0.25, "st2", 0.5); inUp(18.34 + 0.5, "st3", 0.5); inUp(19.5, "st4", 0.5);
+count(19.89 - 0.2, "cnt", 0, 33, 1.4, v => "$" + Math.round(v) + "K");
+tl.fromTo($("grid"), {y:0}, {y:-14, duration:23.79, ease:"none"}, 0);
+
+window.__timelines["s01"] = tl;
+})();
+</script>
+</template>
+</body></html>

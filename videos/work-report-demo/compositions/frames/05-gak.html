@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /></head>
+<body>
+<template>
+<style>
+#s05-root{position:absolute;inset:0;overflow:hidden;color:#FFFFF4;font-family:'Montserrat',sans-serif;}
+.abs{position:absolute;}
+.kicker{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:22px;letter-spacing:.22em;color:#E2B04A;text-transform:uppercase;}
+.serif{font-family:'EB Garamond',serif;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+.h1{font-family:'EB Garamond',serif;font-weight:400;font-size:88px;line-height:1.02;letter-spacing:-.01em;color:#FFFFF4;}
+.h2{font-family:'EB Garamond',serif;font-weight:400;font-size:60px;line-height:1.05;color:#FFFFF4;}
+.gold{color:#E2B04A;} .mint{color:#93DBB3;} .brick{color:#E06A4E;}
+.scenelabel{position:absolute;left:60px;top:34px;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.18em;color:#93DBB3;}
+.card{position:absolute;background:#173b29;border:2px solid rgba(255,255,244,.16);border-radius:14px;padding:30px 34px;box-shadow:0 24px 60px rgba(0,0,0,.35);}
+.card .ct{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.2em;color:#E2B04A;margin-bottom:18px;}
+.card .ch{font-family:'EB Garamond',serif;font-size:40px;line-height:1.1;margin-bottom:14px;}
+.li{display:flex;align-items:center;gap:16px;font-size:28px;font-weight:700;line-height:1.25;margin:14px 0;color:#FFFFF4;}
+.li .tk{flex:0 0 34px;height:34px;border-radius:50%;border:2px solid #93DBB3;color:#93DBB3;font-size:20px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;}
+.chip{display:inline-flex;align-items:center;gap:10px;padding:10px 18px;border-radius:999px;background:#173b29;border:2px solid rgba(255,255,244,.22);font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.06em;color:#FFFFF4;}
+.chip.on{border-color:#E2B04A;color:#E2B04A;}
+.stamp{position:absolute;font-family:'IBM Plex Mono',monospace;font-weight:700;letter-spacing:.14em;border:5px solid #E06A4E;color:#E06A4E;padding:14px 26px;border-radius:10px;background:rgba(20,50,33,.9);}
+/* browser frame */
+.bf{position:absolute;left:210px;top:96px;width:1500px;height:773px;border-radius:18px;overflow:hidden;background:#0f2619;border:2px solid rgba(255,255,244,.18);box-shadow:0 30px 80px rgba(0,0,0,.45);}
+.bf-bar{position:absolute;left:0;top:0;width:1500px;height:34px;background:#0f2619;display:flex;align-items:center;gap:8px;padding:0 16px;}
+.bf-bar i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,244,.25);display:block;}
+.bf-url{margin-left:14px;font-family:'IBM Plex Mono',monospace;font-size:16px;color:rgba(255,255,244,.7);}
+.bf-priv{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:14px;letter-spacing:.12em;color:#93DBB3;}
+.bf-view{position:absolute;left:0;top:34px;width:1500px;height:739px;overflow:hidden;background:#fffff4;}
+.zo{position:absolute;left:0;top:0;width:1500px;height:739px;transform-origin:50% 50%;}
+.zi{position:absolute;left:0;top:0;width:1500px;height:739px;}
+.shot{position:absolute;left:0;top:0;width:1500px;height:739px;display:block;opacity:0;}
+.scrim{position:absolute;left:0;top:34px;width:1500px;height:739px;background:#143221;opacity:0;}
+.scrimR{position:absolute;left:0;top:34px;width:1500px;height:739px;opacity:0;background:linear-gradient(to left,rgba(20,50,33,.94) 0%,rgba(20,50,33,.86) 40%,rgba(20,50,33,0) 66%);}
+</style>
+<div id="s05-root" data-composition-id="s05" data-width="1920" data-height="1080" data-duration="36.910000000000004">
+
+<div class="scenelabel" id="s05-lab" data-layout-allow-overlap>02 · GAK PROPERTIES</div>
+<div class="bf" id="s05-bf">
+  <div class="bf-bar"><i></i><i></i><i></i><span class="bf-url" data-layout-allow-overlap>GAK Properties — rent, arrears &amp; utility tracker</span><span class="bf-priv">CLIENT DATA BLURRED FOR PRIVACY</span></div>
+  <div class="bf-view"><div class="zo" id="s05-zo" data-layout-allow-overflow><div class="zi" id="s05-zi">
+<img class="shot" id="s05-i1" src="assets/footage/gak_over.png" alt="" />
+<img class="shot" id="s05-i2" src="assets/footage/gak_sheet.png" alt="" />
+<img class="shot" id="s05-i3" src="assets/footage/gak_over_b.png" alt="" />
+  </div></div></div>
+  <div class="scrimR" id="s05-scrimR"></div>
+  <div class="scrim" id="s05-scrim"></div>
+</div>
+<div class="abs" id="s05-tag" style="left:250px;top:780px;display:flex;gap:14px"><span class="chip on" id="s05-t1">every Friday</span><span class="chip" id="s05-t2">reply-driven updates</span></div>
+<div class="card" data-layout-allow-overlap id="s05-src" style="left:1130px;top:170px;width:540px">
+  <div class="ct">WHAT THE VERIFIER READS</div>
+  <div class="li" id="s05-r1"><span class="tk">15</span><span>All 15 workbook tabs</span></div><div class="li" id="s05-r2"><span class="tk">→</span><span>Tenant notices</span></div><div class="li" id="s05-r3"><span class="tk">→</span><span>Utility bills</span></div><div class="li" id="s05-r4"><span class="tk">→</span><span>QuickBooks statements</span></div><div class="li" id="s05-r5"><span class="tk">→</span><span>Bank alerts</span></div><div class="li" id="s05-r6"><span class="tk">@</span><span>From a dedicated inbox</span></div>
+</div>
+<div class="card" data-layout-allow-overlap id="s05-mail" style="left:380px;top:150px;width:1160px">
+  <div class="mono" style="font-size:20px;color:rgba(255,255,244,.65);letter-spacing:.06em">FROM&nbsp; GAK Verifier &nbsp;·&nbsp; SUBJECT&nbsp; This week’s findings — numbered, reply to each</div>
+  <div style="height:2px;background:rgba(255,255,244,.15);margin:18px 0 8px"></div>
+  <div class="li" id="s05-f1"><span class="tk">1</span><span class="gold mono" style="width:190px">PROPOSAL</span><span>Found, looks correct — can be added</span></div>
+  <div class="li" id="s05-f2"><span class="tk">2</span><span class="brick mono" style="width:190px">CONFLICT</span><span>The sheet and the source disagree</span></div>
+  <div class="li" id="s05-f3"><span class="tk">3</span><span class="mint mono" style="width:190px">NOTICE</span><span>Important — needs your attention</span></div>
+  <div class="mono" id="s05-rl" style="font-size:20px;letter-spacing:.2em;color:#E2B04A;margin:26px 0 12px">YOUR REPLY DRIVES THE UPDATER</div>
+  <div style="display:flex;gap:16px">
+    <span class="chip on" id="s05-y1">YES → adds the figure</span><span class="chip on" id="s05-y2">CORRECT → writes the fixed value</span><span class="chip on" id="s05-y3">OK → acknowledges</span></div>
+</div>
+<div class="abs" id="s05-g" style="left:300px;top:300px;width:1320px;display:flex;flex-wrap:wrap;gap:22px;justify-content:center">
+  <span class="chip" id="s05-g1" style="font-size:28px;padding:18px 28px">✓ deduplicated</span><span class="chip" id="s05-g2" style="font-size:28px;padding:18px 28px">✓ cross-checked</span>
+  <span class="chip" id="s05-g3" style="font-size:28px;padding:18px 28px">✓ logged with evidence · verification_log</span>
+  <span class="chip on" id="s05-g4" style="font-size:34px;padding:22px 34px">🔒 locked to GAK — never touches GIF</span></div>
+</div>
+<script>
+(function(){
+const SID = "s05";
+const tl = gsap.timeline({ paused: true });
+const $ = (s) => "#" + SID + "-" + s;
+const VW = 1500, VH = 739, SC = VW / 1920;
+function cam(t, cx, cy, S, dur, ease) {
+  const fx = cx * SC, fy = cy * SC;
+  let ox = fx - VW / 2, oy = fy - VH / 2;
+  const mx = VW / 2 - VW / (2 * S), my = VH / 2 - VH / (2 * S);
+  ox = Math.max(-mx, Math.min(mx, ox)); oy = Math.max(-my, Math.min(my, oy));
+  tl.to($("zo"), { scale: S, duration: dur, ease: ease || "sine.inOut" }, t);
+  tl.to($("zi"), { x: -ox, y: -oy, duration: dur, ease: ease || "sine.inOut" }, t);
+}
+function show(t, id, d) { tl.fromTo($(id), { opacity: 0 }, { opacity: 1, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function inUp(t, id, d, dy) { tl.fromTo($(id), { opacity: 0, y: dy == null ? 26 : dy }, { opacity: 1, y: 0, duration: d || 0.5, ease: "power3.out" }, t); }
+function inLeft(t, id, d) { tl.fromTo($(id), { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: d || 0.45, ease: "power3.out" }, t); }
+function pop(t, id, d) { tl.fromTo($(id), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: d || 0.45, ease: "back.out(2)" }, t); }
+function slam(t, id, rot) { tl.fromTo($(id), { opacity: 0, scale: 1.8, rotation: rot || -6 }, { opacity: 1, scale: 1, rotation: rot || -6, duration: 0.35, ease: "power4.in" }, t); }
+function out(t, id, d) { tl.to($(id), { opacity: 0, duration: d || 0.35, ease: "power1.in" }, t); }
+function scrim(t, id, a, d) { tl.to($(id), { opacity: a, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function count(t, id, from, to, d, fmt) { const o = { v: from }; const el = document.getElementById(SID + "-" + id);
+  tl.to(o, { v: to, duration: d, ease: "power2.out", onUpdate: () => { el.textContent = fmt(o.v); } }, t); }
+tl.fromTo($("bf"), {opacity:0, y:30}, {opacity:1, y:0, duration:0.6, ease:"power3.out"}, 0.1); inLeft(0.2,"lab");
+show(0,"i1",0.01); cam(0,960,473,1,0.01); cam(0.5,610,330,1.35,2.6,"power2.inOut");
+pop(1.12,"t1"); pop(2.3,"t2");
+["src","mail","g","r1","r2","r3","r4","r5","r6","f1","f2","f3","rl","y1","y2","y3","g1","g2","g3","g4"].forEach(k=>tl.set($(k),{opacity:0},0));
+// sources
+out(3.3,"tag",0.3); show(3.3,"i2",0.5); cam(3.3,960,473,1,0.5,"power2.inOut");
+cam(5.5-0.4,960,927,1.8,1.0,"power3.inOut"); cam(7.94,420,560,1.15,1.4,"power2.inOut");
+scrim(5.5,"scrimR",1); inUp(5.5,"src",0.5);
+inLeft(5.5+0.1,"r1"); inLeft(7.94,"r2"); inLeft(9.04,"r3"); inLeft(10.18,"r4"); inLeft(11.5,"r5"); inLeft(12.6,"r6");
+// findings email
+out(14.08-0.1,"src",0.3); show(14.08,"i3",0.5); cam(14.08,960,473,1,0.6); scrim(14.08,"scrimR",0,0.4); scrim(14.08,"scrim",0.78,0.5);
+inUp(14.08+0.1,"mail",0.55);
+inLeft(16.62,"f1"); inLeft(17.48,"f2"); inLeft(8.22,"f3");
+inUp(19.48,"rl",0.4,10); pop(21.76,"y1"); pop(23.32,"y2"); pop(25.62,"y3");
+// guarantees
+out(27.720000000000002,"mail",0.3); show(27.720000000000002,"g",0.3);
+pop(28.66,"g1"); pop(29.86,"g2"); pop(30.74,"g3"); pop(32.18,"g4",0.55);
+
+window.__timelines["s05"] = tl;
+})();
+</script>
+</template>
+</body></html>

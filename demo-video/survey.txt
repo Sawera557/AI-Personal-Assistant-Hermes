@@ -1,0 +1,385 @@
+== /
+#hermes-biz-select-top .hx-tb-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#model-select |Claude · Haiku 4.5 (fast, low-cost)
+Clau
+.v2-ab-more |More options
+Context on · Apps on
+|Holo
+|Stock
+#hx-tb-palette .hx-tb-btn |Ctrl K
+#hx-tb-replay .hx-tb-btn |Replay intro
+#hx-tb-present .hx-tb-present |PRESENT
+.strip-tab |HOME
+.strip-tab |AGENT
+.strip-tab |SYSTEM
+.strip-tab |BILLING
+.strip-tab |MEETING
+.strip-tab |CONTEXT
+.strip-tab |TASKS
+.strip-tab |MULTI-AGENTS
+.strip-tab |FILES
+.strip-tab |JOBS
+.strip-tab |ARTIFACTS
+.strip-tab |USAGE
+.strip-tab |SETTINGS
+#strip-toggle .strip-toggle |Toggle sidebar
+#reset-btn .ghost |＋ New conversation
+#agent-mode-agent .voice-select |⚡ Hermes (default)
+.convo-open |name all the apps u're connected thru ma
+.convo-del |Delete conversation
+.convo-open |Which Minnesota competitor has the best 
+.convo-del |Delete conversation
+.convo-open |Will rain disrupt field work in the next
+.convo-del |Delete conversation
+.convo-open |name all subsheets in this sheet also up
+.convo-del |Delete conversation
+.convo-open |give me sharing link anyone with the lin
+.convo-del |Delete conversation
+.convo-open |Search Nour Hammam's documents: what ser
+.convo-del |Delete conversation
+.convo-open |hi
+.convo-del |Delete conversation
+.convo-open |Can you just pull up some of the informa
+.convo-del |Delete conversation
+.convo-open |Provide any available initial results fr
+.convo-del |Delete conversation
+.convo-open |Update me on the status of your email se
+.convo-del |Delete conversation
+.convo-open |Who owns Nour Hammam LLC?
+.convo-del |Delete conversation
+.convo-open |Search Nour Hammam's documents: what ser
+.convo-del |Delete conversation
+.convo-open |Who owns Nour Hammam LLC?
+.convo-del |Delete conversation
+.convo-open |Check my last 10 emails from Gandhi Kedi
+.convo-del |Delete conversation
+.convo-open |Which apps are connected to you right no
+.convo-del |Delete conversation
+.convo-open |Who owns Nour Hammam LLC?
+.convo-del |Delete conversation
+.convo-open |Provide a brief update on what has been 
+.convo-del |Delete conversation
+.convo-open |What is 12 times 8?
+.convo-del |Delete conversation
+== /system
+#hermes-biz-select-top .hx-tb-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#model-select |Claude · Haiku 4.5 (fast, low-cost)
+Clau
+.v2-ab-more |More options
+Context on · Apps on
+|Holo
+|Stock
+#hx-tb-palette .hx-tb-btn |Ctrl K
+#hx-tb-replay .hx-tb-btn |Replay intro
+#hx-tb-present .hx-tb-present |PRESENT
+.strip-tab |HOME
+.strip-tab |AGENT
+.strip-tab |SYSTEM
+.strip-tab |BILLING
+.strip-tab |MEETING
+.strip-tab |CONTEXT
+.strip-tab |TASKS
+.strip-tab |MULTI-AGENTS
+.strip-tab |FILES
+.strip-tab |JOBS
+.strip-tab |ARTIFACTS
+.strip-tab |USAGE
+.strip-tab |SETTINGS
+#strip-toggle .strip-toggle |Toggle sidebar
+.hx-v-btn |Download
+.hx-v-btn |Open in new tab
+.hx-v-btn |Close (Esc)
+== /agent
+#hermes-biz-select-top .hx-tb-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#model-select |Claude · Haiku 4.5 (fast, low-cost)
+Clau
+.v2-ab-more |More options
+Context on · Apps on
+|Holo
+|Stock
+#hx-tb-palette .hx-tb-btn |Ctrl K
+#hx-tb-replay .hx-tb-btn |Replay intro
+#hx-tb-present .hx-tb-present |PRESENT
+.strip-tab |HOME
+.strip-tab |AGENT
+.strip-tab |SYSTEM
+.strip-tab |BILLING
+.strip-tab |MEETING
+.strip-tab |CONTEXT
+.strip-tab |TASKS
+.strip-tab |MULTI-AGENTS
+.strip-tab |FILES
+.strip-tab |JOBS
+.strip-tab |ARTIFACTS
+.strip-tab |USAGE
+.strip-tab |SETTINGS
+#strip-toggle .strip-toggle |Toggle sidebar
+#reset-btn .ghost |＋ New conversation
+#agent-mode-agent .voice-select |⚡ Hermes (default)
+AFK - Farm Operations
+#connect-btn |Get OAuth link
+.v2-starter |What needs my attention today?
+.v2-starter |Which bills are due this week?
+.v2-starter |Summarize yesterday's emails
+.v2-starter |What meetings do I have tomorrow?
+#voice-btn .voice-btn |Talk to Jarvis
+#send-btn |Send
+.hx-v-btn |Download
+.hx-v-btn |Open in new tab
+.hx-v-btn |Close (Esc)
+== /billing
+#hermes-biz-select-top .hx-tb-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#model-select |Claude · Haiku 4.5 (fast, low-cost)
+Clau
+.v2-ab-more |More options
+Context on · Apps on
+|Holo
+|Stock
+#hx-tb-palette .hx-tb-btn |Ctrl K
+#hx-tb-replay .hx-tb-btn |Replay intro
+#hx-tb-present .hx-tb-present |PRESENT
+.strip-tab |HOME
+.strip-tab |AGENT
+.strip-tab |SYSTEM
+.strip-tab |BILLING
+.strip-tab |MEETING
+.strip-tab |CONTEXT
+.strip-tab |TASKS
+.strip-tab |MULTI-AGENTS
+.strip-tab |FILES
+.strip-tab |JOBS
+.strip-tab |ARTIFACTS
+.strip-tab |USAGE
+.strip-tab |SETTINGS
+#strip-toggle .strip-toggle |Toggle sidebar
+#hermes-biz-select-bills .voice-select |Active business
+.reg-tab |OVERVIEW
+.reg-tab |REGISTER
+.reg-tab |DOCUMENTS
+#reg-sheet-link .reg-sheet-link |Open in Google Sheets ↗
+.hx-v-btn |Download
+.hx-v-btn |Open in new tab
+.hx-v-btn |Close (Esc)
+== /meetings
+#hermes-biz-select-top .hx-tb-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#model-select |Claude · Haiku 4.5 (fast, low-cost)
+Clau
+.v2-ab-more |More options
+Context on · Apps on
+|Holo
+|Stock
+#hx-tb-palette .hx-tb-btn |Ctrl K
+#hx-tb-replay .hx-tb-btn |Replay intro
+#hx-tb-present .hx-tb-present |PRESENT
+.strip-tab |HOME
+.strip-tab |AGENT
+.strip-tab |SYSTEM
+.strip-tab |BILLING
+.strip-tab |MEETING
+.strip-tab |CONTEXT
+.strip-tab |TASKS
+.strip-tab |MULTI-AGENTS
+.strip-tab |FILES
+.strip-tab |JOBS
+.strip-tab |ARTIFACTS
+.strip-tab |USAGE
+.strip-tab |SETTINGS
+#strip-toggle .strip-toggle |Toggle sidebar
+#hermes-biz-select-meeting .voice-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#meeting-new-btn .ghost |＋ New meeting
+#v2-meeting-pick .v2-btn |Choose a business
+.hx-v-btn |Download
+.hx-v-btn |Open in new tab
+.hx-v-btn |Close (Esc)
+== /context
+#hermes-biz-select-top .hx-tb-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#model-select |Claude · Haiku 4.5 (fast, low-cost)
+Clau
+.v2-ab-more |More options
+Context on · Apps on
+|Holo
+|Stock
+#hx-tb-palette .hx-tb-btn |Ctrl K
+#hx-tb-replay .hx-tb-btn |Replay intro
+#hx-tb-present .hx-tb-present |PRESENT
+.strip-tab |HOME
+.strip-tab |AGENT
+.strip-tab |SYSTEM
+.strip-tab |BILLING
+.strip-tab |MEETING
+.strip-tab |CONTEXT
+.strip-tab |TASKS
+.strip-tab |MULTI-AGENTS
+.strip-tab |FILES
+.strip-tab |JOBS
+.strip-tab |ARTIFACTS
+.strip-tab |USAGE
+.strip-tab |SETTINGS
+#strip-toggle .strip-toggle |Toggle sidebar
+#hermes-biz-select-context .voice-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#context-upload-btn .ghost |Upload .md file
+#context-sensitivity |Sensitivity
+#context-save-btn |
+#context-subtab-files .context-subtab |FILES
+#context-subtab-memories .context-subtab |MEMORIES
+#context-subtab-skills .context-subtab |SKILLS
+.context-item-delete |×
+.context-item-delete |×
+.context-item-delete |×
+.context-item-delete |×
+.context-item-delete |×
+.context-item-delete |×
+.context-item-delete |×
+.context-item-delete |×
+.context-item-delete |×
+.context-item-delete |×
+.hx-v-btn |Download
+.hx-v-btn |Open in new tab
+.hx-v-btn |Close (Esc)
+== /tasks
+#hermes-biz-select-top .hx-tb-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#model-select |Claude · Haiku 4.5 (fast, low-cost)
+Clau
+.v2-ab-more |More options
+Context on · Apps on
+|Holo
+|Stock
+#hx-tb-palette .hx-tb-btn |Ctrl K
+#hx-tb-replay .hx-tb-btn |Replay intro
+#hx-tb-present .hx-tb-present |PRESENT
+.strip-tab |HOME
+.strip-tab |AGENT
+.strip-tab |SYSTEM
+.strip-tab |BILLING
+.strip-tab |MEETING
+.strip-tab |CONTEXT
+.strip-tab |TASKS
+.strip-tab |MULTI-AGENTS
+.strip-tab |FILES
+.strip-tab |JOBS
+.strip-tab |ARTIFACTS
+.strip-tab |USAGE
+.strip-tab |SETTINGS
+#strip-toggle .strip-toggle |Toggle sidebar
+#task-new-btn-main .tasks-new-btn |NEW TASK
+.hx-v-btn |Download
+.hx-v-btn |Open in new tab
+.hx-v-btn |Close (Esc)
+== /multi-agents
+#hermes-biz-select-top .hx-tb-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#model-select |Claude · Haiku 4.5 (fast, low-cost)
+Clau
+.v2-ab-more |More options
+Context on · Apps on
+|Holo
+|Stock
+#hx-tb-palette .hx-tb-btn |Ctrl K
+#hx-tb-replay .hx-tb-btn |Replay intro
+#hx-tb-present .hx-tb-present |PRESENT
+.strip-tab |HOME
+.strip-tab |AGENT
+.strip-tab |SYSTEM
+.strip-tab |BILLING
+.strip-tab |MEETING
+.strip-tab |CONTEXT
+.strip-tab |TASKS
+.strip-tab |MULTI-AGENTS
+.strip-tab |FILES
+.strip-tab |JOBS
+.strip-tab |ARTIFACTS
+.strip-tab |USAGE
+.strip-tab |SETTINGS
+#strip-toggle .strip-toggle |Toggle sidebar
+#ma-new-btn .tasks-new-btn |NEW AGENT
+.hx-v-btn |Download
+.hx-v-btn |Open in new tab
+.hx-v-btn |Close (Esc)
+== /usage
+#hermes-biz-select-top .hx-tb-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#model-select |Claude · Haiku 4.5 (fast, low-cost)
+Clau
+.v2-ab-more |More options
+Context on · Apps on
+|Holo
+|Stock
+#hx-tb-palette .hx-tb-btn |Ctrl K
+#hx-tb-replay .hx-tb-btn |Replay intro
+#hx-tb-present .hx-tb-present |PRESENT
+.strip-tab |HOME
+.strip-tab |AGENT
+.strip-tab |SYSTEM
+.strip-tab |BILLING
+.strip-tab |MEETING
+.strip-tab |CONTEXT
+.strip-tab |TASKS
+.strip-tab |MULTI-AGENTS
+.strip-tab |FILES
+.strip-tab |JOBS
+.strip-tab |ARTIFACTS
+.strip-tab |USAGE
+.strip-tab |SETTINGS
+#strip-toggle .strip-toggle |Toggle sidebar
+#pricing-refresh-main .tasks-new-btn |↻ REFRESH
+.usage-chip |ALL TIME
+.usage-chip |TODAY
+.usage-chip |YESTERDAY
+.usage-chip |LAST 7 DAYS
+.usage-chip |LAST 30 DAYS
+.usage-chip |LAST 6 MONTHS
+.usage-chip |CUSTOM…
+.hx-v-btn |Download
+.hx-v-btn |Open in new tab
+.hx-v-btn |Close (Esc)
+== /settings
+#hermes-biz-select-top .hx-tb-select |🏢 All Businesses
+🌱 Afro Farm Holding
+�
+#model-select |Claude · Haiku 4.5 (fast, low-cost)
+Clau
+.v2-ab-more |More options
+Context on · Apps on
+|Holo
+|Stock
+#hx-tb-palette .hx-tb-btn |Ctrl K
+#hx-tb-replay .hx-tb-btn |Replay intro
+#hx-tb-present .hx-tb-present |PRESENT
+.strip-tab |HOME
+.strip-tab |AGENT
+.strip-tab |SYSTEM
+.strip-tab |BILLING
+.strip-tab |MEETING
+.strip-tab |CONTEXT
+.strip-tab |TASKS
+.strip-tab |MULTI-AGENTS
+.strip-tab |FILES
+.strip-tab |JOBS
+.strip-tab |ARTIFACTS
+.strip-tab |USAGE
+.strip-tab |SETTINGS
+#strip-toggle .strip-toggle |Toggle sidebar
+.hx-v-btn |Download
+.hx-v-btn |Open in new tab
+.hx-v-btn |Close (Esc)
+ERRORS ['Failed to load resource: the server responded with a status of 404 (Not Found)']

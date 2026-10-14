@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes — Project Scope &amp; Capabilities</title>
+<style>
+  :root {
+    --surface-0: #f7f6f3;
+    --surface-1: #f0efe9;
+    --surface-2: #ffffff;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --border: rgba(11,11,11,0.10);
+    --accent: #185fa5;
+    --accent-bg: #e6f1fb;
+    --accent-text: #0c447c;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--surface-0);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.65;
+  }
+  .layout { display: grid; grid-template-columns: 220px minmax(0,1fr); gap: 2.5rem; max-width: 1100px; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+  nav.toc { position: sticky; top: 2rem; align-self: start; font-size: 13px; }
+  nav.toc a { display: block; padding: 5px 0; color: var(--text-secondary); text-decoration: none; border-left: 2px solid transparent; padding-left: 10px; }
+  nav.toc a:hover { color: var(--text-primary); border-left-color: var(--accent); }
+  nav.toc p.label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0 0 8px; padding-left: 10px; }
+
+  header.hero { margin-bottom: 3rem; }
+  header.hero p.eyebrow { font-size: 13px; color: var(--accent-text); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 8px; font-weight: 500; }
+  header.hero h1 { font-size: 32px; font-weight: 500; margin: 0 0 12px; }
+  header.hero p.lede { font-size: 17px; color: var(--text-secondary); max-width: 640px; margin: 0; }
+
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 2rem 0; }
+  .stat { background: var(--surface-1); border-radius: 8px; padding: 1rem; }
+  .stat .value { font-size: 26px; font-weight: 500; margin: 0; }
+  .stat .label { font-size: 12px; color: var(--text-secondary); margin: 4px 0 0; }
+
+  section { margin: 3.5rem 0; scroll-margin-top: 1.5rem; }
+  section > p.kicker { font-size: 13px; color: var(--accent-text); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; margin: 0 0 6px; }
+  h2 { font-size: 20px; font-weight: 500; margin: 0 0 0.75rem; }
+  h3 { font-size: 15px; font-weight: 500; margin: 1.5rem 0 0.5rem; }
+  p { font-size: 15px; color: var(--text-secondary); margin: 0.5rem 0; }
+  p.section-intro { font-size: 15px; color: var(--text-secondary); max-width: 720px; }
+
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.25rem 0; }
+  .card { background: var(--surface-2); border: 0.5px solid var(--border); border-radius: 12px; padding: 1rem 1.1rem; }
+  .card h4 { font-size: 14px; font-weight: 500; margin: 0 0 4px; }
+  .card p { font-size: 13px; margin: 0; color: var(--text-secondary); }
+  .card .tag { display: inline-block; font-size: 11px; background: var(--accent-bg); color: var(--accent-text); padding: 2px 8px; border-radius: 20px; margin-bottom: 8px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 1rem 0; background: var(--surface-2); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 0.5px solid var(--border); vertical-align: top; }
+  th { color: var(--text-secondary); font-weight: 500; background: var(--surface-1); font-size: 13px; }
+  td { font-size: 13.5px; }
+  code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--surface-1); padding: 2px 5px; border-radius: 4px; font-size: 12.5px; }
+  main a { color: var(--accent-text); text-decoration: none; border-bottom: 0.5px solid rgba(24,95,165,0.35); }
+  main a:hover { border-bottom-color: var(--accent); }
+  td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .cost-note { font-size: 12.5px; color: var(--text-muted); margin-top: 0.35rem; }
+
+  .tab-block { border: 0.5px solid var(--border); border-radius: 12px; background: var(--surface-2); padding: 1.25rem 1.5rem; margin: 1rem 0; }
+  .tab-block .tab-num { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-bg); color: var(--accent-text); font-size: 12px; font-weight: 500; margin-right: 8px; }
+  .tab-block h3 { display: flex; align-items: center; margin-top: 0; font-size: 16px; }
+  .tab-block ul { margin: 0.5rem 0 0; padding-left: 1.1rem; }
+  .tab-block li { font-size: 14px; color: var(--text-secondary); margin-bottom: 4px; }
+
+  .flow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; color: var(--text-secondary); margin: 1rem 0; }
+  .flow .step { background: var(--surface-1); border-radius: 20px; padding: 6px 14px; }
+  .flow .arrow { color: var(--text-muted); }
+
+  .autonomy-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 10px; margin: 1rem 0; }
+  .autonomy { border-radius: 8px; padding: 0.85rem 1rem; }
+  .autonomy .name { font-size: 13px; font-weight: 500; margin: 0 0 3px; }
+  .autonomy .desc { font-size: 12.5px; margin: 0; }
+  .autonomy.readonly { background: #eaf3de; }
+  .autonomy.readonly .name { color: #27500a; }
+  .autonomy.readonly .desc { color: #3b6d11; }
+  .autonomy.draft { background: #faeeda; }
+  .autonomy.draft .name { color: #633806; }
+  .autonomy.draft .desc { color: #854f0b; }
+  .autonomy.full { background: #fcebeb; }
+  .autonomy.full .name { color: #791f1f; }
+  .autonomy.full .desc { color: #a32d2d; }
+
+  .callout { border-left: 3px solid var(--accent); background: var(--accent-bg); border-radius: 0 8px 8px 0; padding: 0.9rem 1.1rem; margin: 1.25rem 0; }
+  .callout p { color: var(--accent-text); margin: 0; font-size: 14px; }
+
+  .gap-list { list-style: none; margin: 0; padding: 0; }
+  .gap-list li { background: var(--surface-2); border: 0.5px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 8px; font-size: 13.5px; color: var(--text-secondary); }
+  .gap-list li b { color: var(--text-primary); font-weight: 500; }
+
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 0.5px solid var(--border); font-size: 13px; color: var(--text-muted); }
+
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc">
+  <p class="label">Contents</p>
+  <a href="#overview">Overview</a>
+  <a href="#businesses">Businesses served</a>
+  <a href="#connections">Connected systems</a>
+  <a href="#dashboard">Dashboard tabs</a>
+  <a href="#automation">Automation</a>
+  <a href="#safety">Safety model</a>
+  <a href="#architecture">Under the hood</a>
+  <a href="#apis">APIs &amp; cost</a>
+</nav>
+
+<main>
+
+<header class="hero">
+  <p class="eyebrow">Project scope</p>
+  <h1>Hermes — an AI executive assistant for a multi-business portfolio</h1>
+  <p class="lede">Hermes is a Claude-powered assistant that reads and acts across the connected accounts of six separate businesses — email, calendar, files, accounting, messaging, meetings, and notes — either when asked in chat, or automatically on a schedule.</p>
+</header>
+
+<div class="stat-row">
+  <div class="stat"><p class="value">6</p><p class="label">businesses served</p></div>
+  <div class="stat"><p class="value">16</p><p class="label">connected apps</p></div>
+  <div class="stat"><p class="value">7</p><p class="label">dashboard tabs</p></div>
+  <div class="stat"><p class="value">22</p><p class="label">feature capabilities</p></div>
+  <div class="stat"><p class="value">2</p><p class="label">automation systems</p></div>
+</div>
+
+<section id="overview">
+  <p class="kicker">Who it's for</p>
+  <h2>One assistant, six businesses, kept strictly separate</h2>
+  <p class="section-intro">Hermes was built for a founder running a real, varied portfolio — property, farming, commodities, a spa, and personal life — who needed one assistant instead of six disconnected inboxes and apps. Every conversation is locked to a single business (or explicitly widened to "All Businesses"), and each business connects to its own accounts through its own credentials, so information never leaks across entities.</p>
+</section>
+
+<section id="businesses">
+  <p class="kicker">Portfolio</p>
+  <h2>Businesses served</h2>
+  <p class="section-intro">Each business is its own walled garden: its own connected inbox, calendar, drive, and accounting — nothing crosses over unless the assistant is explicitly asked to work across "All Businesses."</p>
+  <div class="card-grid">
+    <div class="card"><span class="tag">afk</span><h4>XX Farm</h4><p>Farm operations — staff payroll, certification tracking, and market price monitoring.</p></div>
+    <div class="card"><span class="tag">gak</span><h4>XX Properties I</h4><p>Landlord operations — leases, rent collection, tenants — for one of the portfolio's properties.</p></div>
+    <div class="card"><span class="tag">gif</span><h4>XX Properties II</h4><p>Landlord operations across a separate group of properties.</p></div>
+    <div class="card"><span class="tag">gakc</span><h4>XX Commodities</h4><p>Trading and commodities business.</p></div>
+    <div class="card"><span class="tag">nh</span><h4>XX Spa</h4><p>A spa currently in pre-launch, with a buildout underway.</p></div>
+    <div class="card"><span class="tag">per</span><h4>Personal &amp; Family</h4><p>Personal inbox, a parent's care coordination, and prayer-time/halal-aware scheduling.</p></div>
+  </div>
+</section>
+
+<section id="connections">
+  <p class="kicker">Reach</p>
+  <h2>Every system it can act on</h2>
+  <p class="section-intro">Hermes doesn't just chat — it connects to each business's real accounts through a gateway called Maton, which securely holds OAuth access and lets Hermes call each app's actual API. A business without a connected account gets a clear "not connected" message rather than silently borrowing another business's data.</p>
+  <table>
+    <thead><tr><th>System</th><th>What Hermes can do with it</th></tr></thead>
+    <tbody>
+      <tr><td>Gmail</td><td>Read, search, and triage the inbox; summarize threads; rank by urgency; send mail; create drafts; attach a generated file to an email</td></tr>
+      <tr><td>Google Calendar</td><td>List upcoming events; create, update, delete events; check availability</td></tr>
+      <tr><td>Google Drive</td><td>Open a file as real readable content (PDFs, images) and search Drive</td></tr>
+      <tr><td>Google Sheets / Docs / Forms</td><td>Read and write spreadsheets and documents; read form responses</td></tr>
+      <tr><td>Google Contacts / Meet</td><td>Look up contacts; pull meeting info</td></tr>
+      <tr><td>QuickBooks</td><td>AR/AP aging, profit &amp; loss, balance sheet, invoices, estimates, customers, sales summaries, payroll data</td></tr>
+      <tr><td>Notion</td><td>Search the workspace; read, create, and update pages and database rows; post comments</td></tr>
+      <tr><td>Jira</td><td>Search and read issues; create issues; assign them to people by email</td></tr>
+      <tr><td>Zoom / Zoom Admin</td><td>Meetings, recordings, webinars, registrants; send an invite</td></tr>
+      <tr><td>WATI (WhatsApp Business)</td><td>Contacts, messaging, file sends, assign a conversation to an operator, fetch media</td></tr>
+      <tr><td>Fathom</td><td>Meeting notes and recordings</td></tr>
+      <tr><td>PDF.co</td><td>Parsing, OCR, and conversion of PDF documents</td></tr>
+      <tr><td>World Bank Open Data</td><td>Public macro/development indicators — e.g. regional agricultural commodity prices — for forecasting</td></tr>
+      <tr><td>Live web search</td><td>Current external information, when enabled</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="dashboard">
+  <p class="kicker">Interface</p>
+  <h2>Dashboard — seven tabs</h2>
+  <p class="section-intro">A single web dashboard is how the owner actually uses Hermes day to day. No separate app per business — one interface, scoped by whichever business is currently selected.</p>
+
+  <div class="tab-block">
+    <h3><span class="tab-num">1</span>AI Agent</h3>
+    <ul>
+      <li>Free-form chat with the assistant, scoped to one business or all of them</li>
+      <li>Voice mode — record a question, get a spoken reply back</li>
+      <li><b>Jarvis voice mode</b> — a real-time, phone-call-style voice assistant: no push-to-talk, you just talk and it talks back, and can be interrupted mid-sentence. Hard-locked to read-only in code, so it can summarize and answer but never send, create, edit, or delete anything. <i>In development on a separate feature branch, not yet part of the live app.</i></li>
+      <li>Upload a file once and reference it across an entire conversation</li>
+      <li><b>Reads floor plans and floormaps</b> — upload one and the assistant extracts its contents (rooms, layout, assignments) into a clean, structured table, using the same document-extraction engine as the bills pipeline</li>
+      <li><b>Its own email address</b> — the assistant can send task-completion updates and reports directly to the founder from a dedicated address, rather than only replying inside the chat window</li>
+      <li>Conversation history — reopen or delete any past chat</li>
+      <li>Sees exactly which tools/apps the assistant used to answer, per reply</li>
+      <li>Remembers durable facts about the business over time, automatically</li>
+    </ul>
+  </div>
+
+  <div class="tab-block">
+    <h3><span class="tab-num">2</span>Billing &amp; Invoices</h3>
+    <ul>
+      <li>Upload a bill or invoice — vendor, amount, due date, and category are extracted automatically</li>
+      <li>Edit any field by hand, or delete a bill entirely</li>
+      <li>Portfolio-wide billing insights view</li>
+      <li>Proactively scans a business's Gmail/Drive for new bills</li>
+      <li>Automatically detects payment-confirmation emails and marks matching bills paid</li>
+    </ul>
+  </div>
+
+  <div class="tab-block">
+    <h3><span class="tab-num">3</span>Meeting Copilot</h3>
+    <ul>
+      <li>Live guidance bullets during a meeting — flags risks, unasked questions, dependencies, next steps, and relevant data, grounded in real business context, never generic</li>
+      <li>Comprehensive mode pulls from five sources at once: strategy, team, known risks, decision history, and indexed records</li>
+      <li>Upcoming-meetings view annotated with prep status</li>
+      <li>Generates a pre-meeting brief before a scheduled call</li>
+      <li>Auto-generates a post-meeting summary and links the recording</li>
+    </ul>
+  </div>
+
+  <div class="tab-block">
+    <h3><span class="tab-num">4</span>Business Context</h3>
+    <ul>
+      <li>The knowledge base — upload documents that Hermes can search and reason over per business</li>
+      <li>A document can also be marked visible to every business at once</li>
+      <li>Sensitivity levels (public / internal / confidential / restricted) gate what shows up in search</li>
+      <li>Review and delete the memories Hermes has extracted from past conversations</li>
+    </ul>
+  </div>
+
+  <div class="tab-block">
+    <h3><span class="tab-num">5</span>Scheduled Tasks</h3>
+    <ul>
+      <li>Recurring, unattended runs of the same assistant — "every morning, brief me on the farm"</li>
+      <li>Create a task from the UI, or just ask Hermes in chat to set one up</li>
+      <li>Full run history per task — what it did, and what tools it used</li>
+      <li>See <a href="#automation">Automation</a> below for the full picture</li>
+    </ul>
+  </div>
+
+  <div class="tab-block">
+    <h3><span class="tab-num">6</span>File Explorer</h3>
+    <ul>
+      <li>Browse every file the system has touched — uploaded knowledge, generated reports, Drive reads, WhatsApp media — as one searchable tree</li>
+    </ul>
+  </div>
+
+  <div class="tab-block">
+    <h3><span class="tab-num">7</span>Jobs</h3>
+    <ul>
+      <li>Code-driven scheduled work, distinct from agent-driven Scheduled Tasks</li>
+      <li>Currently runs a Google reviews intelligence job — gathers and scores reviews of the spa business across regions, publishing a daily report</li>
+      <li>Each job can be started or stopped on demand, with full run history</li>
+    </ul>
+  </div>
+</section>
+
+<section id="automation">
+  <p class="kicker">Unattended work</p>
+  <h2>Automation — Hermes running itself</h2>
+  <p class="section-intro">Before this existed, everything Hermes did was "pull" — someone had to open the app and ask. A lot of the real work is recurring and predictable, so Hermes can now be told once and it keeps doing it.</p>
+  <div class="flow">
+    <span class="step">a chosen business</span><span class="arrow">+</span>
+    <span class="step">a set of apps</span><span class="arrow">+</span>
+    <span class="step">a prompt</span><span class="arrow">+</span>
+    <span class="step">a schedule</span><span class="arrow">→</span>
+    <span class="step">runs itself, unattended</span>
+  </div>
+  <p>Schedules can be daily, weekdays only, specific weekly days, or hourly. A task can also be created just by asking in chat — "every morning at 7, give me a farm briefing from AFK Gmail and Calendar" is enough; Hermes infers the rest and confirms anything ambiguous.</p>
+  <h3>Autonomy — the unattended safety ceiling</h3>
+  <p>Since nobody is present to approve an unattended action, each task is capped at one of three levels:</p>
+  <div class="autonomy-row">
+    <div class="autonomy readonly"><p class="name">Read-only (default)</p><p class="desc">Read, analyze, report, generate a file. Never sends or changes anything.</p></div>
+    <div class="autonomy draft"><p class="name">Draft</p><p class="desc">The above, plus creating email drafts — never sending them.</p></div>
+    <div class="autonomy full"><p class="name">Full</p><p class="desc">May actually send or modify data — an explicit standing authorization, set on purpose.</p></div>
+  </div>
+</section>
+
+<section id="safety">
+  <p class="kicker">Guardrails</p>
+  <h2>Safety model</h2>
+  <div class="callout">
+    <p>Before any write action — sending an email, changing a QuickBooks record, deleting something — Hermes summarizes exactly what it's about to do and waits for explicit confirmation in chat. Unattended scheduled runs use the autonomy ceiling above as the equivalent protection, since there's no one there to approve in the moment.</p>
+  </div>
+</section>
+
+<section id="architecture">
+  <p class="kicker">Under the hood</p>
+  <h2>What it's built on</h2>
+  <p class="section-intro">Not required reading to use Hermes, but useful context for anyone evaluating or extending it.</p>
+  <div class="card-grid">
+    <div class="card"><h4>Reasoning</h4><p>Anthropic Claude runs the whole tool-use loop; a faster, cheaper Claude model handles live meeting guidance separately.</p></div>
+    <div class="card"><h4>App access</h4><p>Maton acts as the OAuth gateway to every connected business app, keyed per business.</p></div>
+    <div class="card"><h4>Voice</h4><p>Speech-to-text (OpenAI Whisper) and text-to-speech via OpenAI, with OpenAI models also serving as the fallback. A Groq provider remains wired in the code but is not used.</p></div>
+    <div class="card"><h4>Document extraction</h4><p>NuExtract pulls structured data (vendor, amount, due date) out of bill and invoice PDFs/images.</p></div>
+    <div class="card"><h4>Database — AWS RDS</h4><p>Postgres, managed on AWS RDS, is the system of record: users, businesses, chat history, documents, memories, scheduled tasks, and bills.</p></div>
+    <div class="card"><h4>Semantic search — pgvector</h4><p>pgvector, living in the same Postgres instance, powers meaning-based search over the knowledge base and extracted memories for the main assistant.</p></div>
+    <div class="card"><h4>Semantic search — Pinecone</h4><p>A dedicated vector database used by the background ingestion pipeline that keeps Gmail/Drive/meeting data continuously synced and searchable.</p></div>
+    <div class="card"><h4>File storage — AWS S3</h4><p>Stores original file bytes — bills, generated reports, WhatsApp media, Drive reads — behind short-lived, secure links.</p></div>
+    <div class="card"><h4>Frontend — Next.js</h4><p>A separately built Next.js application is the dashboard users interact with; it calls the backend purely as a JSON API, so the agentic system underneath can be swapped, scaled, or deployed independently of the interface.</p></div>
+  </div>
+  <p class="section-intro" style="margin-top:1rem;"><i>Note: this repository itself ships a lightweight, no-build vanilla-JS dashboard (<code>templates/index.html</code> + <code>static/*.js</code>) served directly by the backend — that's what the earlier dashboard-tab walkthrough in this document describes. The backend is explicitly designed to be headless (see its own README: "there is no UI... deploy it on its own and point any frontend at it"), and the production Next.js frontend consuming it lives in a separate codebase not included in this bundle.</i></p>
+</section>
+</section>
+
+<section id="apis">
+  <p class="kicker">Costs &amp; dependencies</p>
+  <h2>APIs connected, credits, and running cost</h2>
+  <p class="section-intro">Every external service Hermes calls, taken directly from the code (<code>.env.example</code>, <code>hermes/config.py</code>, <code>hermes/agent.py</code>, <code>hermes/bills.py</code>, <code>requirements.txt</code>) — with what each one does, where to sign up, and how it bills. Below that, a credit and cost estimate sized for <b>10,000–30,000 assistant queries a month</b>. Unit prices were verified against each provider's public pricing in July 2026; the Claude figures come from the current model table. Everything is priced in USD.</p>
+
+  <h3>1. Paid APIs Hermes calls directly</h3>
+  <table>
+    <thead><tr><th>Service</th><th>What it does in Hermes</th><th>Sign-up / console</th><th>Billing model</th></tr></thead>
+    <tbody>
+      <tr><td><b>Anthropic&nbsp;Claude</b></td><td>The brain. <code>claude-sonnet-5</code> runs the whole chat + tool-use loop and the document-OCR fallback; <code>claude-haiku-4-5</code> runs the live meeting-copilot guidance</td><td><a href="https://platform.claude.com/settings/keys">platform.claude.com</a></td><td>Usage — per input/output token</td></tr>
+      <tr><td><b>OpenAI</b></td><td>Embeddings (<code>text-embedding-3-small</code>, 1536-dim) for pgvector search + memory; voice speech-to-text (Whisper, <code>whisper-1</code>) and text-to-speech (<code>gpt-4o-mini-tts</code>) — with other OpenAI models as the fallback</td><td><a href="https://platform.openai.com/api-keys">platform.openai.com</a></td><td>Usage — per token / per minute</td></tr>
+      <tr><td><b>Maton</b></td><td>OAuth gateway that holds each business's credentials and proxies every business-app call (Gmail, QuickBooks, Zoom, etc.). One key per business</td><td><a href="https://maton.ai/pricing">maton.ai</a></td><td>$200 / month (flat)</td></tr>
+      <tr><td><b>NuExtract</b> (NuMind)</td><td>Primary OCR for <b>PDFs &amp; images only</b> — bills/invoices (uploaded <i>or</i> auto-scanned from Gmail/Drive) and any PDF/image the agent reads back via <code>read_document</code> (uploaded docs, floormaps, Drive reads). Word/Excel/PowerPoint/text files are parsed locally, not through NuExtract</td><td><a href="https://about.nuextract.ai/pricing">nuextract.ai</a></td><td>Usage — per 1M tokens</td></tr>
+      <tr><td><b>PDF.co</b></td><td>PDF parsing / OCR / conversion, reached through Maton (used by the ingestion pipeline)</td><td><a href="https://pdf.co">pdf.co</a></td><td>Subscription / credit packs</td></tr>
+      <tr><td><b>SerpAPI</b></td><td>Review provider for the Jobs-tab Google-reviews scraper (spa business). One bucket/day on rotation</td><td><a href="https://serpapi.com/pricing">serpapi.com</a></td><td>Free 100/mo; then subscription</td></tr>
+      <tr><td><b>Pinecone</b></td><td>Dedicated vector DB for the background ingestion pipeline that keeps Gmail/Drive/meetings synced &amp; searchable</td><td><a href="https://www.pinecone.io/pricing/">pinecone.io</a></td><td>Starter free; Builder/Standard paid</td></tr>
+      <tr><td><b>AWS RDS</b> (Postgres + pgvector)</td><td>System of record — users, businesses, chats, documents, memories, tasks, bills, and the main assistant's vector search</td><td><a href="https://aws.amazon.com/rds/postgresql/">aws.amazon.com/rds</a></td><td>Usage — instance + storage/hr</td></tr>
+      <tr><td><b>AWS S3</b></td><td>Original file bytes — bills, generated reports, WhatsApp media, Drive reads — behind short-lived links</td><td><a href="https://aws.amazon.com/s3/">aws.amazon.com/s3</a></td><td>Usage — storage + requests</td></tr>
+      <tr><td><b>Twilio</b> (planned)</td><td><b>SMS</b> messaging channel — sends text messages to a phone, <b>send-only</b>. <i>Not yet wired in the code; on the roadmap.</i> Usage-based (per message + a phone number), budgeted at the minimalist ~$20/month plan</td><td><a href="https://www.twilio.com/pricing">twilio.com</a></td><td>~$20 / month</td></tr>
+      <tr><td><b>WATI</b></td><td><b>WhatsApp</b> messaging channel — sends/receives WhatsApp Business messages, media, and operator hand-off for the spa/farm numbers, reached through Maton. Carries its own WATI subscription (separate from the Maton gateway), with Meta's per-message fees on top</td><td><a href="https://www.wati.io/pricing/">wati.io</a></td><td>~$59 / month (Growth) + Meta msgs</td></tr>
+      <tr><td><b>Groq</b> (unused)</td><td>Still wired in the code as an alternative voice provider, but not in use — OpenAI handles both primary and fallback. Only billed if <code>VOICE_PROVIDER=groq</code></td><td><a href="https://console.groq.com">console.groq.com</a></td><td>Usage — per token</td></tr>
+      <tr><td><b>World Bank Open Data</b></td><td>Public macro/commodity indicators for the farming/commodities forecasting tool</td><td><a href="https://data.worldbank.org">api.worldbank.org</a></td><td>Free — no key</td></tr>
+    </tbody>
+  </table>
+
+  <h3>2. Business apps reached <i>through</i> Maton (no separate per-call fee to this system)</h3>
+  <p class="section-intro">Hermes talks to these via Maton using each business's own connected account. The subscriptions belong to the businesses, not to Hermes — the only cost Hermes adds on top is the Maton gateway above.</p>
+  <table>
+    <thead><tr><th>App</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr><td>QuickBooks</td><td>AR/AP aging, P&amp;L, balance sheet, invoices, estimates, customers, sales, payroll</td></tr>
+      <tr><td>Google Workspace</td><td>Gmail, Calendar, Drive, Sheets, Docs, Forms, Contacts, Meet</td></tr>
+      <tr><td>Zoom / Zoom Admin</td><td>Meetings, recordings, webinars, registrants, invites</td></tr>
+      <tr><td>WATI <span class="cost-note">(own subscription — see paid APIs above)</span></td><td>WhatsApp Business messaging, media, operator assignment</td></tr>
+      <tr><td>Fathom / Notion / Jira</td><td>Meeting notes; workspace pages &amp; databases; issue tracking</td></tr>
+    </tbody>
+  </table>
+
+  <h3>3. Unit pricing used for the estimate <span class="cost-note">(public list prices, verified July 2026)</span></h3>
+  <table>
+    <thead><tr><th>Model / resource</th><th>Price</th></tr></thead>
+    <tbody>
+      <tr><td>Claude Sonnet 5 (agent + OCR fallback)</td><td class="num">$3.00 / 1M in · $15.00 / 1M out<br><span class="cost-note">intro $2 / $10 through 2026-08-31</span></td></tr>
+      <tr><td>Claude Haiku 4.5 (meeting copilot)</td><td class="num">$1.00 / 1M in · $5.00 / 1M out</td></tr>
+      <tr><td>OpenAI text-embedding-3-small</td><td class="num">$0.02 / 1M tokens</td></tr>
+      <tr><td>OpenAI Whisper <code>whisper-1</code> (STT)</td><td class="num">~$0.006 / min</td></tr>
+      <tr><td>OpenAI gpt-4o-mini-tts (TTS)</td><td class="num">~$0.015 / min</td></tr>
+      <tr><td>SerpAPI</td><td class="num">$25 / 1k · $75 / 5k · $150 / 15k searches</td></tr>
+      <tr><td>Pinecone Standard</td><td class="num">$50/mo min · $0.33/GB · $4.50/M write · $18/M read</td></tr>
+      <tr><td>AWS RDS db.t3.micro (Postgres)</td><td class="num">~$13–22 / mo + storage</td></tr>
+      <tr><td>Twilio SMS (send-only, planned)</td><td class="num">~$20 / mo (budget) + per-message</td></tr>
+      <tr><td>WATI WhatsApp (Growth plan)</td><td class="num">~$59 / mo + Meta per-message</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <p><b>How the per-query cost is built.</b> Claude dominates the bill. Each assistant query runs an agentic loop (up to 12 tool iterations, <code>HERMES_MAX_TOKENS=8000</code>, <code>effort=low</code>). The system prompt + ~15 Maton tool schemas (~6k tokens) are re-sent on <i>every</i> iteration — <b>prompt caching is not currently enabled</b> in the code, so those tokens are billed at full price each pass. A typical tool-using query works out to ≈40k input + ≈2k output tokens ≈ <b>$0.12</b> on Sonnet 5 (light Q&amp;A ≈ $0.03; heavy multi-tool ≈ $0.30). Enabling Anthropic prompt caching is the single biggest lever — it could cut agent input cost 50–80%.</p>
+  </div>
+
+  <h3>4. Estimated monthly cost &amp; credits to load</h3>
+  <table>
+    <thead><tr><th>Line item</th><th>10k queries/mo</th><th>30k queries/mo</th></tr></thead>
+    <tbody>
+      <tr><td><b>Anthropic Claude</b> (agent + copilot + OCR)</td><td class="num">$1,000 – 1,800</td><td class="num">$3,000 – 5,000</td></tr>
+      <tr><td>OpenAI embeddings (pgvector + memory)</td><td class="num">$1 – 5</td><td class="num">$3 – 10</td></tr>
+      <tr><td>OpenAI voice — Whisper STT (listen) + TTS (speak), live 1:1</td><td class="num">$30 – 80</td><td class="num">$90 – 240</td></tr>
+      <tr><td>NuExtract + PDF.co (bills)</td><td class="num">$10 – 40</td><td class="num">$30 – 90</td></tr>
+      <tr><td>SerpAPI (reviews job)</td><td class="num">$0 – 25</td><td class="num">$0 – 25</td></tr>
+      <tr><td>Pinecone (ingestion)</td><td class="num">$0 – 50</td><td class="num">$20 – 80</td></tr>
+      <tr><td>AWS RDS + S3</td><td class="num">$40 – 120</td><td class="num">$80 – 250</td></tr>
+      <tr><td>Maton gateway</td><td class="num">$200 (flat)</td><td class="num">$200 (flat)</td></tr>
+      <tr><td>Twilio SMS (send-only, planned)</td><td class="num">$20 (flat)</td><td class="num">$20 (flat)</td></tr>
+      <tr><td>WATI WhatsApp (Growth plan + Meta msgs)</td><td class="num">$59 (flat)</td><td class="num">$59 (flat)</td></tr>
+      <tr><td><b>Total (all-in)</b></td><td class="num"><b>≈ $1,380 – 2,380</b></td><td class="num"><b>≈ $3,480 – 5,880</b></td></tr>
+    </tbody>
+  </table>
+  <p class="cost-note">Claude is ~85–90% of the spend, so the total tracks query volume and query complexity almost linearly. Ranges reflect the mix of light vs. tool-heavy queries and how much voice/bill/ingestion work runs alongside chat. Voice is the exception to "per query": the Jarvis mode is a live one-on-one session with Whisper listening and the TTS speaking continuously, so its cost is driven by <b>minutes of live conversation</b>, not text-query count — heavy voice use pushes that line well above the range shown. Maton is a flat $200/month gateway fee, independent of query volume; PDF.co is priced by plan, so confirm its tier directly. Twilio (SMS) and WATI (WhatsApp) are the two messaging channels — Twilio is planned/send-only, WATI carries its own subscription plus Meta's per-message fees, which are volume-based and shown on top of the plan. Figures exclude one-time build/setup and the businesses' own SaaS subscriptions (QuickBooks, Google Workspace, Zoom, etc.).</p>
+
+  <h3>Credits to pre-load, per provider</h3>
+  <div class="card-grid">
+    <div class="card"><span class="tag">largest</span><h4>Anthropic</h4><p>Load ~$1,500–2,000/mo for 10k queries, ~$4,500–5,500/mo for 30k. Enable prompt caching before scaling.</p></div>
+    <div class="card"><h4>OpenAI</h4><p>~$50–150/mo covers embeddings + voice at either volume. Prepaid credit balance.</p></div>
+    <div class="card"><h4>NuExtract</h4><p>~$30–100/mo of usage credit; scales with bill/floormap upload volume, not query count.</p></div>
+    <div class="card"><h4>SerpAPI</h4><p>Free tier (100/mo) fits the once-a-day job; upgrade to the $25/mo (1k) plan if buckets expand.</p></div>
+    <div class="card"><h4>Pinecone</h4><p>Starter (free, 2GB) may suffice; Builder $20 or Standard $50+/mo as the ingestion index grows.</p></div>
+    <div class="card"><h4>AWS</h4><p>Pay-as-you-go ~$50–250/mo for RDS + S3; size the RDS instance up from db.t3.micro for production load.</p></div>
+    <div class="card"><h4>Maton</h4><p>Flat $200/month gateway fee, independent of query volume.</p></div>
+    <div class="card"><h4>Twilio</h4><p>~$20/month for send-only SMS (planned — not yet in the code); per-message usage on top.</p></div>
+    <div class="card"><h4>WATI</h4><p>~$59/month Growth plan for WhatsApp, plus a prepaid wallet for Meta per-message fees. Confirm the tier.</p></div>
+  </div>
+</section>
+
+<footer>
+  Prepared from the project's own internal documentation (PROJECT_SCOPE.md, PROJECT_CONTEXT.md, SCHEDULED_TASKS.md) and a code audit of the API layer (<code>.env.example</code>, <code>hermes/config.py</code>, <code>hermes/agent.py</code>, <code>hermes/bills.py</code>, <code>requirements.txt</code>) as the code stands on 2026-07-21. Unit prices verified against each provider's public pricing in July 2026; treat the cost totals as planning estimates, not quotes.
+</footer>
+
+</main>
+</div>
+</body>
+</html>

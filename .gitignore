@@ -42,3 +42,17 @@ blank_bills_backup_*.json
 # Local backups and script output (may hold PII) — never commit
 backups/
 scripts/output/
+
+# Local demo recordings and generated data
+demo-video/takes/
+demo-video/chrome-profile/
+demo-video/*.mp4
+demo-video/*.mkv
+videos/work-report-demo/renders/
+graphify-out/
+
+# Generated work artifacts and demo screenshots
+videos/work-report-demo/.hyperframes/
+videos/work-report-demo/.work/
+demo-video/_rec_probe/
+demo-video/shots/

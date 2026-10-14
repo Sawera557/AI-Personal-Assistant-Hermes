@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /></head>
+<body>
+<template>
+<style>
+#s06-root{position:absolute;inset:0;overflow:hidden;color:#FFFFF4;font-family:'Montserrat',sans-serif;}
+.abs{position:absolute;}
+.kicker{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:22px;letter-spacing:.22em;color:#E2B04A;text-transform:uppercase;}
+.serif{font-family:'EB Garamond',serif;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+.h1{font-family:'EB Garamond',serif;font-weight:400;font-size:88px;line-height:1.02;letter-spacing:-.01em;color:#FFFFF4;}
+.h2{font-family:'EB Garamond',serif;font-weight:400;font-size:60px;line-height:1.05;color:#FFFFF4;}
+.gold{color:#E2B04A;} .mint{color:#93DBB3;} .brick{color:#E06A4E;}
+.scenelabel{position:absolute;left:60px;top:34px;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.18em;color:#93DBB3;}
+.card{position:absolute;background:#173b29;border:2px solid rgba(255,255,244,.16);border-radius:14px;padding:30px 34px;box-shadow:0 24px 60px rgba(0,0,0,.35);}
+.card .ct{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.2em;color:#E2B04A;margin-bottom:18px;}
+.card .ch{font-family:'EB Garamond',serif;font-size:40px;line-height:1.1;margin-bottom:14px;}
+.li{display:flex;align-items:center;gap:16px;font-size:28px;font-weight:700;line-height:1.25;margin:14px 0;color:#FFFFF4;}
+.li .tk{flex:0 0 34px;height:34px;border-radius:50%;border:2px solid #93DBB3;color:#93DBB3;font-size:20px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;}
+.chip{display:inline-flex;align-items:center;gap:10px;padding:10px 18px;border-radius:999px;background:#173b29;border:2px solid rgba(255,255,244,.22);font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:20px;letter-spacing:.06em;color:#FFFFF4;}
+.chip.on{border-color:#E2B04A;color:#E2B04A;}
+.stamp{position:absolute;font-family:'IBM Plex Mono',monospace;font-weight:700;letter-spacing:.14em;border:5px solid #E06A4E;color:#E06A4E;padding:14px 26px;border-radius:10px;background:rgba(20,50,33,.9);}
+/* browser frame */
+.bf{position:absolute;left:210px;top:96px;width:1500px;height:773px;border-radius:18px;overflow:hidden;background:#0f2619;border:2px solid rgba(255,255,244,.18);box-shadow:0 30px 80px rgba(0,0,0,.45);}
+.bf-bar{position:absolute;left:0;top:0;width:1500px;height:34px;background:#0f2619;display:flex;align-items:center;gap:8px;padding:0 16px;}
+.bf-bar i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,244,.25);display:block;}
+.bf-url{margin-left:14px;font-family:'IBM Plex Mono',monospace;font-size:16px;color:rgba(255,255,244,.7);}
+.bf-priv{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:14px;letter-spacing:.12em;color:#93DBB3;}
+.bf-view{position:absolute;left:0;top:34px;width:1500px;height:739px;overflow:hidden;background:#fffff4;}
+.zo{position:absolute;left:0;top:0;width:1500px;height:739px;transform-origin:50% 50%;}
+.zi{position:absolute;left:0;top:0;width:1500px;height:739px;}
+.shot{position:absolute;left:0;top:0;width:1500px;height:739px;display:block;opacity:0;}
+.scrim{position:absolute;left:0;top:34px;width:1500px;height:739px;background:#143221;opacity:0;}
+.scrimR{position:absolute;left:0;top:34px;width:1500px;height:739px;opacity:0;background:linear-gradient(to left,rgba(20,50,33,.94) 0%,rgba(20,50,33,.86) 40%,rgba(20,50,33,0) 66%);}
+</style>
+<div id="s06-root" data-composition-id="s06" data-width="1920" data-height="1080" data-duration="38.467">
+
+<div class="scenelabel" id="s06-lab" data-layout-allow-overlap>03 · NOUR HAMMAM</div>
+<div class="bf" id="s06-bf">
+  <div class="bf-bar"><i></i><i></i><i></i><span class="bf-url" data-layout-allow-overlap>Nour Hammam — owner command dashboard &amp; operations tracker</span><span class="bf-priv">CLIENT DATA BLURRED FOR PRIVACY</span></div>
+  <div class="bf-view"><div class="zo" id="s06-zo" data-layout-allow-overflow><div class="zi" id="s06-zi">
+<img class="shot" id="s06-i1" src="assets/footage/nh_queue.png" alt="" />
+<img class="shot" id="s06-i2" src="assets/footage/nhs_rules.png" alt="" />
+<img class="shot" id="s06-i3" src="assets/footage/nh_queue_b.png" alt="" />
+<img class="shot" id="s06-i4" src="assets/footage/nh_reg.png" alt="" />
+  </div></div></div>
+  <div class="scrimR" id="s06-scrimR"></div>
+  <div class="scrim" id="s06-scrim"></div>
+</div>
+<div class="abs" id="s06-tag" style="left:250px;top:780px;display:flex;gap:14px"><span class="chip on" id="s06-t1">daily registrar</span><span class="chip" id="s06-t2">operations workbook</span></div>
+<div class="abs" id="s06-tabs" style="left:250px;top:690px;display:flex;gap:12px"><span class="chip" id="s06-tb0">05 REGISTER</span><span class="chip" id="s06-tb1">06 PEOPLE</span><span class="chip" id="s06-tb2">02 DECISIONS</span><span class="chip" id="s06-tb3">03 GATES</span><span class="chip" id="s06-tb4">08 MONEY</span><span class="chip" id="s06-tb5">12 CHANGE LOG</span></div>
+<div class="card" data-layout-allow-overlap id="s06-log" style="left:1130px;top:180px;width:540px">
+  <div class="ct">12 CHANGE LOG · EVERY CHANGED CELL</div><div class="ch">Writes only what a source supports</div>
+  <div class="li" id="s06-l1"><span class="tk">was</span><span>Old value</span></div><div class="li" id="s06-l2"><span class="tk">now</span><span>New value</span></div><div class="li" id="s06-l3"><span class="tk">src</span><span>Evidence</span></div>
+</div>
+<div class="card" data-layout-allow-overlap id="s06-gs" style="left:1130px;top:200px;width:540px">
+  <div class="ct">MISSING · UNSUPPORTED · CONTRADICTORY</div><div class="ch">No guess. No write.</div>
+  <div class="mono" style="font-size:22px;color:rgba(255,255,244,.75)">The change is withheld and reported for a ruling.</div>
+</div>
+<div class="stamp" id="s06-nr" style="left:1180px;top:520px;font-size:44px">NEEDS RULING</div>
+<div class="card" data-layout-allow-overlap id="s06-rf" style="left:1130px;top:180px;width:540px">
+  <div class="ct">OWNER DASHBOARD</div>
+  <div class="chip on" id="s06-btn" style="font-size:28px;padding:16px 26px">⟳ REFRESH DATA</div>
+  <div class="li" id="s06-rf1"><span class="tk">6</span><span>Pulls all six tabs</span></div><div class="li" id="s06-rf2"><span class="tk">●</span><span>Connection goes LIVE</span></div><div class="li" id="s06-rf3"><span class="tk">#</span><span>Task IDs re-mapped to current rows</span></div><div class="li" id="s06-rf4"><span class="tk">✓</span><span>Edits land in the right place</span></div>
+</div>
+<div class="abs" id="s06-tri" style="left:360px;top:370px;width:1200px;display:flex;gap:30px;justify-content:center;align-items:center">
+  <span class="h2" id="s06-x1">Refresh</span><span class="h2 gold" id="s06-a1">→</span><span class="h2" id="s06-x2">Review</span><span class="h2 gold" id="s06-a2">→</span><span class="h2" id="s06-x3">Edit</span></div>
+</div>
+<script>
+(function(){
+const SID = "s06";
+const tl = gsap.timeline({ paused: true });
+const $ = (s) => "#" + SID + "-" + s;
+const VW = 1500, VH = 739, SC = VW / 1920;
+function cam(t, cx, cy, S, dur, ease) {
+  const fx = cx * SC, fy = cy * SC;
+  let ox = fx - VW / 2, oy = fy - VH / 2;
+  const mx = VW / 2 - VW / (2 * S), my = VH / 2 - VH / (2 * S);
+  ox = Math.max(-mx, Math.min(mx, ox)); oy = Math.max(-my, Math.min(my, oy));
+  tl.to($("zo"), { scale: S, duration: dur, ease: ease || "sine.inOut" }, t);
+  tl.to($("zi"), { x: -ox, y: -oy, duration: dur, ease: ease || "sine.inOut" }, t);
+}
+function show(t, id, d) { tl.fromTo($(id), { opacity: 0 }, { opacity: 1, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function inUp(t, id, d, dy) { tl.fromTo($(id), { opacity: 0, y: dy == null ? 26 : dy }, { opacity: 1, y: 0, duration: d || 0.5, ease: "power3.out" }, t); }
+function inLeft(t, id, d) { tl.fromTo($(id), { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: d || 0.45, ease: "power3.out" }, t); }
+function pop(t, id, d) { tl.fromTo($(id), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: d || 0.45, ease: "back.out(2)" }, t); }
+function slam(t, id, rot) { tl.fromTo($(id), { opacity: 0, scale: 1.8, rotation: rot || -6 }, { opacity: 1, scale: 1, rotation: rot || -6, duration: 0.35, ease: "power4.in" }, t); }
+function out(t, id, d) { tl.to($(id), { opacity: 0, duration: d || 0.35, ease: "power1.in" }, t); }
+function scrim(t, id, a, d) { tl.to($(id), { opacity: a, duration: d || 0.5, ease: "power1.inOut" }, t); }
+function count(t, id, from, to, d, fmt) { const o = { v: from }; const el = document.getElementById(SID + "-" + id);
+  tl.to(o, { v: to, duration: d, ease: "power2.out", onUpdate: () => { el.textContent = fmt(o.v); } }, t); }
+tl.fromTo($("bf"), {opacity:0, y:30}, {opacity:1, y:0, duration:0.6, ease:"power3.out"}, 0.1); inLeft(0.2,"lab");
+["tabs","log","gs","nr","rf","tri","l1","l2","l3","rf1","rf2","rf3","rf4","btn","x1","x2","x3","a1","a2"].forEach(k=>tl.set($(k),{opacity:0},0));
+["tb0","tb1","tb2","tb3","tb4","tb5"].forEach(k=>tl.set($(k),{opacity:0},0));
+show(0,"i1",0.01); cam(0,960,473,1,0.01); cam(0.3,960,300,1.07,6.0);
+pop(3.0,"t1"); pop(5.3,"t2");
+// six tabs on the sheet
+out(6.54,"tag",0.3); show(6.54,"i2",0.5); cam(6.54,960,473,1,0.4); cam(6.54+0.4,560,927,1.9,0.9,"power3.inOut");
+show(6.54+0.2,"tabs",0.3);
+pop(8.2,'tb0',0.35); tl.to($('tb0'),{borderColor:'#E2B04A',color:'#E2B04A',duration:0.2},8.2);
+pop(8.92,'tb1',0.35); tl.to($('tb1'),{borderColor:'#E2B04A',color:'#E2B04A',duration:0.2},8.92);
+pop(9.52,'tb2',0.35); tl.to($('tb2'),{borderColor:'#E2B04A',color:'#E2B04A',duration:0.2},9.52);
+pop(10.44,'tb3',0.35); tl.to($('tb3'),{borderColor:'#E2B04A',color:'#E2B04A',duration:0.2},10.44);
+pop(11.08,'tb4',0.35); tl.to($('tb4'),{borderColor:'#E2B04A',color:'#E2B04A',duration:0.2},11.08);
+pop(12.18,'tb5',0.35); tl.to($('tb5'),{borderColor:'#E2B04A',color:'#E2B04A',duration:0.2},12.18);
+
+// rules column: only what a source supports
+out(13.020000000000001,"tabs",0.3); cam(13.020000000000001,250,430,1.75,1.2,"power3.inOut");
+scrim(15.18,"scrimR",1); inUp(15.18,"log",0.5);
+inLeft(17.3,"l1"); inLeft(18.28,"l2"); inLeft(19.18,"l3");
+// no guessing
+out(20.04,"log",0.3); show(20.04,"i3",0.5); cam(20.04,960,473,1,0.4); cam(20.04+0.4,118,620,1.6,1.2,"power3.inOut");
+inUp(20.04+0.2,"gs",0.5); slam(24.12,"nr",-6);
+// refresh data
+out(25.48,"gs",0.3); out(25.48,"nr",0.3); show(25.48,"i4",0.5); cam(25.48,960,473,1,0.5); cam(25.48+0.5,960,300,1.08,6);
+inUp(25.48+0.1,"rf",0.5); pop(27.18,"btn");
+tl.to($("btn"),{scale:0.92,duration:0.08,yoyo:true,repeat:1},27.18+0.5);
+inLeft(28.54,"rf1"); inLeft(29.14,"rf2"); inLeft(29.98,"rf3"); inLeft(32.92,"rf4");
+// triad
+out(34.839999999999996,"rf",0.3); scrim(34.839999999999996,"scrimR",0,0.3); scrim(34.839999999999996,"scrim",0.8,0.4); show(34.839999999999996,"tri",0.2);
+inUp(35.04,"x1",0.4); show(35.76-0.2,"a1",0.2); inUp(35.76,"x2",0.4); show(36.56-0.2,"a2",0.2); inUp(36.56,"x3",0.4);
+
+window.__timelines["s06"] = tl;
+})();
+</script>
+</template>
+</body></html>

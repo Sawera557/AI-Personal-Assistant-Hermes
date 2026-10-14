@@ -1,0 +1,40 @@
+{
+  "voice": "Kore",
+  "lines": {
+    "n00_intro": "This is Hermes: an AI command center built for one founder who runs six businesses across two countries. A farming operation in Kenya. Property and commodity companies in the US. A spa. And his personal and family affairs. Each one with its own email, calendar, drive, accounting and messaging.",
+    "n01_why": "Before Hermes, he had plugged an AI assistant straight into everything, and hit three walls. Cost: over a thousand dollars a week in credits. Degradation: every extra tool made it slower and more confused. And trust: one day, it confidently invented a payroll figure. Hermes was built to fix all three. One focused assistant, connected to more than forty apps, that answers from real sources instead of guessing.",
+    "n02_system": "Let's start with the system. This is how Hermes is built, read live from its own API. Not a static diagram.",
+    "n03_columns": "Requests come in from the web app, from voice, or from the Meeting Copilot. One FastAPI backend serves everything. The agent runtime adds specialist agents, a model switch across Claude, OpenAI, Gemini and NVIDIA, and guardrails that are checked on every tool call. Behind it sit memory, skills and knowledge retrieval. Then Postgres, S3, and Pinecone, with a separate namespace for every business.",
+    "n04_trace": "Trace a request, and you can watch one travel through the whole stack, all the way out to the Maton gateway, where the connected apps live.",
+    "n06_home": "Back home, the founder's whole day fits on one screen. The knowledge base. Credit spend against a ceiling. The next scheduled runs. Every connected app. And alerts from work Hermes finished on its own.",
+    "n07_jarvis": "And at the center is Jarvis, the voice of Hermes. Just click, and talk.",
+    "n08_jarvis_how": "Gemini handles the voice. The question itself goes to the Hermes agent, with the same tools, memory and guardrails.",
+    "n09_agent": "Prefer to type? The Agent tab is the full chat. Everything Jarvis just said is saved here as a regular conversation, alongside attachments, history, and agent modes that hand the chat to a specialist.",
+    "n10_billing": "Billing pulls every recurring bill and invoice into one register, across all the businesses. The monthly run-rate, what's failing or past due, and which amounts still need verifying.",
+    "n10b_proposal": "When Hermes reads an invoice, it proposes the amount with its confidence and evidence, and waits for approval before writing anything to the sheet.",
+    "n10c_documents": "And every source document, scanned from Gmail, Drive or a quick upload, is kept and linked.",
+    "n11_meeting": "The Meeting Copilot works one business at a time. Before a call, it prepares a brief. During the call, it listens and offers live guidance, grounded only in that business's records, with every claim sourced.",
+    "n12_memories": "Context is what Hermes knows. Memories hold facts and standing rules, like this one: rent figures must come from live QuickBooks, never from an old file.",
+    "n12b_skills": "Skills are reusable playbooks. A monthly digest, a month-end close, a competitor analysis. Each one scoped to its own business.",
+    "n13_agents": "Multi-agents are specialists. Commercial leasing, farm operations, markets and buyers, a house scout. Each with its own role, its own tool whitelist, and read-only access by default.",
+    "n14_tasks": "Scheduled tasks let Hermes work unattended. Email triage, a daily attention report, payroll cash checks, compliance countdowns. Grouped by business, each with its next run and its last.",
+    "n15_usage": "Usage and Cost tracks every token and every dollar, per conversation and per model. The answer to that thousand-dollar week.",
+    "n16_settings": "And guardrails decide what Hermes may do on its own. Confirm before any write or send. Keep each business's data isolated. Block secrets from leaving. And cap how much can be sent in a single turn.",
+    "n17_outro": "Six businesses. More than forty apps. One assistant that knows where every answer came from. This is Hermes."
+  },
+  "questions": {
+    "q1": "Hey Hermes, give me a quick rundown of my businesses.",
+    "q2": "And which scheduled tasks do you run for me every morning?"
+  },
+  "lines2": {
+    "n09a_agent": "Prefer to type? The Agent tab is the full chat. Pick a business, hand the conversation to a specialist agent, or just ask.",
+    "n09b_agent_wait": "Hermes works out which tools it needs, calls them against the live connected accounts, and shows each step as it runs.",
+    "n09c_agent_answer": "The answer is built from what it actually found: every connected app, grouped by type, with the pending and failed connections called out.",
+    "n14b_report": "Open any task to see its run history. This is this morning's Kenya Window brief for the farm. The decisions come first, then staffing, security and operations, ready before the workday starts.",
+    "n18_jobs": "Jobs are background pipelines. The Google reviews scraper collects reviews of hammams and spas, and every run is logged. This one analysed a hundred and seventy six reviews from twenty searches, split into praise and complaints.",
+    "n18b_report": "Each run produces a full report. For Nour Hammam, it shows massage is the most-wanted service, and that the top complaint about competitors is booking and wait times. A gap Nour Hammam can win on.",
+    "n19_artifacts": "Artifacts collect the live views Hermes builds. This dashboard reads Afro Farm's scanned receipts: total spend, top vendors, and the monthly trend. It's clearly labelled unverified, because it comes from scans, not QuickBooks.",
+    "n19b_files": "Generated files, like reports and spreadsheets, are kept here too, tagged by business.",
+    "n20_skins": "And the look is yours to choose. Holo is the command-center skin. Stock is a cleaner, quieter interface. Same Hermes, either way."
+  }
+}

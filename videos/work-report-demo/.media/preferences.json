@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "preferences": {
+    "flow": {
+      "value": "automation",
+      "confirmed_in": [
+        "work-report-demo"
+      ],
+      "updated_at": "2026-10-09T02:47:40.238Z"
+    },
+    "storyboard": {
+      "value": "yes",
+      "confirmed_in": [
+        "work-report-demo"
+      ],
+      "updated_at": "2026-10-09T02:47:40.379Z"
+    },
+    "voice": {
+      "value": "gemini:Kore",
+      "confirmed_in": [
+        "work-report-demo"
+      ],
+      "updated_at": "2026-10-09T02:47:40.520Z"
+    }
+  },
+  "sightings": {}
+}
