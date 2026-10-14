@@ -1,5 +1,5 @@
 // Global business scope — single source of truth for which business (or "All
-// Businesses") is active across the whole app. Both app.js (chat) and
+// Projects") is active across the whole app. Both app.js (chat) and
 // bills.js subscribe to this instead of owning their own business state.
 //
 // `entity_id` sent to the backend is always one of: a business slug (e.g.
@@ -8,7 +8,7 @@ const HermesBiz = (() => {
   const STORAGE_KEY = "hermesActiveBusiness";
   const LOCK_KEY = "hermesSessionBiz"; // { [sessionId]: businessSlug }
 
-  const ALL = { slug: "all", name: "All Businesses", emoji: "🏢", color: "#9aa3b2", connected: true };
+  const ALL = { slug: "all", name: "All Projects", emoji: "📁", color: "#9aa3b2", connected: true };
 
   let list = [ALL];
   let current = localStorage.getItem(STORAGE_KEY) || "all";
@@ -28,20 +28,27 @@ const HermesBiz = (() => {
     });
   }
 
-  async function load() {
-    try {
-      const r = await fetch("/api/businesses");
-      const j = await r.json();
-      list = [ALL, ...(j.businesses || [])];
-    } catch (e) {
-      console.error("HermesBiz.load:", e);
-      list = [ALL];
-    }
-    // Persisted selection may no longer exist (deleted business) — fall back.
-    if (!list.find((b) => b.slug === current)) current = "all";
-    notify();
-    return list;
-  }
+   async function load() {
+     try {
+       const r = await fetch("/api/projects");
+       const j = await r.json();
+       const projects = j.projects || [];
+       list = [ALL, ...projects.map(p => ({
+         slug: p.slug,
+         name: p.name,
+         emoji: p.icon || "📁",
+         color: p.color || "#9aa3b2",
+         connected: !! (p.connections && p.connections.maton_key_env)
+       }))];
+     } catch (e) {
+       console.error("HermesBiz.load:", e);
+       list = [ALL];
+     }
+     // Persisted selection may no longer exist (deleted project) — fall back.
+     if (!list.find((b) => b.slug === current)) current = list.length > 0 ? list[0].slug : "all";
+     notify();
+     return list;
+   }
 
   function find(slug) {
     return list.find((b) => b.slug === slug) || null;
